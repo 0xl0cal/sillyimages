@@ -257,18 +257,29 @@ async function getUserAvatarBase64() {
         const context = SillyTavern.getContext();
         let avatarUrl = null;
         
+        // Debug: log all available user avatar sources
+        console.log('[IIG] User avatar debug:', {
+            persona: context.persona,
+            personas: context.personas ? Object.keys(context.personas) : null,
+            user_avatar: context.user_avatar,
+            name1: context.name1,
+            default_avatar: context.default_avatar,
+        });
+        
         // Get persona/user avatar filename - prefer direct file path over thumbnail
-        // Method 1: Check active persona
-        if (context.personas && context.persona) {
-            // persona is the filename
-            avatarUrl = `/User Avatars/${encodeURIComponent(context.persona)}`;
-            console.log('[IIG] Using persona avatar path:', avatarUrl);
+        // Method 1: Check active persona in personas object
+        if (context.personas && context.persona && context.personas[context.persona]) {
+            // persona is the key, get the avatar filename from personas object
+            const personaData = context.personas[context.persona];
+            const avatarFile = typeof personaData === 'string' ? personaData : context.persona;
+            avatarUrl = `/User Avatars/${encodeURIComponent(avatarFile)}`;
+            console.log('[IIG] Method 1 - Using persona from personas object:', avatarUrl);
         }
         
         // Method 2: Try to get from user_avatar setting
         if (!avatarUrl && context.user_avatar) {
             avatarUrl = `/User Avatars/${encodeURIComponent(context.user_avatar)}`;
-            console.log('[IIG] Using user_avatar path:', avatarUrl);
+            console.log('[IIG] Method 2 - Using user_avatar:', avatarUrl);
         }
         
         // Method 3: Get filename from DOM and construct direct path
@@ -277,10 +288,11 @@ async function getUserAvatarBase64() {
             if (userAvatarImg?.src) {
                 // Extract filename from thumbnail URL or src
                 const srcUrl = userAvatarImg.src;
+                console.log('[IIG] Method 3 - DOM img src:', srcUrl);
                 const fileMatch = srcUrl.match(/file=([^&]+)/);
                 if (fileMatch) {
                     avatarUrl = `/User Avatars/${decodeURIComponent(fileMatch[1])}`;
-                    console.log('[IIG] Extracted avatar filename from thumbnail:', avatarUrl);
+                    console.log('[IIG] Method 3 - Extracted avatar filename:', avatarUrl);
                 }
             }
         }
@@ -290,7 +302,7 @@ async function getUserAvatarBase64() {
             return null;
         }
         
-        console.log('[IIG] Found user avatar (full res):', avatarUrl);
+        console.log('[IIG] Final user avatar URL:', avatarUrl);
         return await imageUrlToBase64(avatarUrl);
     } catch (error) {
         console.error('[IIG] Error getting user avatar:', error);
