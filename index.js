@@ -144,22 +144,16 @@ async function fetchModels() {
 async function fetchUserAvatars() {
     try {
         const context = SillyTavern.getContext();
-        const response = await fetch('/api/files/list', {
+        const response = await fetch('/api/avatars/get', {
             method: 'POST',
             headers: context.getRequestHeaders(),
-            body: JSON.stringify({
-                folder: 'User Avatars'
-            })
         });
         
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
         }
         
-        const files = await response.json();
-        // Filter for image files only
-        const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
-        return files.filter(f => imageExtensions.some(ext => f.toLowerCase().endsWith(ext)));
+        return await response.json(); // Returns array of filenames
     } catch (error) {
         console.error('[IIG] Failed to fetch user avatars:', error);
         return [];
