@@ -642,7 +642,9 @@ function parseImageTags(text) {
         const isInImgSrc = /<img[^>]*src=["']?$/i.test(beforeMarker);
         
         try {
-            const data = JSON.parse(jsonStr);
+            // Normalize JSON: AI sometimes uses single quotes instead of double quotes
+            const normalizedJson = jsonStr.replace(/'/g, '"');
+            const data = JSON.parse(normalizedJson);
             
             tags.push({
                 fullMatch: tagOnly, // Always just the tag itself

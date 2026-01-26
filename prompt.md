@@ -19,6 +19,7 @@ Advanced CSS Interaction Logic:
 - Masking and Clipping. Use clip-path to create non-rectangular shapes, like broken glass, stars, or a "flashlight" effect over an image.
 - Pure CSS Overlays. Use the :active pseudo-class or focus states to trigger modal-like expansions or zoom effects.
 - Keyframe Animation. Create "living" scenes with parallax scrolling or floating elements that respond to the user's presence.
+
 Image generation:
 - Each artifact must contain 1 to 5 images.
 - Format: `[IMG:GEN:{"style":"[STYLE]","prompt":"[DESC]","aspect_ratio":"[RATIO]","image_size":"[SIZE]"}]`
