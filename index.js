@@ -160,6 +160,54 @@ async function imageUrlToBase64(url) {
 }
 
 /**
+ * Save base64 image to file via SillyTavern API
+ * @param {string} dataUrl - Data URL (data:image/png;base64,...)
+ * @returns {Promise<string>} - Relative path to saved file
+ */
+async function saveImageToFile(dataUrl) {
+    const context = SillyTavern.getContext();
+    
+    // Extract base64 and format from data URL
+    const match = dataUrl.match(/^data:image\/(\w+);base64,(.+)$/);
+    if (!match) {
+        throw new Error('Invalid data URL format');
+    }
+    
+    const format = match[1]; // png, jpeg, webp
+    const base64Data = match[2];
+    
+    // Get character name for subfolder
+    let charName = 'generated';
+    if (context.characterId !== undefined && context.characters?.[context.characterId]) {
+        charName = context.characters[context.characterId].name || 'generated';
+    }
+    
+    // Generate unique filename
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `iig_${timestamp}`;
+    
+    const response = await fetch('/api/images/upload', {
+        method: 'POST',
+        headers: context.getRequestHeaders(),
+        body: JSON.stringify({
+            image: base64Data,
+            format: format,
+            ch_name: charName,
+            filename: filename
+        })
+    });
+    
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(error.error || `Upload failed: ${response.status}`);
+    }
+    
+    const result = await response.json();
+    console.log('[IIG] Image saved to:', result.path);
+    return result.path;
+}
+
+/**
  * Get character avatar as base64
  */
 async function getCharacterAvatarBase64() {
@@ -200,24 +248,34 @@ async function getCharacterAvatarBase64() {
 async function getUserAvatarBase64() {
     try {
         const context = SillyTavern.getContext();
+        let avatarUrl = null;
         
-        // Try to get user avatar filename
-        const userAvatar = context.user_avatar;
-        if (!userAvatar) {
-            console.log('[IIG] No user avatar set');
-            return null;
+        // Method 1: Use context.getUserAvatar if available
+        if (typeof context.getUserAvatar === 'function') {
+            try {
+                avatarUrl = context.getUserAvatar();
+            } catch (e) { /* ignore */ }
         }
         
-        // Try context method first
-        if (typeof context.getUserAvatar === 'function') {
-            const avatarUrl = context.getUserAvatar(userAvatar);
-            if (avatarUrl) {
-                return await imageUrlToBase64(avatarUrl);
+        // Method 2: Get from DOM - user avatar block
+        if (!avatarUrl) {
+            const userAvatarImg = document.querySelector('#user_avatar_block img, .mes.last_mes.default_ch .avatar img');
+            if (userAvatarImg?.src && !userAvatarImg.src.includes('default_avatar')) {
+                avatarUrl = userAvatarImg.src;
             }
         }
         
-        // Fallback: construct URL directly
-        const avatarUrl = `/User Avatars/${encodeURIComponent(userAvatar)}`;
+        // Method 3: Check persona if available
+        if (!avatarUrl && context.persona) {
+            avatarUrl = `/User Avatars/${encodeURIComponent(context.persona)}`;
+        }
+        
+        if (!avatarUrl) {
+            console.log('[IIG] No user avatar found');
+            return null;
+        }
+        
+        console.log('[IIG] Found user avatar:', avatarUrl);
         return await imageUrlToBase64(avatarUrl);
     } catch (error) {
         console.error('[IIG] Error getting user avatar:', error);
@@ -524,31 +582,22 @@ function parseImageTags(text) {
             continue;
         }
         
-        // Determine full match (may include img tag wrapper)
-        let fullMatchStart = markerIndex;
-        let fullMatchEnd = jsonEnd + 1; // +1 for the ]
+        // The tag itself (without any wrapper)
+        const tagOnly = text.substring(markerIndex, jsonEnd + 1); // [IMG:GEN:{...}]
         
-        // Check if wrapped in <img> tag
+        // Check if tag is inside <img src="...">
         const beforeMarker = text.substring(Math.max(0, markerIndex - 100), markerIndex);
-        const imgTagMatch = beforeMarker.match(/<img[^>]*src=["']?$/i);
-        if (imgTagMatch) {
-            fullMatchStart = markerIndex - imgTagMatch[0].length;
-            // Find closing > of img tag (may have " or ' after ])
-            const remaining = text.substring(fullMatchEnd);
-            const closeMatch = remaining.match(/^["']?\s*\/?>/);
-            if (closeMatch) {
-                fullMatchEnd += closeMatch[0].length;
-            }
-        }
+        const isInImgSrc = /<img[^>]*src=["']?$/i.test(beforeMarker);
         
         try {
             const data = JSON.parse(jsonStr);
             
             tags.push({
-                fullMatch: text.substring(fullMatchStart, fullMatchEnd),
-                index: fullMatchStart,
+                fullMatch: tagOnly, // Always just the tag itself
+                index: markerIndex,
                 style: data.style || '',
-                prompt: data.prompt || ''
+                prompt: data.prompt || '',
+                isInImgSrc: isInImgSrc // Flag for replacement logic
             });
         } catch (e) {
             console.warn('[IIG] Failed to parse tag JSON:', jsonStr, e);
@@ -617,16 +666,20 @@ async function retryGeneration(placeholder, tagInfo) {
     const statusEl = loadingPlaceholder.querySelector('.iig-status');
     
     try {
-        const imageUrl = await generateImageWithRetry(
+        const dataUrl = await generateImageWithRetry(
             tagInfo.prompt,
             tagInfo.style,
             (status) => { statusEl.textContent = status; }
         );
         
+        // Save image to file
+        statusEl.textContent = 'Сохранение...';
+        const imagePath = await saveImageToFile(dataUrl);
+        
         // Replace with image
         const img = document.createElement('img');
         img.className = 'iig-generated-image';
-        img.src = imageUrl;
+        img.src = imagePath;
         img.alt = tagInfo.prompt;
         loadingPlaceholder.replaceWith(img);
         
@@ -696,24 +749,33 @@ async function processMessageTags(messageId) {
         const statusEl = loadingPlaceholder.querySelector('.iig-status');
         
         try {
-            const imageUrl = await generateImageWithRetry(
+            const dataUrl = await generateImageWithRetry(
                 tag.prompt,
                 tag.style,
                 (status) => { statusEl.textContent = status; }
             );
             
+            // Save image to file instead of keeping base64
+            statusEl.textContent = 'Сохранение...';
+            const imagePath = await saveImageToFile(dataUrl);
+            
             // Replace placeholder with actual image
             const img = document.createElement('img');
             img.className = 'iig-generated-image';
-            img.src = imageUrl;
+            img.src = imagePath;
             img.alt = tag.prompt;
             img.title = `Style: ${tag.style}\nPrompt: ${tag.prompt}`;
             
             loadingPlaceholder.replaceWith(img);
             
-            // Also update the message.mes to replace tag with markdown image
-            // This ensures the image persists on chat reload
-            message.mes = message.mes.replace(tag.fullMatch, `![${tag.prompt}](${imageUrl})`);
+            // Update message.mes to persist the image
+            if (tag.isInImgSrc) {
+                // Tag was inside <img src="...">, just replace with URL
+                message.mes = message.mes.replace(tag.fullMatch, imagePath);
+            } else {
+                // Tag was standalone, replace with markdown image
+                message.mes = message.mes.replace(tag.fullMatch, `![${tag.prompt}](${imagePath})`);
+            }
             
             console.log(`[IIG] Successfully generated image for tag ${index}`);
             toastr.success(`Картинка ${index + 1}/${tags.length} готова`, 'Генерация картинок', { timeOut: 2000 });
