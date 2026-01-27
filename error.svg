@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300">
+  <rect fill="#1a1a1a" width="400" height="300" rx="8"/>
+  <circle cx="200" cy="100" r="40" fill="none" stroke="#ff4444" stroke-width="4"/>
+  <text x="200" y="115" text-anchor="middle" fill="#ff4444" font-size="50" font-family="Arial">!</text>
+  <text x="200" y="180" text-anchor="middle" fill="#888" font-size="16" font-family="Arial">Ошибка генерации</text>
+  <text x="200" y="210" text-anchor="middle" fill="#666" font-size="14" font-family="Arial">Нажмите для повтора</text>
+</svg>

@@ -654,15 +654,19 @@ async function parseImageTags(text, options = {}) {
         // Determine if this needs generation
         let needsGeneration = false;
         const hasMarker = srcValue.includes('[IMG:GEN]') || srcValue.includes('[IMG:');
+        const hasErrorImage = srcValue.includes('error.svg'); // Our error placeholder image
         const hasPath = srcValue && srcValue.startsWith('/') && srcValue.length > 5;
         
         if (forceAll) {
             // Regeneration mode: include all tags with instruction
             needsGeneration = true;
             iigLog('INFO', `Force regeneration mode: including ${srcValue.substring(0, 30)}`);
-        } else if (hasMarker || !srcValue) {
-            // Explicit marker or empty src = needs generation
+        } else if (hasMarker || !srcValue || hasErrorImage) {
+            // Explicit marker, empty src, or error image = needs generation
             needsGeneration = true;
+            if (hasErrorImage) {
+                iigLog('INFO', `Found error image, will retry generation`);
+            }
         } else if (hasPath && checkExistence) {
             // Has a path - check if file actually exists
             const exists = await checkFileExists(srcValue);
@@ -811,16 +815,8 @@ function createLoadingPlaceholder(tagId) {
     return placeholder;
 }
 
-// Error placeholder SVG as data URL (red warning icon with text)
-const ERROR_IMAGE_SVG = `data:image/svg+xml,${encodeURIComponent(`
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300">
-  <rect fill="#1a1a1a" width="400" height="300" rx="8"/>
-  <circle cx="200" cy="100" r="40" fill="none" stroke="#ff4444" stroke-width="4"/>
-  <text x="200" y="115" text-anchor="middle" fill="#ff4444" font-size="50" font-family="Arial">!</text>
-  <text x="200" y="180" text-anchor="middle" fill="#888" font-size="16" font-family="Arial">Ошибка генерации</text>
-  <text x="200" y="210" text-anchor="middle" fill="#666" font-size="14" font-family="Arial">Нажмите для повтора</text>
-</svg>
-`)}`;
+// Error image path - served from extension folder
+const ERROR_IMAGE_PATH = '/scripts/extensions/third-party/sillyimages/error.svg';
 
 /**
  * Create error placeholder element - preserves img with data-iig-instruction for DOM search
@@ -835,7 +831,7 @@ function createErrorPlaceholder(tagId, errorMessage, tagInfo) {
     // Create IMG element with preserved data-iig-instruction for DOM search
     const img = document.createElement('img');
     img.className = 'iig-error-image';
-    img.src = ERROR_IMAGE_SVG;
+    img.src = ERROR_IMAGE_PATH;
     img.alt = 'Ошибка генерации';
     // CRITICAL: Preserve data-iig-instruction so DOM search finds it on retry
     if (tagInfo.fullMatch) {
@@ -904,9 +900,10 @@ async function retryGeneration(placeholder, tagInfo) {
             const message = context.chat[messageId];
             if (message && tagInfo.fullMatch) {
                 const updatedTag = tagInfo.fullMatch.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${imagePath}"`);
-                // Handle both original tag and error-marked tag
+                // Handle original tag, [IMG:ERROR] marker, and error.svg path
                 message.mes = message.mes.replace(tagInfo.fullMatch, updatedTag);
                 message.mes = message.mes.replace(/src\s*=\s*(['"])\[IMG:ERROR\]\1/gi, `src="${imagePath}"`);
+                message.mes = message.mes.replace(/src\s*=\s*(['"])[^'"]*error\.svg['"]/gi, `src="${imagePath}"`);
                 await context.saveChat();
             }
         }
@@ -1163,10 +1160,10 @@ async function processMessageTags(messageId) {
             const errorPlaceholder = createErrorPlaceholder(tagId, error.message, tag);
             loadingPlaceholder.replaceWith(errorPlaceholder);
             
-            // IMPORTANT: Mark tag as failed in message.mes to prevent reprocessing on swipe
+            // IMPORTANT: Mark tag as failed in message.mes - use error.svg path so it displays properly after swipe
             if (tag.isNewFormat) {
-                // NEW FORMAT: update src with error marker
-                const errorTag = tag.fullMatch.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="[IMG:ERROR]"`);
+                // NEW FORMAT: update src with error image path (will be detected for retry)
+                const errorTag = tag.fullMatch.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${ERROR_IMAGE_PATH}"`);
                 message.mes = message.mes.replace(tag.fullMatch, errorTag);
             } else {
                 // LEGACY FORMAT: replace with error marker
