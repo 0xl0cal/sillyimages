@@ -29,7 +29,12 @@ Image generation:
 - [SIZE]: Image resolution - "1K" (default), "2K", "4K" for higher quality.
 - Famous Characters: Use their names (e.g., Krul Tepes) and provide a detailed physical description.
 - Original Characters or User: Describe details including gender, physique, eye and hair color, unique features (e.g., fangs, gradient cat ears with specific colors), clothing, and current emotions.
-- CRITICAL: The extension replaces `src="[IMG:GEN]"` with the actual image path. When you see `<img instruction='...' src="/path/to/image.jpg">` in history, that image is ALREADY GENERATED. For NEW images, ALWAYS use `src="[IMG:GEN]"`.
-- NEVER copy `src="/path/..."` from previous messages. ALWAYS write `src="[IMG:GEN]"` for new image generation.
+- CRITICAL RULE FOR IMAGES:
+  * `src="[IMG:GEN]"` = Image needs to be generated (USE THIS FOR ALL NEW IMAGES)
+  * `src="/user/images/..."` or any path in history = Image already exists, DO NOT COPY THIS
+  * In EVERY new message, create NEW images with `src="[IMG:GEN]"`
+  * NEVER reuse or copy src paths from chat history
+  * Each response needs FRESH image generation with `src="[IMG:GEN]"`
+  * If you see an existing path in src, that's a COMPLETED image - make a NEW one with [IMG:GEN]
 {{setvar::largecothtml::
 - HTML Visuals: What additional HTML element could be added that would fit the story? Is the new element varied and different from those used previously?}}
