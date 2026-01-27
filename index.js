@@ -7,6 +7,44 @@
 
 const MODULE_NAME = 'inline_image_gen';
 
+// Track messages currently being processed to prevent duplicate processing
+const processingMessages = new Set();
+
+// Log buffer for debugging
+const logBuffer = [];
+const MAX_LOG_ENTRIES = 200;
+
+function iigLog(level, ...args) {
+    const timestamp = new Date().toISOString();
+    const message = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+    const entry = `[${timestamp}] [${level}] ${message}`;
+    
+    logBuffer.push(entry);
+    if (logBuffer.length > MAX_LOG_ENTRIES) {
+        logBuffer.shift();
+    }
+    
+    if (level === 'ERROR') {
+        console.error('[IIG]', ...args);
+    } else if (level === 'WARN') {
+        console.warn('[IIG]', ...args);
+    } else {
+        console.log('[IIG]', ...args);
+    }
+}
+
+function exportLogs() {
+    const logsText = logBuffer.join('\n');
+    const blob = new Blob([logsText], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `iig-logs-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toastr.success('Логи экспортированы', 'Генерация картинок');
+}
+
 // Default settings
 const defaultSettings = Object.freeze({
     enabled: true,
@@ -758,22 +796,28 @@ async function processMessageTags(messageId) {
     
     if (!settings.enabled) return;
     
+    // Prevent duplicate processing
+    if (processingMessages.has(messageId)) {
+        iigLog('WARN', `Message ${messageId} is already being processed, skipping`);
+        return;
+    }
+    
     const message = context.chat[messageId];
     if (!message || message.is_user) return;
     
     const tags = parseImageTags(message.mes);
-    console.log('[IIG] parseImageTags returned:', tags.length, 'tags');
+    iigLog('INFO', `parseImageTags returned: ${tags.length} tags`);
     if (tags.length > 0) {
-        console.log('[IIG] First tag:', JSON.stringify(tags[0]).substring(0, 200));
+        iigLog('INFO', `First tag: ${JSON.stringify(tags[0]).substring(0, 200)}`);
     }
     if (tags.length === 0) {
-        console.log('[IIG] No tags found by parser, checking raw message...');
-        const rawMatch = message.mes.match(/\[IMG:GEN:\{[^]*?\}\]/);
-        console.log('[IIG] Raw regex match:', rawMatch ? rawMatch[0].substring(0, 100) : 'null');
+        iigLog('INFO', 'No tags found by parser');
         return;
     }
     
-    console.log(`[IIG] Found ${tags.length} image tag(s) in message ${messageId}`);
+    // Mark as processing
+    processingMessages.add(messageId);
+    iigLog('INFO', `Found ${tags.length} image tag(s) in message ${messageId}`);
     toastr.info(`Найдено тегов: ${tags.length}. Генерация...`, 'Генерация картинок', { timeOut: 3000 });
     
     // DOM is ready because we use CHARACTER_MESSAGE_RENDERED event
@@ -878,18 +922,30 @@ async function processMessageTags(messageId) {
             console.log(`[IIG] Successfully generated image for tag ${index}`);
             toastr.success(`Картинка ${index + 1}/${tags.length} готова`, 'Генерация картинок', { timeOut: 2000 });
         } catch (error) {
-            console.error(`[IIG] Failed to generate image for tag ${index}:`, error);
+            iigLog('ERROR', `Failed to generate image for tag ${index}:`, error.message);
             
             // Replace with error placeholder
             const errorPlaceholder = createErrorPlaceholder(tagId, error.message, tag);
             loadingPlaceholder.replaceWith(errorPlaceholder);
             
+            // IMPORTANT: Mark tag as failed in message.mes to prevent reprocessing on swipe
+            // Replace tag with error marker so it won't be picked up again
+            const errorMarker = `[IMG:ERROR:${error.message.substring(0, 50)}]`;
+            message.mes = message.mes.replace(tag.fullMatch, errorMarker);
+            iigLog('INFO', `Marked tag as failed in message.mes`);
+            
             toastr.error(`Ошибка генерации: ${error.message}`, 'Генерация картинок');
         }
     };
     
-    // Process all tags in parallel
-    await Promise.all(tags.map((tag, index) => processTag(tag, index)));
+    try {
+        // Process all tags in parallel
+        await Promise.all(tags.map((tag, index) => processTag(tag, index)));
+    } finally {
+        // Always remove from processing set
+        processingMessages.delete(messageId);
+        iigLog('INFO', `Finished processing message ${messageId}`);
+    }
     
     // Save chat to persist changes
     await context.saveChat();
@@ -1109,6 +1165,17 @@ function createSettingsUI() {
                         <input type="number" id="iig_retry_delay" class="text_pole flex1" 
                                value="${settings.retryDelay}" min="500" max="10000" step="500">
                     </div>
+                    
+                    <hr>
+                    
+                    <h4>Отладка</h4>
+                    
+                    <div class="flex-row">
+                        <div id="iig_export_logs" class="menu_button" style="width: 100%;">
+                            <i class="fa-solid fa-download"></i> Экспорт логов
+                        </div>
+                    </div>
+                    <p class="hint">Экспортировать логи расширения для отладки проблем.</p>
                 </div>
             </div>
         </div>
@@ -1298,6 +1365,11 @@ function bindSettingsEvents() {
     document.getElementById('iig_retry_delay')?.addEventListener('input', (e) => {
         settings.retryDelay = parseInt(e.target.value) || 1000;
         saveSettings();
+    });
+    
+    // Export logs
+    document.getElementById('iig_export_logs')?.addEventListener('click', () => {
+        exportLogs();
     });
 }
 
