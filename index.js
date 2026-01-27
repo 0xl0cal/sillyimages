@@ -1059,6 +1059,14 @@ async function processMessageTags(messageId) {
             img.alt = tag.prompt;
             img.title = `Style: ${tag.style}\nPrompt: ${tag.prompt}`;
             
+            // Preserve instruction for future regenerations (new format only)
+            if (tag.isNewFormat) {
+                const instructionMatch = tag.fullMatch.match(/data-iig-instruction\s*=\s*(['"])([\s\S]*?)\1/i);
+                if (instructionMatch) {
+                    img.setAttribute('data-iig-instruction', instructionMatch[2]);
+                }
+            }
+            
             loadingPlaceholder.replaceWith(img);
             
             // Update message.mes to persist the image
@@ -1181,6 +1189,9 @@ async function regenerateMessageImages(messageId) {
             // Find the existing img element with data-iig-instruction
             const existingImg = mesTextEl.querySelector(`img[data-iig-instruction]`);
             if (existingImg) {
+                // Preserve the instruction for future regenerations
+                const instruction = existingImg.getAttribute('data-iig-instruction');
+                
                 const loadingPlaceholder = createLoadingPlaceholder(tagId);
                 existingImg.replaceWith(loadingPlaceholder);
                 
@@ -1200,6 +1211,10 @@ async function regenerateMessageImages(messageId) {
                 img.className = 'iig-generated-image';
                 img.src = imagePath;
                 img.alt = tag.prompt;
+                // Preserve instruction for future regenerations
+                if (instruction) {
+                    img.setAttribute('data-iig-instruction', instruction);
+                }
                 loadingPlaceholder.replaceWith(img);
                 
                 // Update message.mes
@@ -1220,23 +1235,58 @@ async function regenerateMessageImages(messageId) {
 }
 
 /**
- * Add regenerate button to message extra menu (three dots)
+ * Add regenerate button to message buttons row (always visible, like copy button)
  */
 function addRegenerateButton(messageElement, messageId) {
     // Check if button already exists
     if (messageElement.querySelector('.iig-regenerate-btn')) return;
     
-    // Find the extraMesButtons container (three dots menu)
-    const extraMesButtons = messageElement.querySelector('.extraMesButtons');
-    if (!extraMesButtons) return;
+    // Find the mes_buttons container (main button row with copy, edit, etc.)
+    const mesButtons = messageElement.querySelector('.mes_buttons');
+    if (!mesButtons) {
+        iigLog('WARN', `mes_buttons not found for message ${messageId}`);
+        return;
+    }
     
     const btn = document.createElement('div');
-    btn.className = 'mes_button iig-regenerate-btn fa-solid fa-images';
+    btn.className = 'mes_button iig-regenerate-btn fa-solid fa-images interactable';
     btn.title = 'Перегенерировать картинки';
-    btn.dataset.i18n = '[title]Перегенерировать картинки';
-    btn.addEventListener('click', () => regenerateMessageImages(messageId));
+    btn.tabIndex = 0;
+    btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await regenerateMessageImages(messageId);
+    });
     
-    extraMesButtons.appendChild(btn);
+    // Insert before the last button or append
+    mesButtons.appendChild(btn);
+    iigLog('INFO', `Added regenerate button to message ${messageId}`);
+}
+
+/**
+ * Add regenerate buttons to all existing AI messages in chat
+ */
+function addButtonsToExistingMessages() {
+    const context = SillyTavern.getContext();
+    if (!context.chat || context.chat.length === 0) return;
+    
+    const messageElements = document.querySelectorAll('#chat .mes');
+    let addedCount = 0;
+    
+    for (const messageElement of messageElements) {
+        const mesId = messageElement.getAttribute('mesid');
+        if (mesId === null) continue;
+        
+        const messageId = parseInt(mesId, 10);
+        const message = context.chat[messageId];
+        
+        // Only add to AI messages (not user messages)
+        if (message && !message.is_user) {
+            addRegenerateButton(messageElement, messageId);
+            addedCount++;
+        }
+    }
+    
+    iigLog('INFO', `Added regenerate buttons to ${addedCount} existing messages`);
 }
 
 // NOTE: No click handlers on error images - user uses the regenerate button in message menu
@@ -1662,7 +1712,18 @@ function bindSettingsEvents() {
     // Create settings UI when app is ready
     context.eventSource.on(context.event_types.APP_READY, () => {
         createSettingsUI();
+        // Add buttons to any messages already in chat
+        addButtonsToExistingMessages();
         console.log('[IIG] Inline Image Generation extension loaded');
+    });
+    
+    // When chat is loaded/changed, add buttons to all existing messages
+    context.eventSource.on(context.event_types.CHAT_CHANGED, () => {
+        iigLog('INFO', 'CHAT_CHANGED event - adding buttons to existing messages');
+        // Small delay to ensure DOM is ready
+        setTimeout(() => {
+            addButtonsToExistingMessages();
+        }, 100);
     });
     
     // Wrapper to add debug logging
@@ -1678,7 +1739,7 @@ function bindSettingsEvents() {
     
     // NOTE: We intentionally DO NOT handle MESSAGE_SWIPED or MESSAGE_UPDATED
     // Swipe = user wants NEW content, not to retry old error images
-    // If user wants to retry failed images, they click the error image manually
+    // If user wants to retry failed images, they use the regenerate button
     
     console.log('[IIG] Inline Image Generation extension initialized');
 })();
