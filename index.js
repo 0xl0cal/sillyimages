@@ -398,6 +398,11 @@ async function generateImageOpenAI(prompt, style, referenceImages = [], options 
     return imageData;
 }
 
+// Valid aspect ratios for Gemini/nano-banana
+const VALID_ASPECT_RATIOS = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'];
+// Valid image sizes for Gemini/nano-banana
+const VALID_IMAGE_SIZES = ['1K', '2K', '4K'];
+
 /**
  * Generate image via Gemini-compatible endpoint (nano-banana)
  */
@@ -406,15 +411,21 @@ async function generateImageGemini(prompt, style, referenceImages = [], options 
     const model = settings.model;
     const url = `${settings.endpoint.replace(/\/$/, '')}/v1beta/models/${model}:generateContent`;
     
-    // Determine aspect ratio: tag option > settings
-    // Supported: "1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"
-    const aspectRatio = options.aspectRatio || settings.aspectRatio || '1:1';
+    // Determine aspect ratio: tag option > settings, with validation
+    let aspectRatio = options.aspectRatio || settings.aspectRatio || '1:1';
+    if (!VALID_ASPECT_RATIOS.includes(aspectRatio)) {
+        iigLog('WARN', `Invalid aspect_ratio "${aspectRatio}", falling back to settings or default`);
+        aspectRatio = VALID_ASPECT_RATIOS.includes(settings.aspectRatio) ? settings.aspectRatio : '1:1';
+    }
     
-    // Determine image size: tag option > settings
-    // Supported: "1K", "2K", "4K" (default 1K)
-    const imageSize = options.imageSize || settings.imageSize || '1K';
+    // Determine image size: tag option > settings, with validation
+    let imageSize = options.imageSize || settings.imageSize || '1K';
+    if (!VALID_IMAGE_SIZES.includes(imageSize)) {
+        iigLog('WARN', `Invalid image_size "${imageSize}", falling back to settings or default`);
+        imageSize = VALID_IMAGE_SIZES.includes(settings.imageSize) ? settings.imageSize : '1K';
+    }
     
-    console.log(`[IIG] Using aspect ratio: ${aspectRatio}, image size: ${imageSize}`);
+    iigLog('INFO', `Using aspect ratio: ${aspectRatio}, image size: ${imageSize}`);
     
     // Build parts array
     const parts = [];
