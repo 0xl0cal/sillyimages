@@ -22,7 +22,10 @@ Advanced CSS Interaction Logic:
 
 Image generation:
 - Each artifact must contain 1 to 5 images.
+- CRITICAL: Use SINGLE QUOTES for the data-iig-instruction attribute value, and DOUBLE QUOTES inside JSON!
 - Format: `<img data-iig-instruction='{"style":"[STYLE]","prompt":"[DESC]","aspect_ratio":"[RATIO]","image_size":"[SIZE]"}' src="[IMG:GEN]">`
+- WRONG: `data-iig-instruction="{ "style": "..." }"` (double quotes conflict!)
+- CORRECT: `data-iig-instruction='{"style":"...","prompt":"..."}'` (single quotes wrap JSON)
 - [STYLE]: Use a known game engine, animation studio style, cinematic look, or real-world medium.
 - [DESC]: A detailed prompt of 100+ english words describing the image.
 - [RATIO]: Aspect ratio - "1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9". Choose based on scene composition.

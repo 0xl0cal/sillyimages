@@ -640,16 +640,85 @@ async function parseImageTags(text, options = {}) {
     const tags = [];
     
     // === NEW FORMAT: <img data-iig-instruction="{...}" src="[IMG:GEN]"> ===
-    const imgTagRegex = /<img\s+[^>]*data-iig-instruction\s*=\s*(['"])([\s\S]*?)\1[^>]*>/gi;
-    let imgMatch;
+    // LLM often generates broken HTML with unescaped quotes, so we parse manually
+    const imgTagMarker = 'data-iig-instruction=';
+    let searchPos = 0;
     
-    while ((imgMatch = imgTagRegex.exec(text)) !== null) {
-        const fullImgTag = imgMatch[0];
-        const instructionJson = imgMatch[2];
+    while (true) {
+        const markerPos = text.indexOf(imgTagMarker, searchPos);
+        if (markerPos === -1) break;
+        
+        // Find the start of the <img tag
+        let imgStart = text.lastIndexOf('<img', markerPos);
+        if (imgStart === -1 || markerPos - imgStart > 500) {
+            searchPos = markerPos + 1;
+            continue;
+        }
+        
+        // Find the JSON start (first { after the marker)
+        const afterMarker = markerPos + imgTagMarker.length;
+        let jsonStart = text.indexOf('{', afterMarker);
+        if (jsonStart === -1 || jsonStart > afterMarker + 10) {
+            searchPos = markerPos + 1;
+            continue;
+        }
+        
+        // Find matching closing brace using brace counting
+        let braceCount = 0;
+        let jsonEnd = -1;
+        let inString = false;
+        let escapeNext = false;
+        
+        for (let i = jsonStart; i < text.length; i++) {
+            const char = text[i];
+            
+            if (escapeNext) {
+                escapeNext = false;
+                continue;
+            }
+            
+            if (char === '\\' && inString) {
+                escapeNext = true;
+                continue;
+            }
+            
+            if (char === '"') {
+                inString = !inString;
+                continue;
+            }
+            
+            if (!inString) {
+                if (char === '{') {
+                    braceCount++;
+                } else if (char === '}') {
+                    braceCount--;
+                    if (braceCount === 0) {
+                        jsonEnd = i + 1;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        if (jsonEnd === -1) {
+            searchPos = markerPos + 1;
+            continue;
+        }
+        
+        // Find the end of the <img> tag
+        let imgEnd = text.indexOf('>', jsonEnd);
+        if (imgEnd === -1) {
+            searchPos = markerPos + 1;
+            continue;
+        }
+        imgEnd++; // Include the >
+        
+        const fullImgTag = text.substring(imgStart, imgEnd);
+        const instructionJson = text.substring(jsonStart, jsonEnd);
         
         // Check if src needs generation
-        const srcMatch = fullImgTag.match(/src\s*=\s*(['"])([\s\S]*?)\1/i);
-        const srcValue = srcMatch ? srcMatch[2] : '';
+        const srcMatch = fullImgTag.match(/src\s*=\s*["']?([^"'\s>]+)/i);
+        const srcValue = srcMatch ? srcMatch[1] : '';
         
         // Determine if this needs generation
         let needsGeneration = false;
@@ -660,6 +729,7 @@ async function parseImageTags(text, options = {}) {
         // Skip error images - user must click to retry manually (prevents conflict on swipe)
         if (hasErrorImage && !forceAll) {
             iigLog('INFO', `Skipping error image (click to retry): ${srcValue.substring(0, 50)}`);
+            searchPos = imgEnd;
             continue;
         }
         
@@ -683,24 +753,29 @@ async function parseImageTags(text, options = {}) {
         } else if (hasPath) {
             // Has path but not checking existence - skip
             iigLog('INFO', `Skipping path (no existence check): ${srcValue.substring(0, 50)}`);
+            searchPos = imgEnd;
             continue;
         }
         
-        if (!needsGeneration) continue;
+        if (!needsGeneration) {
+            searchPos = imgEnd;
+            continue;
+        }
         
         try {
             // Normalize JSON: AI sometimes uses single quotes, HTML entities, etc.
             let normalizedJson = instructionJson
-                .replace(/'/g, '"')
                 .replace(/&quot;/g, '"')
                 .replace(/&apos;/g, "'")
+                .replace(/&#39;/g, "'")
+                .replace(/&#34;/g, '"')
                 .replace(/&amp;/g, '&');
             
             const data = JSON.parse(normalizedJson);
             
             tags.push({
                 fullMatch: fullImgTag,
-                index: imgMatch.index,
+                index: imgStart,
                 style: data.style || '',
                 prompt: data.prompt || '',
                 aspectRatio: data.aspect_ratio || data.aspectRatio || null,
@@ -714,6 +789,8 @@ async function parseImageTags(text, options = {}) {
         } catch (e) {
             iigLog('WARN', `Failed to parse instruction JSON: ${instructionJson.substring(0, 100)}`, e.message);
         }
+        
+        searchPos = imgEnd;
     }
     
     // === LEGACY FORMAT: [IMG:GEN:{...}] ===
