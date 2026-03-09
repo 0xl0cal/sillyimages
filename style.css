@@ -60,12 +60,55 @@
     border-radius: 6px;
 }
 
+.iig-settings-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    background: var(--SmartThemeBlurTintColor);
+    border-radius: 6px;
+}
+
+.iig-settings-card h4 {
+    margin: 0;
+}
+
+.iig-settings-card .hint {
+    margin-bottom: 4px;
+}
+
+.iig-settings-card-nested {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
 .iig-naistera-refs h4 {
     margin: 0;
 }
 
 .iig-naistera-refs .hint {
     margin-bottom: 4px;
+}
+
+.iig-video-frequency-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.iig-video-frequency-input {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.iig-video-frequency-input input {
+    width: 88px;
+    min-width: 88px;
+    text-align: center;
 }
 
 /* Avatar options section - shown only for nano-banana */
@@ -195,6 +238,14 @@
     max-width: 100%;
     border-radius: 8px;
     margin: 10px 0;
+}
+
+.iig-generated-video {
+    display: block;
+    max-width: 100%;
+    border-radius: 8px;
+    margin: 10px 0;
+    background: #000;
 }
 
 /* Model refresh button */
