@@ -438,6 +438,45 @@ async function fetchUserAvatars() {
     }
 }
 
+function getUserAvatarSelects() {
+    return ['iig_user_avatar_file', 'iig_naistera_user_avatar_file']
+        .map((id) => document.getElementById(id))
+        .filter(Boolean);
+}
+
+function syncUserAvatarSelection(selectedAvatar) {
+    for (const select of getUserAvatarSelects()) {
+        if (selectedAvatar && !Array.from(select.options).some((option) => option.value === selectedAvatar)) {
+            const option = document.createElement('option');
+            option.value = selectedAvatar;
+            option.textContent = selectedAvatar;
+            select.appendChild(option);
+        }
+        select.value = selectedAvatar || '';
+    }
+}
+
+function populateUserAvatarSelects(avatars, selectedAvatar) {
+    for (const select of getUserAvatarSelects()) {
+        select.innerHTML = '<option value="">-- Не выбран --</option>';
+
+        for (const avatar of avatars) {
+            const option = document.createElement('option');
+            option.value = avatar;
+            option.textContent = avatar;
+            select.appendChild(option);
+        }
+    }
+
+    syncUserAvatarSelection(selectedAvatar);
+}
+
+async function refreshUserAvatarSelects() {
+    const avatars = await fetchUserAvatars();
+    populateUserAvatarSelects(avatars, getSettings().userAvatarFile);
+    return avatars;
+}
+
 /**
  * Convert image URL to base64
  */
@@ -1119,6 +1158,118 @@ function sanitizeForHtml(text) {
     return div.innerHTML;
 }
 
+const INSTRUCTION_FIELD_NAMES = Object.freeze([
+    'style',
+    'prompt',
+    'aspect_ratio',
+    'aspectRatio',
+    'preset',
+    'image_size',
+    'imageSize',
+    'quality',
+]);
+
+function normalizeInstructionPayload(text) {
+    return String(text || '')
+        .replace(/&quot;/g, '"')
+        .replace(/&apos;/g, "'")
+        .replace(/&#39;/g, "'")
+        .replace(/&#34;/g, '"')
+        .replace(/&amp;/g, '&');
+}
+
+function decodeRelaxedInstructionValue(value) {
+    return String(value || '')
+        .trim()
+        .replace(/\\n/g, '\n')
+        .replace(/\\r/g, '\r')
+        .replace(/\\t/g, '\t')
+        .replace(/\\"/g, '"')
+        .replace(/\\'/g, "'")
+        .replace(/\\\\/g, '\\');
+}
+
+function parseRelaxedInstructionObject(payload) {
+    const normalized = normalizeInstructionPayload(payload);
+    const keyRegex = /(["'])(style|prompt|aspect_ratio|aspectRatio|preset|image_size|imageSize|quality)\1\s*:\s*(["'])/g;
+    const matches = Array.from(normalized.matchAll(keyRegex));
+    if (matches.length === 0) {
+        return null;
+    }
+
+    const result = {};
+
+    for (let i = 0; i < matches.length; i++) {
+        const match = matches[i];
+        const key = match[2];
+        const valueQuote = match[3];
+        const valueStart = match.index + match[0].length;
+        const nextKeyIndex = i + 1 < matches.length ? matches[i + 1].index : normalized.lastIndexOf('}');
+        const rawValue = normalized.substring(
+            valueStart,
+            nextKeyIndex === -1 ? normalized.length : nextKeyIndex
+        );
+
+        let value = rawValue.trim();
+        if (value.endsWith(',')) {
+            value = value.slice(0, -1).trimEnd();
+        }
+        if (value.endsWith(valueQuote)) {
+            value = value.slice(0, -1);
+        }
+
+        result[key] = decodeRelaxedInstructionValue(value);
+    }
+
+    return Object.keys(result).length > 0 ? result : null;
+}
+
+function parseInstructionObject(payload) {
+    const normalized = normalizeInstructionPayload(payload);
+
+    try {
+        return JSON.parse(normalized);
+    } catch (error) {
+        const relaxed = parseRelaxedInstructionObject(normalized);
+        if (relaxed) {
+            return relaxed;
+        }
+        throw error;
+    }
+}
+
+function sanitizeForSingleQuotedAttribute(text) {
+    return String(text || '')
+        .replace(/&/g, '&amp;')
+        .replace(/'/g, '&#39;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+function buildInstructionData(tag) {
+    const data = {};
+
+    if (tag.style) data.style = tag.style;
+    if (tag.prompt) data.prompt = tag.prompt;
+    if (tag.aspectRatio) data.aspect_ratio = tag.aspectRatio;
+    if (tag.preset) data.preset = tag.preset;
+    if (tag.imageSize) data.image_size = tag.imageSize;
+    if (tag.quality) data.quality = tag.quality;
+
+    return data;
+}
+
+function getInstructionAttributeValue(tag) {
+    if (tag.isNewFormat && tag.fullMatch) {
+        const instructionMatch = tag.fullMatch.match(/data-iig-instruction\s*=\s*(['"])([\s\S]*?)\1/i);
+        if (instructionMatch) {
+            return instructionMatch[2];
+        }
+    }
+
+    return JSON.stringify(buildInstructionData(tag));
+}
+
 function isGeneratedVideoResult(value) {
     return Boolean(value) && typeof value === 'object' && value.kind === 'video' && typeof value.dataUrl === 'string';
 }
@@ -1159,6 +1310,19 @@ function buildPersistedVideoTag(templateHtml, persistedSrc, posterSrc = '') {
         html = html.replace(/^<video\b/i, `<video poster="${sanitizeForHtml(posterSrc)}"`);
     }
     return `${html}></video>`;
+}
+
+function buildPersistedLegacyImageTag(tag, persistedSrc) {
+    const instruction = sanitizeForSingleQuotedAttribute(getInstructionAttributeValue(tag));
+    const src = sanitizeForHtml(persistedSrc);
+    return `<img data-iig-instruction='${instruction}' src="${src}">`;
+}
+
+function buildPersistedLegacyVideoTag(tag, persistedSrc, posterSrc = '') {
+    const instruction = sanitizeForSingleQuotedAttribute(getInstructionAttributeValue(tag));
+    const src = sanitizeForHtml(persistedSrc);
+    const posterAttr = posterSrc ? ` poster="${sanitizeForHtml(posterSrc)}"` : '';
+    return `<video data-iig-instruction='${instruction}' src="${src}"${posterAttr} controls autoplay loop muted playsinline></video>`;
 }
 
 /**
@@ -1471,15 +1635,7 @@ async function parseImageTags(text, options = {}) {
         }
         
         try {
-            // Normalize JSON: AI sometimes uses single quotes, HTML entities, etc.
-            let normalizedJson = instructionJson
-                .replace(/&quot;/g, '"')
-                .replace(/&apos;/g, "'")
-                .replace(/&#39;/g, "'")
-                .replace(/&#34;/g, '"')
-                .replace(/&amp;/g, '&');
-            
-            const data = JSON.parse(normalizedJson);
+            const data = parseInstructionObject(instructionJson);
             
             tags.push({
                 fullMatch: fullImgTag,
@@ -1566,8 +1722,7 @@ async function parseImageTags(text, options = {}) {
         const tagOnly = text.substring(markerIndex, jsonEnd + 1);
         
         try {
-            const normalizedJson = jsonStr.replace(/'/g, '"');
-            const data = JSON.parse(normalizedJson);
+            const data = parseInstructionObject(jsonStr);
             
             tags.push({
                 fullMatch: tagOnly,
@@ -1871,12 +2026,9 @@ async function processMessageTags(messageId) {
                 tag,
             );
 
-            // Preserve instruction for future regenerations (new format only)
-            if (tag.isNewFormat) {
-                const instructionMatch = tag.fullMatch.match(/data-iig-instruction\s*=\s*(['"])([\s\S]*?)\1/i);
-                if (instructionMatch) {
-                    mediaElement.setAttribute('data-iig-instruction', instructionMatch[2]);
-                }
+            const instructionValue = getInstructionAttributeValue(tag);
+            if (instructionValue) {
+                mediaElement.setAttribute('data-iig-instruction', instructionValue);
             }
 
             loadingPlaceholder.replaceWith(mediaElement);
@@ -1887,10 +2039,10 @@ async function processMessageTags(messageId) {
                     : tag.fullMatch.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${persistedSrc}"`);
                 replaceTagInMessageSource(message, tag, updatedTag);
             } else {
-                const completionMarker = isGeneratedVideoResult(generated)
-                    ? `[VID:✓:${persistedSrc}]`
-                    : `[IMG:✓:${persistedSrc}]`;
-                replaceTagInMessageSource(message, tag, completionMarker);
+                const persistedTag = isGeneratedVideoResult(generated)
+                    ? buildPersistedLegacyVideoTag(tag, persistedSrc, persistedPosterSrc)
+                    : buildPersistedLegacyImageTag(tag, persistedSrc);
+                replaceTagInMessageSource(message, tag, persistedTag);
             }
 
             iigLog('INFO', `Successfully generated ${isGeneratedVideoResult(generated) ? 'video' : 'image'} for tag ${index}`);
@@ -2345,7 +2497,7 @@ function createSettingsUI() {
                             <label for="iig_naistera_user_avatar_file">Аватар {{user}}</label>
                             <select id="iig_naistera_user_avatar_file" class="flex1">
                                 <option value="">-- Не выбран --</option>
-                                ${settings.userAvatarFile ? `<option value="${settings.userAvatarFile}" selected>${settings.userAvatarFile}</option>` : ''}
+                                ${settings.userAvatarFile ? `<option value="${sanitizeForHtml(settings.userAvatarFile)}" selected>${sanitizeForHtml(settings.userAvatarFile)}</option>` : ''}
                             </select>
                             <div id="iig_naistera_refresh_avatars" class="menu_button iig-refresh-btn" title="Обновить список">
                                 <i class="fa-solid fa-sync"></i>
@@ -2368,7 +2520,7 @@ function createSettingsUI() {
                             <label for="iig_user_avatar_file">Аватар {{user}}</label>
                             <select id="iig_user_avatar_file" class="flex1">
                                 <option value="">-- Не выбран --</option>
-                                ${settings.userAvatarFile ? `<option value="${settings.userAvatarFile}" selected>${settings.userAvatarFile}</option>` : ''}
+                                ${settings.userAvatarFile ? `<option value="${sanitizeForHtml(settings.userAvatarFile)}" selected>${sanitizeForHtml(settings.userAvatarFile)}</option>` : ''}
                             </select>
                             <div id="iig_refresh_avatars" class="menu_button iig-refresh-btn" title="Обновить список">
                                 <i class="fa-solid fa-sync"></i>
@@ -2658,6 +2810,7 @@ function bindSettingsEvents() {
     // Naistera user avatar file selection (reuses settings.userAvatarFile)
     document.getElementById('iig_naistera_user_avatar_file')?.addEventListener('change', (e) => {
         settings.userAvatarFile = e.target.value;
+        syncUserAvatarSelection(settings.userAvatarFile);
         saveSettings();
     });
 
@@ -2667,19 +2820,7 @@ function bindSettingsEvents() {
         btn.classList.add('loading');
 
         try {
-            const avatars = await fetchUserAvatars();
-            const select = document.getElementById('iig_naistera_user_avatar_file');
-            const currentAvatar = settings.userAvatarFile;
-
-            select.innerHTML = '<option value="">-- Не выбран --</option>';
-
-            for (const avatar of avatars) {
-                const option = document.createElement('option');
-                option.value = avatar;
-                option.textContent = avatar;
-                option.selected = avatar === currentAvatar;
-                select.appendChild(option);
-            }
+            const avatars = await refreshUserAvatarSelects();
 
             toastr.success(`Найдено аватаров: ${avatars.length}`, 'Генерация картинок');
         } catch (error) {
@@ -2710,28 +2851,17 @@ function bindSettingsEvents() {
     // User avatar file selection
     document.getElementById('iig_user_avatar_file')?.addEventListener('change', (e) => {
         settings.userAvatarFile = e.target.value;
+        syncUserAvatarSelection(settings.userAvatarFile);
         saveSettings();
     });
-    
+
     // Refresh user avatars list
     document.getElementById('iig_refresh_avatars')?.addEventListener('click', async (e) => {
         const btn = e.currentTarget;
         btn.classList.add('loading');
         
         try {
-            const avatars = await fetchUserAvatars();
-            const select = document.getElementById('iig_user_avatar_file');
-            const currentAvatar = settings.userAvatarFile;
-            
-            select.innerHTML = '<option value="">-- Не выбран --</option>';
-            
-            for (const avatar of avatars) {
-                const option = document.createElement('option');
-                option.value = avatar;
-                option.textContent = avatar;
-                option.selected = avatar === currentAvatar;
-                select.appendChild(option);
-            }
+            const avatars = await refreshUserAvatarSelects();
             
             toastr.success(`Найдено аватаров: ${avatars.length}`, 'Генерация картинок');
         } catch (error) {
@@ -2759,6 +2889,7 @@ function bindSettingsEvents() {
     });
 
     // Apply initial state
+    syncUserAvatarSelection(settings.userAvatarFile);
     updateVisibility();
 }
 
