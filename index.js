@@ -438,6 +438,45 @@ async function fetchUserAvatars() {
     }
 }
 
+function getUserAvatarSelects() {
+    return ['iig_user_avatar_file', 'iig_naistera_user_avatar_file']
+        .map((id) => document.getElementById(id))
+        .filter(Boolean);
+}
+
+function syncUserAvatarSelection(selectedAvatar) {
+    for (const select of getUserAvatarSelects()) {
+        if (selectedAvatar && !Array.from(select.options).some((option) => option.value === selectedAvatar)) {
+            const option = document.createElement('option');
+            option.value = selectedAvatar;
+            option.textContent = selectedAvatar;
+            select.appendChild(option);
+        }
+        select.value = selectedAvatar || '';
+    }
+}
+
+function populateUserAvatarSelects(avatars, selectedAvatar) {
+    for (const select of getUserAvatarSelects()) {
+        select.innerHTML = '<option value="">-- Не выбран --</option>';
+
+        for (const avatar of avatars) {
+            const option = document.createElement('option');
+            option.value = avatar;
+            option.textContent = avatar;
+            select.appendChild(option);
+        }
+    }
+
+    syncUserAvatarSelection(selectedAvatar);
+}
+
+async function refreshUserAvatarSelects() {
+    const avatars = await fetchUserAvatars();
+    populateUserAvatarSelects(avatars, getSettings().userAvatarFile);
+    return avatars;
+}
+
 /**
  * Convert image URL to base64
  */
@@ -1011,14 +1050,18 @@ async function generateImageNaistera(prompt, style, options = {}) {
     const endpoint = getEffectiveEndpoint(settings);
     const url = endpoint.endsWith('/api/generate') ? endpoint : `${endpoint}/api/generate`;
 
-    const fullPrompt = style ? `[Style: ${style}] ${prompt}` : prompt;
-
     const aspectRatio = options.aspectRatio || settings.naisteraAspectRatio || '1:1';
     const model = normalizeNaisteraModel(options.model || settings.naisteraModel || 'grok');
     const preset = options.preset || null;
     const referenceImages = options.referenceImages || [];
     const wantsVideoTest = Boolean(options.videoTestMode);
     const videoEveryN = normalizeNaisteraVideoFrequency(options.videoEveryN ?? settings.naisteraVideoEveryN);
+    let fullPrompt = style ? `[Style: ${style}] ${prompt}` : prompt;
+
+    if (referenceImages.length > 0) {
+        const refInstruction = `[CRITICAL: The reference image(s) above show the EXACT appearance of the character(s). You MUST precisely copy their: face structure, eye color, hair color and style, skin tone, body type, clothing, and all distinctive features. Do not deviate from the reference appearances.]`;
+        fullPrompt = `${refInstruction}\n\n${fullPrompt}`;
+    }
 
     const body = {
         prompt: fullPrompt,
@@ -1119,6 +1162,118 @@ function sanitizeForHtml(text) {
     return div.innerHTML;
 }
 
+const INSTRUCTION_FIELD_NAMES = Object.freeze([
+    'style',
+    'prompt',
+    'aspect_ratio',
+    'aspectRatio',
+    'preset',
+    'image_size',
+    'imageSize',
+    'quality',
+]);
+
+function normalizeInstructionPayload(text) {
+    return String(text || '')
+        .replace(/&quot;/g, '"')
+        .replace(/&apos;/g, "'")
+        .replace(/&#39;/g, "'")
+        .replace(/&#34;/g, '"')
+        .replace(/&amp;/g, '&');
+}
+
+function decodeRelaxedInstructionValue(value) {
+    return String(value || '')
+        .trim()
+        .replace(/\\n/g, '\n')
+        .replace(/\\r/g, '\r')
+        .replace(/\\t/g, '\t')
+        .replace(/\\"/g, '"')
+        .replace(/\\'/g, "'")
+        .replace(/\\\\/g, '\\');
+}
+
+function parseRelaxedInstructionObject(payload) {
+    const normalized = normalizeInstructionPayload(payload);
+    const keyRegex = /(["'])(style|prompt|aspect_ratio|aspectRatio|preset|image_size|imageSize|quality)\1\s*:\s*(["'])/g;
+    const matches = Array.from(normalized.matchAll(keyRegex));
+    if (matches.length === 0) {
+        return null;
+    }
+
+    const result = {};
+
+    for (let i = 0; i < matches.length; i++) {
+        const match = matches[i];
+        const key = match[2];
+        const valueQuote = match[3];
+        const valueStart = match.index + match[0].length;
+        const nextKeyIndex = i + 1 < matches.length ? matches[i + 1].index : normalized.lastIndexOf('}');
+        const rawValue = normalized.substring(
+            valueStart,
+            nextKeyIndex === -1 ? normalized.length : nextKeyIndex
+        );
+
+        let value = rawValue.trim();
+        if (value.endsWith(',')) {
+            value = value.slice(0, -1).trimEnd();
+        }
+        if (value.endsWith(valueQuote)) {
+            value = value.slice(0, -1);
+        }
+
+        result[key] = decodeRelaxedInstructionValue(value);
+    }
+
+    return Object.keys(result).length > 0 ? result : null;
+}
+
+function parseInstructionObject(payload) {
+    const normalized = normalizeInstructionPayload(payload);
+
+    try {
+        return JSON.parse(normalized);
+    } catch (error) {
+        const relaxed = parseRelaxedInstructionObject(normalized);
+        if (relaxed) {
+            return relaxed;
+        }
+        throw error;
+    }
+}
+
+function sanitizeForSingleQuotedAttribute(text) {
+    return String(text || '')
+        .replace(/&/g, '&amp;')
+        .replace(/'/g, '&#39;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+function buildInstructionData(tag) {
+    const data = {};
+
+    if (tag.style) data.style = tag.style;
+    if (tag.prompt) data.prompt = tag.prompt;
+    if (tag.aspectRatio) data.aspect_ratio = tag.aspectRatio;
+    if (tag.preset) data.preset = tag.preset;
+    if (tag.imageSize) data.image_size = tag.imageSize;
+    if (tag.quality) data.quality = tag.quality;
+
+    return data;
+}
+
+function getInstructionAttributeValue(tag) {
+    if (tag.isNewFormat && tag.fullMatch) {
+        const instructionMatch = tag.fullMatch.match(/data-iig-instruction\s*=\s*(['"])([\s\S]*?)\1/i);
+        if (instructionMatch) {
+            return instructionMatch[2];
+        }
+    }
+
+    return JSON.stringify(buildInstructionData(tag));
+}
+
 function isGeneratedVideoResult(value) {
     return Boolean(value) && typeof value === 'object' && value.kind === 'video' && typeof value.dataUrl === 'string';
 }
@@ -1159,6 +1314,58 @@ function buildPersistedVideoTag(templateHtml, persistedSrc, posterSrc = '') {
         html = html.replace(/^<video\b/i, `<video poster="${sanitizeForHtml(posterSrc)}"`);
     }
     return `${html}></video>`;
+}
+
+function buildPendingLegacyTag(tag) {
+    const instruction = sanitizeForSingleQuotedAttribute(getInstructionAttributeValue(tag));
+    return `<img data-iig-instruction='${instruction}' src="[IMG:GEN]">`;
+}
+
+function buildPersistedImageTag(tag, persistedSrc) {
+    const templateHtml = tag?.isNewFormat ? tag.fullMatch : buildPendingLegacyTag(tag);
+    return String(templateHtml || '').replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${persistedSrc}"`);
+}
+
+function buildPersistedMediaTag(tag, generated, persistedSrc, posterSrc = '') {
+    return isGeneratedVideoResult(generated)
+        ? buildPersistedVideoTag(tag?.fullMatch, persistedSrc, posterSrc)
+        : buildPersistedImageTag(tag, persistedSrc);
+}
+
+function convertLegacyTagsToInstructionFormat(message, tags) {
+    let convertedLegacyTags = 0;
+
+    for (const tag of tags) {
+        if (tag.isNewFormat) {
+            continue;
+        }
+
+        const pendingTag = buildPendingLegacyTag(tag);
+        replaceTagInMessageSource(message, tag, pendingTag);
+        tag.fullMatch = pendingTag;
+        tag.isNewFormat = true;
+        convertedLegacyTags += 1;
+    }
+
+    return convertedLegacyTags;
+}
+
+function rerenderMessageHtml(context, message, settings, messageId, mesTextEl) {
+    if (!mesTextEl) {
+        return;
+    }
+
+    const formattedMessage = typeof context.messageFormatting === 'function'
+        ? context.messageFormatting(
+            getMessageRenderText(message, settings),
+            message.name,
+            message.is_system,
+            message.is_user,
+            messageId
+        )
+        : getMessageRenderText(message, settings);
+
+    mesTextEl.innerHTML = formattedMessage;
 }
 
 /**
@@ -1471,15 +1678,7 @@ async function parseImageTags(text, options = {}) {
         }
         
         try {
-            // Normalize JSON: AI sometimes uses single quotes, HTML entities, etc.
-            let normalizedJson = instructionJson
-                .replace(/&quot;/g, '"')
-                .replace(/&apos;/g, "'")
-                .replace(/&#39;/g, "'")
-                .replace(/&#34;/g, '"')
-                .replace(/&amp;/g, '&');
-            
-            const data = JSON.parse(normalizedJson);
+            const data = parseInstructionObject(instructionJson);
             
             tags.push({
                 fullMatch: fullImgTag,
@@ -1566,8 +1765,7 @@ async function parseImageTags(text, options = {}) {
         const tagOnly = text.substring(markerIndex, jsonEnd + 1);
         
         try {
-            const normalizedJson = jsonStr.replace(/'/g, '"');
-            const data = JSON.parse(normalizedJson);
+            const data = parseInstructionObject(jsonStr);
             
             tags.push({
                 fullMatch: tagOnly,
@@ -1676,6 +1874,13 @@ async function processMessageTags(messageId) {
     
     const mesTextEl = messageElement.querySelector('.mes_text');
     if (!mesTextEl) return;
+
+    const convertedLegacyTags = convertLegacyTagsToInstructionFormat(message, tags);
+
+    if (convertedLegacyTags > 0) {
+        rerenderMessageHtml(context, message, settings, messageId, mesTextEl);
+        iigLog('INFO', `Converted ${convertedLegacyTags} legacy tag(s) to instruction tags before processing`);
+    }
     
     // Process each tag in parallel
     const processTag = async (tag, index) => {
@@ -1687,123 +1892,92 @@ async function processMessageTags(messageId) {
         const loadingPlaceholder = createLoadingPlaceholder(tagId);
         let targetElement = null;
         
-        if (tag.isNewFormat) {
-            // NEW FORMAT: <img|video data-iig-instruction='...'> is a real DOM element
-            const allImgs = mesTextEl.querySelectorAll('img[data-iig-instruction], video[data-iig-instruction]');
-            iigLog('INFO', `Searching for media element. Found ${allImgs.length} [data-iig-instruction] elements in DOM`);
+        // NEW FORMAT: <img|video data-iig-instruction='...'> is a real DOM element
+        const allImgs = mesTextEl.querySelectorAll('img[data-iig-instruction], video[data-iig-instruction]');
+        iigLog('INFO', `Searching for media element. Found ${allImgs.length} [data-iig-instruction] elements in DOM`);
+        
+        // Debug: log what we're looking for vs what's in DOM
+        const searchPrompt = tag.prompt.substring(0, 30);
+        iigLog('INFO', `Searching for prompt starting with: "${searchPrompt}"`);
+        
+        for (const img of allImgs) {
+            const instruction = img.getAttribute('data-iig-instruction');
+            const src = img.getAttribute('src') || '';
+            iigLog('INFO', `DOM img - src: "${src.substring(0, 50)}", instruction (first 100): "${instruction?.substring(0, 100)}"`);
             
-            // Debug: log what we're looking for vs what's in DOM
-            const searchPrompt = tag.prompt.substring(0, 30);
-            iigLog('INFO', `Searching for prompt starting with: "${searchPrompt}"`);
-            
-            for (const img of allImgs) {
-                const instruction = img.getAttribute('data-iig-instruction');
-                const src = img.getAttribute('src') || '';
-                iigLog('INFO', `DOM img - src: "${src.substring(0, 50)}", instruction (first 100): "${instruction?.substring(0, 100)}"`);
+            // Try multiple matching strategies
+            if (instruction) {
+                // Strategy 1: Decode HTML entities and normalize quotes, then match
+                const decodedInstruction = instruction
+                    .replace(/&quot;/g, '"')
+                    .replace(/&apos;/g, "'")
+                    .replace(/&#39;/g, "'")
+                    .replace(/&#34;/g, '"')
+                    .replace(/&amp;/g, '&');
                 
-                // Try multiple matching strategies
-                if (instruction) {
-                    // Strategy 1: Decode HTML entities and normalize quotes, then match
-                    const decodedInstruction = instruction
-                        .replace(/&quot;/g, '"')
-                        .replace(/&apos;/g, "'")
-                        .replace(/&#39;/g, "'")
-                        .replace(/&#34;/g, '"')
-                        .replace(/&amp;/g, '&');
-                    
-                    // Also normalize the search prompt the same way
-                    const normalizedSearchPrompt = searchPrompt
-                        .replace(/&quot;/g, '"')
-                        .replace(/&apos;/g, "'")
-                        .replace(/&#39;/g, "'")
-                        .replace(/&#34;/g, '"')
-                        .replace(/&amp;/g, '&');
-                    
-                    // Check if decoded instruction contains the prompt
-                    if (decodedInstruction.includes(normalizedSearchPrompt)) {
-                        iigLog('INFO', `Found img element via decoded instruction match`);
+                // Also normalize the search prompt the same way
+                const normalizedSearchPrompt = searchPrompt
+                    .replace(/&quot;/g, '"')
+                    .replace(/&apos;/g, "'")
+                    .replace(/&#39;/g, "'")
+                    .replace(/&#34;/g, '"')
+                    .replace(/&amp;/g, '&');
+                
+                // Check if decoded instruction contains the prompt
+                if (decodedInstruction.includes(normalizedSearchPrompt)) {
+                    iigLog('INFO', `Found img element via decoded instruction match`);
+                    targetElement = img;
+                    break;
+                }
+                
+                // Strategy 2: Try to parse the instruction as JSON and compare prompts
+                try {
+                    const normalizedJson = decodedInstruction.replace(/'/g, '"');
+                    const instructionData = JSON.parse(normalizedJson);
+                    if (instructionData.prompt && instructionData.prompt.substring(0, 30) === tag.prompt.substring(0, 30)) {
+                        iigLog('INFO', `Found img element via JSON prompt match`);
                         targetElement = img;
                         break;
                     }
-                    
-                    // Strategy 2: Try to parse the instruction as JSON and compare prompts
-                    try {
-                        const normalizedJson = decodedInstruction.replace(/'/g, '"');
-                        const instructionData = JSON.parse(normalizedJson);
-                        if (instructionData.prompt && instructionData.prompt.substring(0, 30) === tag.prompt.substring(0, 30)) {
-                            iigLog('INFO', `Found img element via JSON prompt match`);
-                            targetElement = img;
-                            break;
-                        }
-                    } catch (e) {
-                        // JSON parse failed, continue with other strategies
-                    }
-                    
-                    // Strategy 3: Raw instruction contains raw search prompt (original approach)
-                    if (instruction.includes(searchPrompt)) {
-                        iigLog('INFO', `Found img element via raw instruction match`);
-                        targetElement = img;
-                        break;
-                    }
+                } catch (e) {
+                    // JSON parse failed, continue with other strategies
+                }
+                
+                // Strategy 3: Raw instruction contains raw search prompt (original approach)
+                if (instruction.includes(searchPrompt)) {
+                    iigLog('INFO', `Found img element via raw instruction match`);
+                    targetElement = img;
+                    break;
                 }
             }
-            
-            // Alternative: find by src containing markers (when prompt matching fails)
-            if (!targetElement) {
-                iigLog('INFO', `Prompt matching failed, trying src marker matching...`);
-                for (const img of allImgs) {
-                    const src = img.getAttribute('src') || '';
-                    // Check for generation markers or empty/broken src
-                    if (src.includes('[IMG:GEN]') || src.includes('[IMG:ERROR]') || src === '' || src === '#') {
-                        iigLog('INFO', `Found img element with generation marker in src: "${src}"`);
-                        targetElement = img;
-                        break;
-                    }
+        }
+        
+        // Alternative: find by src containing markers (when prompt matching fails)
+        if (!targetElement) {
+            iigLog('INFO', `Prompt matching failed, trying src marker matching...`);
+            for (const img of allImgs) {
+                const src = img.getAttribute('src') || '';
+                // Check for generation markers or empty/broken src
+                if (src.includes('[IMG:GEN]') || src.includes('[IMG:ERROR]') || src === '' || src === '#') {
+                    iigLog('INFO', `Found img element with generation marker in src: "${src}"`);
+                    targetElement = img;
+                    break;
                 }
             }
-            
-            // Strategy 4: If still not found, try looking at all media nodes
-            // This handles cases where browser didn't parse data-iig-instruction as a valid attribute
-            if (!targetElement) {
-                iigLog('INFO', `Trying broader media search...`);
-                const allImgsInMes = mesTextEl.querySelectorAll('img, video');
-                for (const img of allImgsInMes) {
-                    const src = img.getAttribute('src') || '';
-                    // Look for src containing our markers
-                    if (src.includes('[IMG:GEN]') || src.includes('[IMG:ERROR]')) {
-                        iigLog('INFO', `Found img via broad search with marker src: "${src.substring(0, 50)}"`);
-                        targetElement = img;
-                        break;
-                    }
-                }
-            }
-        } else {
-            // LEGACY FORMAT: [IMG:GEN:{...}] - use regex replacement
-            const tagEscaped = tag.fullMatch
-                .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-                .replace(/"/g, '(?:"|&quot;)');
-            const tagRegex = new RegExp(tagEscaped, 'g');
-            
-            const beforeReplace = mesTextEl.innerHTML;
-            mesTextEl.innerHTML = mesTextEl.innerHTML.replace(
-                tagRegex,
-                `<span data-iig-placeholder="${tagId}"></span>`
-            );
-            
-            if (beforeReplace !== mesTextEl.innerHTML) {
-                targetElement = mesTextEl.querySelector(`[data-iig-placeholder="${tagId}"]`);
-                iigLog('INFO', `Legacy tag replaced with placeholder span`);
-            }
-            
-            // Also check for img src containing legacy tag
-            if (!targetElement) {
-                const allImgs = mesTextEl.querySelectorAll('img, video');
-                for (const img of allImgs) {
-                    if (img.src && img.src.includes('[IMG:GEN:')) {
-                        targetElement = img;
-                        iigLog('INFO', `Found img with legacy tag in src`);
-                        break;
-                    }
+        }
+        
+        // Strategy 4: If still not found, try looking at all media nodes
+        // This handles cases where browser didn't parse data-iig-instruction as a valid attribute
+        if (!targetElement) {
+            iigLog('INFO', `Trying broader media search...`);
+            const allImgsInMes = mesTextEl.querySelectorAll('img, video');
+            for (const img of allImgsInMes) {
+                const src = img.getAttribute('src') || '';
+                // Look for src containing our markers
+                if (src.includes('[IMG:GEN]') || src.includes('[IMG:ERROR]')) {
+                    iigLog('INFO', `Found img via broad search with marker src: "${src.substring(0, 50)}"`);
+                    targetElement = img;
+                    break;
                 }
             }
         }
@@ -1826,7 +2000,7 @@ async function processMessageTags(messageId) {
         }
         
         const statusEl = loadingPlaceholder.querySelector('.iig-status');
-        
+
         try {
             const generated = await generateImageWithRetry(
                 tag.prompt,
@@ -1871,27 +2045,15 @@ async function processMessageTags(messageId) {
                 tag,
             );
 
-            // Preserve instruction for future regenerations (new format only)
-            if (tag.isNewFormat) {
-                const instructionMatch = tag.fullMatch.match(/data-iig-instruction\s*=\s*(['"])([\s\S]*?)\1/i);
-                if (instructionMatch) {
-                    mediaElement.setAttribute('data-iig-instruction', instructionMatch[2]);
-                }
+            const instructionValue = getInstructionAttributeValue(tag);
+            if (instructionValue) {
+                mediaElement.setAttribute('data-iig-instruction', instructionValue);
             }
 
             loadingPlaceholder.replaceWith(mediaElement);
 
-            if (tag.isNewFormat) {
-                const updatedTag = isGeneratedVideoResult(generated)
-                    ? buildPersistedVideoTag(tag.fullMatch, persistedSrc, persistedPosterSrc)
-                    : tag.fullMatch.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${persistedSrc}"`);
-                replaceTagInMessageSource(message, tag, updatedTag);
-            } else {
-                const completionMarker = isGeneratedVideoResult(generated)
-                    ? `[VID:✓:${persistedSrc}]`
-                    : `[IMG:✓:${persistedSrc}]`;
-                replaceTagInMessageSource(message, tag, completionMarker);
-            }
+            const updatedTag = buildPersistedMediaTag(tag, generated, persistedSrc, persistedPosterSrc);
+            replaceTagInMessageSource(message, tag, updatedTag);
 
             iigLog('INFO', `Successfully generated ${isGeneratedVideoResult(generated) ? 'video' : 'image'} for tag ${index}`);
             toastr.success(
@@ -1937,14 +2099,7 @@ async function processMessageTags(messageId) {
     // Force re-render the message to show updated content
     // Use SillyTavern's messageFormatting if available
     if (typeof context.messageFormatting === 'function') {
-        const formattedMessage = context.messageFormatting(
-            getMessageRenderText(message, settings),
-            message.name,
-            message.is_system,
-            message.is_user,
-            messageId
-        );
-        mesTextEl.innerHTML = formattedMessage;
+        rerenderMessageHtml(context, message, settings, messageId, mesTextEl);
         console.log('[IIG] Message re-rendered via messageFormatting');
     } else {
         // Fallback: trigger a manual re-render by finding and updating the element
@@ -1962,6 +2117,7 @@ async function processMessageTags(messageId) {
  */
 async function regenerateMessageImages(messageId) {
     const context = SillyTavern.getContext();
+    const settings = getSettings();
     const message = context.chat[messageId];
     
     if (!message) {
@@ -1993,6 +2149,12 @@ async function regenerateMessageImages(messageId) {
     if (!mesTextEl) {
         processingMessages.delete(messageId);
         return;
+    }
+
+    const convertedLegacyTags = convertLegacyTagsToInstructionFormat(message, tags);
+    if (convertedLegacyTags > 0) {
+        rerenderMessageHtml(context, message, settings, messageId, mesTextEl);
+        iigLog('INFO', `Converted ${convertedLegacyTags} legacy tag(s) to instruction tags before regeneration`);
     }
     
     for (let index = 0; index < tags.length; index++) {
@@ -2062,9 +2224,7 @@ async function regenerateMessageImages(messageId) {
                 loadingPlaceholder.replaceWith(mediaElement);
                 
                 // Update message.mes
-                const updatedTag = isGeneratedVideoResult(generated)
-                    ? buildPersistedVideoTag(tag.fullMatch, persistedSrc, persistedPosterSrc)
-                    : tag.fullMatch.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${persistedSrc}"`);
+                const updatedTag = buildPersistedMediaTag(tag, generated, persistedSrc, persistedPosterSrc);
                 replaceTagInMessageSource(message, tag, updatedTag);
                 
                 toastr.success(
@@ -2081,6 +2241,7 @@ async function regenerateMessageImages(messageId) {
     
     processingMessages.delete(messageId);
     await context.saveChat();
+    rerenderMessageHtml(context, message, settings, messageId, mesTextEl);
     iigLog('INFO', `Regeneration complete for message ${messageId}`);
 }
 
@@ -2345,7 +2506,7 @@ function createSettingsUI() {
                             <label for="iig_naistera_user_avatar_file">Аватар {{user}}</label>
                             <select id="iig_naistera_user_avatar_file" class="flex1">
                                 <option value="">-- Не выбран --</option>
-                                ${settings.userAvatarFile ? `<option value="${settings.userAvatarFile}" selected>${settings.userAvatarFile}</option>` : ''}
+                                ${settings.userAvatarFile ? `<option value="${sanitizeForHtml(settings.userAvatarFile)}" selected>${sanitizeForHtml(settings.userAvatarFile)}</option>` : ''}
                             </select>
                             <div id="iig_naistera_refresh_avatars" class="menu_button iig-refresh-btn" title="Обновить список">
                                 <i class="fa-solid fa-sync"></i>
@@ -2368,7 +2529,7 @@ function createSettingsUI() {
                             <label for="iig_user_avatar_file">Аватар {{user}}</label>
                             <select id="iig_user_avatar_file" class="flex1">
                                 <option value="">-- Не выбран --</option>
-                                ${settings.userAvatarFile ? `<option value="${settings.userAvatarFile}" selected>${settings.userAvatarFile}</option>` : ''}
+                                ${settings.userAvatarFile ? `<option value="${sanitizeForHtml(settings.userAvatarFile)}" selected>${sanitizeForHtml(settings.userAvatarFile)}</option>` : ''}
                             </select>
                             <div id="iig_refresh_avatars" class="menu_button iig-refresh-btn" title="Обновить список">
                                 <i class="fa-solid fa-sync"></i>
@@ -2658,6 +2819,7 @@ function bindSettingsEvents() {
     // Naistera user avatar file selection (reuses settings.userAvatarFile)
     document.getElementById('iig_naistera_user_avatar_file')?.addEventListener('change', (e) => {
         settings.userAvatarFile = e.target.value;
+        syncUserAvatarSelection(settings.userAvatarFile);
         saveSettings();
     });
 
@@ -2667,19 +2829,7 @@ function bindSettingsEvents() {
         btn.classList.add('loading');
 
         try {
-            const avatars = await fetchUserAvatars();
-            const select = document.getElementById('iig_naistera_user_avatar_file');
-            const currentAvatar = settings.userAvatarFile;
-
-            select.innerHTML = '<option value="">-- Не выбран --</option>';
-
-            for (const avatar of avatars) {
-                const option = document.createElement('option');
-                option.value = avatar;
-                option.textContent = avatar;
-                option.selected = avatar === currentAvatar;
-                select.appendChild(option);
-            }
+            const avatars = await refreshUserAvatarSelects();
 
             toastr.success(`Найдено аватаров: ${avatars.length}`, 'Генерация картинок');
         } catch (error) {
@@ -2710,28 +2860,17 @@ function bindSettingsEvents() {
     // User avatar file selection
     document.getElementById('iig_user_avatar_file')?.addEventListener('change', (e) => {
         settings.userAvatarFile = e.target.value;
+        syncUserAvatarSelection(settings.userAvatarFile);
         saveSettings();
     });
-    
+
     // Refresh user avatars list
     document.getElementById('iig_refresh_avatars')?.addEventListener('click', async (e) => {
         const btn = e.currentTarget;
         btn.classList.add('loading');
         
         try {
-            const avatars = await fetchUserAvatars();
-            const select = document.getElementById('iig_user_avatar_file');
-            const currentAvatar = settings.userAvatarFile;
-            
-            select.innerHTML = '<option value="">-- Не выбран --</option>';
-            
-            for (const avatar of avatars) {
-                const option = document.createElement('option');
-                option.value = avatar;
-                option.textContent = avatar;
-                option.selected = avatar === currentAvatar;
-                select.appendChild(option);
-            }
+            const avatars = await refreshUserAvatarSelects();
             
             toastr.success(`Найдено аватаров: ${avatars.length}`, 'Генерация картинок');
         } catch (error) {
@@ -2759,6 +2898,7 @@ function bindSettingsEvents() {
     });
 
     // Apply initial state
+    syncUserAvatarSelection(settings.userAvatarFile);
     updateVisibility();
 }
 
