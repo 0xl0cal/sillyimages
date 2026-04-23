@@ -324,6 +324,57 @@ export function sanitizeForSingleQuotedAttribute(text) {
         .replace(/>/g, '&gt;');
 }
 
+// ----- Binary helpers -----
+
+/**
+ * Конвертирует «чистую» base64-строку (без `data:` префикса) в Blob.
+ * Используется для multipart-запросов (напр. OpenAI `/v1/images/edits`).
+ */
+export function base64ToBlob(base64, mimeType = 'image/png') {
+    const byteChars = atob(String(base64 || ''));
+    const byteArray = new Uint8Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) {
+        byteArray[i] = byteChars.charCodeAt(i);
+    }
+    return new Blob([byteArray], { type: mimeType });
+}
+
+/**
+ * Конвертирует data URL (`data:image/png;base64,...`) в Blob.
+ */
+export function dataUrlToBlob(dataUrl) {
+    const parsed = parseImageDataUrl(dataUrl);
+    return base64ToBlob(parsed.base64Data, parsed.mimeType);
+}
+
+// ----- Fetch with timeout / abort -----
+
+/**
+ * Обёртка над fetch с AbortController и таймаутом.
+ * @param {string | URL} url
+ * @param {RequestInit} init
+ * @param {number} timeoutMs — по умолчанию 120 000 (2 минуты) для долгих image-запросов.
+ * @param {AbortSignal} [externalSignal] — опц. внешний сигнал (если хочется композиции).
+ */
+export async function fetchWithTimeout(url, init = {}, timeoutMs = 120_000, externalSignal = null) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(new DOMException('Timeout', 'AbortError')), timeoutMs);
+
+    if (externalSignal) {
+        if (externalSignal.aborted) {
+            controller.abort(externalSignal.reason);
+        } else {
+            externalSignal.addEventListener('abort', () => controller.abort(externalSignal.reason), { once: true });
+        }
+    }
+
+    try {
+        return await fetch(url, { ...init, signal: controller.signal });
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
 // ----- Error / UI asset paths -----
 
 export const ERROR_IMAGE_PATH = '/scripts/extensions/third-party/sillyimages/error.svg';

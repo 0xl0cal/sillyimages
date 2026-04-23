@@ -27,7 +27,6 @@ import {
     normalizeImageContextCount,
     normalizeConfiguredEndpoint,
     shouldReplaceEndpointForApiType,
-    naisteraModelSupportsReferences,
     getEndpointPlaceholder,
     MAX_CONTEXT_IMAGES,
     MAX_ADDITIONAL_REFERENCES,
@@ -52,7 +51,7 @@ import {
     closeReferenceImportModal,
     importAdditionalReferencesFromUrls,
 } from './references.js';
-import { isGeminiModel, fetchModels } from './providers.js';
+import { isGeminiModel, fetchModels, resolveActiveProvider } from './providers.js';
 
 // ----- Section wrapper -----
 
@@ -163,7 +162,7 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                 <div></div>
             </div>
 
-            <div id="iig_avatar_section" class="iig-settings-card-nested ${settings.apiType !== 'gemini' ? 'hidden' : ''}">
+            <div id="iig_avatar_section" class="iig-settings-card-nested ${settings.apiType !== 'gemini' ? 'iig-hidden' : ''}">
                 <div class="flex-row">
                     <label for="iig_aspect_ratio">Соотношение сторон</label>
                     <select id="iig_aspect_ratio" class="flex1">
@@ -341,11 +340,18 @@ function buildAvatarReferencesBlockHtml({
 }
 
 function buildReferencesSettingsSectionHtml(settings = getSettings()) {
+    const provider = resolveActiveProvider(settings);
+    const refsSupported = provider ? provider.supportsReferences(settings) : false;
+    const isGemini = settings.apiType === 'gemini';
+    const isOpenAI = settings.apiType === 'openai';
+    const commonAvatarRefsVisible = (isGemini || isOpenAI) && refsSupported;
+    const naisteraRefsVisible = settings.apiType === 'naistera' && refsSupported;
+
     const geminiAvatarsBlock = buildAvatarReferencesBlockHtml({
         sectionId: 'iig_avatar_refs_section',
-        hiddenClass: 'hidden',
-        hidden: settings.apiType !== 'gemini',
-        title: 'Gemini / nano-banana',
+        hiddenClass: 'iig-hidden',
+        hidden: !commonAvatarRefsVisible,
+        title: isOpenAI ? 'OpenAI / GPT Image' : 'Gemini / nano-banana',
         sendCharCheckboxId: 'iig_send_char_avatar',
         sendCharEnabled: settings.sendCharAvatar,
         sendUserCheckboxId: 'iig_send_user_avatar',
@@ -353,16 +359,15 @@ function buildReferencesSettingsSectionHtml(settings = getSettings()) {
         useActivePersonaRowId: 'iig_use_active_persona_avatar_row',
         useActivePersonaCheckboxId: 'iig_use_active_persona_avatar',
         useActivePersonaRowHidden: !settings.sendUserAvatar,
-        useActivePersonaHiddenClass: 'hidden',
+        useActivePersonaHiddenClass: 'iig-hidden',
         useActivePersonaEnabled: settings.useActiveUserPersonaAvatar,
         userAvatarRowId: 'iig_user_avatar_row',
         userAvatarRowHidden: !settings.sendUserAvatar || settings.useActiveUserPersonaAvatar,
-        userAvatarRowHiddenClass: 'hidden',
+        userAvatarRowHiddenClass: 'iig-hidden',
         userAvatarDropdownHtml: buildUserAvatarDropdownControl('iig_user_avatar', settings.userAvatarFile),
         refreshButtonId: 'iig_refresh_avatars',
     });
 
-    const naisteraRefsVisible = settings.apiType === 'naistera' && naisteraModelSupportsReferences(settings.naisteraModel);
     const naisteraAvatarsBlock = buildAvatarReferencesBlockHtml({
         sectionId: 'iig_naistera_refs_section',
         hiddenClass: 'iig-hidden',
@@ -384,7 +389,7 @@ function buildReferencesSettingsSectionHtml(settings = getSettings()) {
         refreshButtonId: 'iig_naistera_refresh_avatars',
     });
 
-    const refsSectionVisible = (settings.apiType === 'gemini') || naisteraRefsVisible;
+    const refsSectionVisible = refsSupported;
 
     const bodyHtml = `
         <div class="iig-settings-card">
@@ -544,8 +549,11 @@ function bindApiSectionEvents(settings, updateVisibility) {
         if (isGeminiModel(e.target.value)) {
             document.getElementById('iig_api_type').value = 'gemini';
             settings.apiType = 'gemini';
-            updateVisibility();
         }
+
+        // Модель влияет на поддержку референсов (gpt-image-* vs dall-e-*),
+        // поэтому перестраиваем видимость секций при любой смене.
+        updateVisibility();
     });
 
     document.getElementById('iig_refresh_models')?.addEventListener('click', async (e) => {
@@ -1021,13 +1029,22 @@ function buildUpdateVisibility(settings) {
         const isNaistera = apiType === 'naistera';
         const isGemini = apiType === 'gemini';
         const isOpenAI = apiType === 'openai';
-        const naisteraRefsSupported = isNaistera && naisteraModelSupportsReferences(settings.naisteraModel);
+
+        // Поддерживает ли активный провайдер референсы (учитывая модель).
+        const provider = resolveActiveProvider(settings);
+        const refsSupported = provider ? provider.supportsReferences(settings) : false;
+        const naisteraRefsSupported = isNaistera && refsSupported;
+
+        // «Общий» avatar refs блок (char/user аватар с чекбоксами) — теперь
+        // показывается не только для Gemini, но и для любого OpenAI-семейства,
+        // которое поддерживает /edits. Naistera использует свой отдельный блок.
+        const commonAvatarRefsVisible = (isGemini || isOpenAI) && refsSupported;
 
         // Model is used for OpenAI and Gemini; Naistera does not need a model.
         document.getElementById('iig_model_row')?.classList.toggle('iig-hidden', isNaistera);
-        document.getElementById('iig_image_context_section')?.classList.toggle('iig-hidden', !(isGemini || naisteraRefsSupported));
-        document.getElementById('iig_image_context_count_row')?.classList.toggle('iig-hidden', !((isGemini || naisteraRefsSupported) && settings.imageContextEnabled));
-        document.getElementById('iig_additional_refs_section')?.classList.toggle('iig-hidden', !(isGemini || naisteraRefsSupported));
+        document.getElementById('iig_image_context_section')?.classList.toggle('iig-hidden', !refsSupported);
+        document.getElementById('iig_image_context_count_row')?.classList.toggle('iig-hidden', !(refsSupported && settings.imageContextEnabled));
+        document.getElementById('iig_additional_refs_section')?.classList.toggle('iig-hidden', !refsSupported);
 
         // OpenAI-only params
         document.getElementById('iig_size_row')?.classList.toggle('iig-hidden', !isOpenAI);
@@ -1052,19 +1069,30 @@ function buildUpdateVisibility(settings) {
             endpointInput.placeholder = getEndpointPlaceholder(apiType);
         }
 
-        // Avatar section is only for Gemini/nano-banana
+        // Nano-banana-specific params (aspect + image size) — только для Gemini.
         const avatarSection = document.getElementById('iig_avatar_section');
         if (avatarSection) {
-            avatarSection.classList.toggle('hidden', !isGemini);
+            avatarSection.classList.toggle('iig-hidden', !isGemini);
         }
+
+        // «Общий» avatar refs блок — для Gemini и OpenAI-c-refs.
         const avatarRefsSection = document.getElementById('iig_avatar_refs_section');
         if (avatarRefsSection) {
-            avatarRefsSection.classList.toggle('hidden', !isGemini);
+            avatarRefsSection.classList.toggle('iig-hidden', !commonAvatarRefsVisible);
+
+            // Обновляем заголовок при смене провайдера (Gemini ↔ OpenAI).
+            const titleEl = avatarRefsSection.querySelector('h4');
+            if (titleEl) {
+                titleEl.textContent = isOpenAI ? 'OpenAI / GPT Image' : 'Gemini / nano-banana';
+            }
         }
-        document.getElementById('iig_use_active_persona_avatar_row')?.classList.toggle('hidden', !(isGemini && settings.sendUserAvatar));
+        document.getElementById('iig_use_active_persona_avatar_row')?.classList.toggle(
+            'iig-hidden',
+            !(commonAvatarRefsVisible && settings.sendUserAvatar),
+        );
         document.getElementById('iig_user_avatar_row')?.classList.toggle(
-            'hidden',
-            !(isGemini && settings.sendUserAvatar && !settings.useActiveUserPersonaAvatar)
+            'iig-hidden',
+            !(commonAvatarRefsVisible && settings.sendUserAvatar && !settings.useActiveUserPersonaAvatar),
         );
     };
 }

@@ -28,6 +28,8 @@ import {
     normalizeStoredImagePath,
     imageUrlToBase64,
     imageUrlToDataUrl,
+    base64ToBlob,
+    fetchWithTimeout,
 } from './utils.js';
 import { buildFinalGenerationPrompt } from './parser.js';
 import {
@@ -111,6 +113,16 @@ export class Provider {
     }
 
     /**
+     * Поддерживает ли текущая конфигурация (apiType + model) референсы.
+     * UI использует это чтобы показать/скрыть блоки «Аватары», «Контекст
+     * картинок», «Дополнительные референсы». По умолчанию — да, каждый
+     * провайдер может переопределить.
+     */
+    supportsReferences(_settings) {
+        return true;
+    }
+
+    /**
      * Собирает referenceImages в формате, который ожидает `generate`.
      * На этапе 1 возвращаемое значение отдаётся `generate` как-есть,
      * pipeline не вмешивается.
@@ -135,9 +147,198 @@ export class Provider {
 
 // ----- OpenAI (OpenAI-compatible) -----
 
+// Таймаут для image-запросов. OpenAI допускает долгую генерацию на сложных
+// промптах, особенно gpt-image-*.
+const OPENAI_REQUEST_TIMEOUT_MS = 120_000;
+
+/**
+ * Классификация модели OpenAI-совместимого API.
+ * Возвращает строку-идентификатор семейства.
+ */
+function classifyOpenAIModel(modelId) {
+    const id = String(modelId || '').toLowerCase().trim();
+    // Сначала специфичные подстроки, потом общие.
+    if (id.includes('gpt-image-2')) return 'gpt-image-2';
+    if (id.includes('gpt-image-1.5') || id.includes('gpt-image-1-5')) return 'gpt-image-1.5';
+    if (id.includes('gpt-image-1-mini')) return 'gpt-image-1-mini';
+    if (id.includes('gpt-image-1')) return 'gpt-image-1';
+    if (id.includes('gpt-image')) return 'gpt-image'; // generic prefix
+    if (id.includes('flux-1-kontext')) return 'flux-kontext';
+    if (id.includes('dall-e-3')) return 'dall-e-3';
+    if (id.includes('dall-e-2')) return 'dall-e-2';
+    return 'unknown';
+}
+
+/**
+ * Считается ли модель «GPT Image семейством» — для них /edits поддерживает
+ * множественные референсы через `image[]`.
+ */
+function isGptImageFamily(kind) {
+    return kind === 'gpt-image-2' || kind === 'gpt-image-1.5' || kind === 'gpt-image-1-mini'
+        || kind === 'gpt-image-1' || kind === 'gpt-image';
+}
+
+/**
+ * aspect ratio → size для конкретного семейства модели.
+ * Таблица из PLAN.md (раздел про OpenAI). Где размер не определён,
+ * возвращает null — вызывающий код берёт settings.size либо 'auto'.
+ */
+function aspectRatioToSize(aspect, modelKind) {
+    if (!aspect) return null;
+
+    // gpt-image-2: можно любые WxH, но для готовых пресетов из тега — таблица PLAN.
+    if (modelKind === 'gpt-image-2') {
+        const map = {
+            '1:1': '1024x1024',
+            '16:9': '2048x1152',
+            '9:16': '1152x2048',
+            '3:2': '1536x1024',
+            '2:3': '1024x1536',
+            '4:3': '1536x1152',
+            '3:4': '1152x1536',
+        };
+        return map[aspect] || null;
+    }
+
+    // gpt-image-1.5 и gpt-image-1-mini и gpt-image-1: фиксированный список.
+    if (modelKind === 'gpt-image-1.5' || modelKind === 'gpt-image-1-mini' || modelKind === 'gpt-image-1' || modelKind === 'gpt-image') {
+        const map = {
+            '1:1': '1024x1024',
+            '16:9': '1536x1024',
+            '9:16': '1024x1536',
+            '3:2': '1536x1024',
+            '2:3': '1024x1536',
+            '4:3': '1536x1024',
+            '3:4': '1024x1536',
+        };
+        return map[aspect] || null;
+    }
+
+    // dall-e-3
+    if (modelKind === 'dall-e-3') {
+        const map = {
+            '1:1': '1024x1024',
+            '16:9': '1792x1024',
+            '9:16': '1024x1792',
+        };
+        return map[aspect] || null;
+    }
+
+    // dall-e-2 — только квадраты
+    if (modelKind === 'dall-e-2') {
+        return '1024x1024';
+    }
+
+    // unknown / flux-kontext — возвращаем null, используем settings.size.
+    return null;
+}
+
+/**
+ * Разрешённые значения `quality` для модели. Возвращает null если параметр
+ * не поддерживается и его не нужно передавать.
+ */
+function normalizeQualityForModel(userQuality, modelKind) {
+    const q = String(userQuality || '').toLowerCase().trim();
+
+    if (isGptImageFamily(modelKind)) {
+        // gpt-image-*: low / medium / high / auto
+        const allowed = new Set(['low', 'medium', 'high', 'auto']);
+        if (allowed.has(q)) return q;
+        // legacy значения UI: standard/hd → high
+        if (q === 'hd') return 'high';
+        if (q === 'standard') return 'medium';
+        return 'auto';
+    }
+
+    if (modelKind === 'dall-e-3') {
+        const allowed = new Set(['standard', 'hd']);
+        return allowed.has(q) ? q : 'standard';
+    }
+
+    if (modelKind === 'dall-e-2') {
+        return 'standard'; // единственное валидное значение
+    }
+
+    // unknown — передаём как есть, пусть прокси решает.
+    return q || null;
+}
+
+/**
+ * Парсит ответ-ошибку OpenAI-совместимого API в единообразный вид.
+ */
+async function parseOpenAIError(response) {
+    const raw = await response.text().catch(() => '');
+    let payload = null;
+    try {
+        payload = raw ? JSON.parse(raw) : null;
+    } catch (_e) {
+        payload = null;
+    }
+    const err = payload?.error || {};
+    const message = err.message || err.detail || raw || `HTTP ${response.status}`;
+    const code = err.code || err.type || String(response.status);
+    return { message: String(message).slice(0, 800), code };
+}
+
+/**
+ * Переводит TypeError/AbortError, возникающие при `fetch` на сетевом уровне,
+ * в человеко-читаемое сообщение. Вызывается вокруг `fetchWithTimeout` в
+ * провайдерах — без этого юзер видит "Failed to fetch" без контекста.
+ *
+ * @param {unknown} error
+ * @param {string} endpointLabel — короткое имя endpoint-а для сообщения
+ */
+function rethrowNetworkErrorAsHuman(error, endpointLabel) {
+    // AbortError = наш таймаут (fetchWithTimeout) или внешний abort.
+    if (error?.name === 'AbortError') {
+        throw new Error(
+            `Превышено время ожидания ответа от ${endpointLabel}. `
+            + 'Проверьте подключение и попробуйте перегенерировать.'
+        );
+    }
+    // TypeError: Failed to fetch — DNS, CORS, сервер недоступен, ERR_CONNECTION_*.
+    if (error?.name === 'TypeError') {
+        throw new Error(
+            `Проблема с подключением к ${endpointLabel}. `
+            + 'Сервер недоступен или заблокирован. Попробуйте перегенерировать.'
+        );
+    }
+    // Остальное — пробрасываем как есть (уже обработанная API-ошибка).
+    throw error;
+}
+
+/**
+ * Распаковывает результат /generations или /edits.
+ * OpenAI: `data[0].b64_json` (для gpt-image-* всегда) или `data[0].url`.
+ */
+function extractImageFromResult(result) {
+    const dataList = Array.isArray(result?.data) ? result.data : [];
+    if (dataList.length === 0) {
+        if (result?.url) return result.url;
+        throw new Error('No image data in response');
+    }
+    const imageObj = dataList[0];
+    if (imageObj?.b64_json) {
+        return `data:image/png;base64,${imageObj.b64_json}`;
+    }
+    if (imageObj?.url) {
+        return imageObj.url;
+    }
+    throw new Error('Response data[0] has no b64_json or url');
+}
+
 export class OpenAIProvider extends Provider {
     get id() { return 'openai'; }
     get displayName() { return 'OpenAI'; }
+
+    supportsReferences(settings) {
+        // Референсы работают только там, где есть `/v1/images/edits`
+        // с multi-image входом: семейство gpt-image-* и flux-1-kontext-*.
+        // dall-e-2 формально умеет /edits с одним image, но мы не делаем
+        // под него исключение — UI проще.
+        const kind = classifyOpenAIModel(settings.model);
+        return isGptImageFamily(kind) || kind === 'flux-kontext';
+    }
 
     async collectReferences({ prompt: _prompt, messageId, matchedAdditionalRefs = [] }) {
         const settings = getSettings();
@@ -174,62 +375,132 @@ export class OpenAIProvider extends Provider {
 
     async generate({ prompt, style, references = [], options = {} }) {
         const settings = getSettings();
-        const url = `${settings.endpoint.replace(/\/$/, '')}/v1/images/generations`;
-
+        const baseUrl = String(settings.endpoint || '').replace(/\/$/, '');
         const fullPrompt = buildFinalGenerationPrompt(prompt, style, options.matchedAdditionalRefs || [], settings);
 
-        // Map aspect ratio to size if provided in tag
-        let size = settings.size;
-        if (options.aspectRatio) {
-            if (options.aspectRatio === '16:9') size = '1792x1024';
-            else if (options.aspectRatio === '9:16') size = '1024x1792';
-            else if (options.aspectRatio === '1:1') size = '1024x1024';
+        const modelKind = classifyOpenAIModel(settings.model);
+        const requestedSize = options.aspectRatio
+            ? (aspectRatioToSize(options.aspectRatio, modelKind) || settings.size)
+            : settings.size;
+        const quality = normalizeQualityForModel(options.quality || settings.quality, modelKind);
+
+        iigLog(
+            'INFO',
+            `OpenAI generate: model=${settings.model} kind=${modelKind} refs=${references.length} size=${requestedSize} quality=${quality}`
+        );
+
+        // Роутинг: есть референсы → /v1/images/edits (multipart),
+        // иначе → /v1/images/generations (JSON).
+        if (references.length > 0) {
+            return await this._generateWithEdits({
+                baseUrl,
+                apiKey: settings.apiKey,
+                model: settings.model,
+                modelKind,
+                prompt: fullPrompt,
+                size: requestedSize,
+                quality,
+                references,
+            });
         }
+
+        return await this._generateWithGenerations({
+            baseUrl,
+            apiKey: settings.apiKey,
+            model: settings.model,
+            modelKind,
+            prompt: fullPrompt,
+            size: requestedSize,
+            quality,
+        });
+    }
+
+    async _generateWithGenerations({ baseUrl, apiKey, model, modelKind, prompt, size, quality }) {
+        const url = `${baseUrl}/v1/images/generations`;
 
         const body = {
-            model: settings.model,
-            prompt: fullPrompt,
+            model,
+            prompt,
             n: 1,
-            size: size,
-            quality: options.quality || settings.quality,
-            response_format: 'b64_json',
         };
+        if (size) body.size = size;
+        if (quality) body.quality = quality;
 
-        // Add reference image if supported (for models like GPT-Image-1, FLUX)
-        if (references.length > 0) {
-            body.image = `data:image/png;base64,${references[0]}`;
+        // response_format=b64_json поддерживается dall-e-*. Для gpt-image-* OpenAI
+        // возвращает b64 всегда, параметр игнорируется/отклоняется — не отправляем
+        // его для семейства gpt-image-*, чтобы не словить 400 на строгих прокси.
+        if (!isGptImageFamily(modelKind)) {
+            body.response_format = 'b64_json';
         }
 
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${settings.apiKey}`,
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(body),
-        });
+        let response;
+        try {
+            response = await fetchWithTimeout(url, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(body),
+            }, OPENAI_REQUEST_TIMEOUT_MS);
+        } catch (error) {
+            rethrowNetworkErrorAsHuman(error, `OpenAI /v1/images/generations (${baseUrl})`);
+        }
 
         if (!response.ok) {
-            const text = await response.text();
-            throw new Error(`API Error (${response.status}): ${text}`);
+            const { message, code } = await parseOpenAIError(response);
+            throw new Error(`OpenAI /generations ${response.status} ${code}: ${message}`);
         }
 
         const result = await response.json();
+        return extractImageFromResult(result);
+    }
 
-        const dataList = result.data || [];
-        if (dataList.length === 0) {
-            if (result.url) return result.url;
-            throw new Error('No image data in response');
+    async _generateWithEdits({ baseUrl, apiKey, model, modelKind, prompt, size, quality, references }) {
+        const url = `${baseUrl}/v1/images/edits`;
+        const form = new FormData();
+
+        form.append('model', model);
+        form.append('prompt', prompt);
+        form.append('n', '1');
+        if (size) form.append('size', size);
+        if (quality) form.append('quality', quality);
+
+        // GPT Image family: поле `image[]` для множественных референсов
+        // (OpenAI gpt-image-1 / 1.5 / 2 поддерживает multi-image edit).
+        // Остальные (dall-e-2, unknown): одиночный `image`.
+        if (isGptImageFamily(modelKind) && references.length > 1) {
+            references.forEach((ref, idx) => {
+                const blob = base64ToBlob(ref, 'image/png');
+                // OpenAI принимает повторный `image[]` как массив.
+                form.append('image[]', blob, `reference-${idx}.png`);
+            });
+        } else {
+            const blob = base64ToBlob(references[0], 'image/png');
+            form.append('image', blob, 'reference-0.png');
         }
 
-        const imageObj = dataList[0];
-        const imageData = imageObj.b64_json || imageObj.url;
-
-        if (imageObj.b64_json) {
-            return `data:image/png;base64,${imageObj.b64_json}`;
+        let response;
+        try {
+            response = await fetchWithTimeout(url, {
+                method: 'POST',
+                headers: {
+                    // Content-Type с boundary FormData проставит сам.
+                    'Authorization': `Bearer ${apiKey}`,
+                },
+                body: form,
+            }, OPENAI_REQUEST_TIMEOUT_MS);
+        } catch (error) {
+            rethrowNetworkErrorAsHuman(error, `OpenAI /v1/images/edits (${baseUrl})`);
         }
 
-        return imageData;
+        if (!response.ok) {
+            const { message, code } = await parseOpenAIError(response);
+            throw new Error(`OpenAI /edits ${response.status} ${code}: ${message}`);
+        }
+
+        const result = await response.json();
+        return extractImageFromResult(result);
     }
 }
 
@@ -391,6 +662,10 @@ export class NaisteraProvider extends Provider {
             errors.push('Для Naistera выберите модель: grok / grok-pro / nano banana');
         }
         return errors;
+    }
+
+    supportsReferences(settings) {
+        return naisteraModelSupportsReferences(settings.naisteraModel);
     }
 
     async collectReferences({ prompt: _prompt, messageId, matchedAdditionalRefs = [], providerOptions = {} }) {
