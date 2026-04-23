@@ -57,7 +57,7 @@ export const defaultSettings = Object.freeze({
     imageContextCount: 1,
     styles: [],
     activeStyleId: '',
-    apiType: 'openai', // 'openai' | 'gemini' | 'naistera'
+    apiType: 'openai', // 'openai' | 'gemini' | 'openrouter' | 'electronhub' | 'naistera'
     endpoint: '',
     apiKey: '',
     model: '',
@@ -102,11 +102,15 @@ export const NAISTERA_MODELS = Object.freeze(['grok', 'grok-pro', 'nano banana 2
 
 export const DEFAULT_ENDPOINTS = Object.freeze({
     naistera: 'https://naistera.org',
+    openrouter: 'https://openrouter.ai/api/v1',
+    electronhub: 'https://api.electronhub.ai',
 });
 
 export const ENDPOINT_PLACEHOLDERS = Object.freeze({
     openai: 'https://api.openai.com',
     gemini: 'https://generativelanguage.googleapis.com',
+    openrouter: 'https://openrouter.ai/api/v1',
+    electronhub: 'https://api.electronhub.ai',
     naistera: 'https://naistera.org',
 });
 
@@ -215,7 +219,10 @@ export function getEndpointPlaceholder(apiType) {
 export function normalizeConfiguredEndpoint(apiType, endpoint) {
     const trimmed = String(endpoint || '').trim().replace(/\/+$/, '');
     if (!trimmed) {
-        return apiType === 'naistera' ? DEFAULT_ENDPOINTS.naistera : '';
+        if (apiType === 'naistera') return DEFAULT_ENDPOINTS.naistera;
+        if (apiType === 'openrouter') return DEFAULT_ENDPOINTS.openrouter;
+        if (apiType === 'electronhub') return DEFAULT_ENDPOINTS.electronhub;
+        return '';
     }
     if (apiType === 'naistera') {
         return trimmed.replace(/\/api\/generate$/i, '');

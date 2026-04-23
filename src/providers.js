@@ -30,6 +30,8 @@ import {
     imageUrlToDataUrl,
     base64ToBlob,
     fetchWithTimeout,
+    ProviderError,
+    isRetryableHttpStatus,
 } from './utils.js';
 import { buildFinalGenerationPrompt } from './parser.js';
 import {
@@ -132,6 +134,68 @@ export function getGeminiCapabilities(modelId) {
     return GEMINI_CAPS[classifyGeminiModel(modelId)] || GEMINI_CAPS.unknown;
 }
 
+// ----- OpenRouter capabilities -----
+
+/**
+ * Классификация OpenRouter image-модели по префиксу провайдера.
+ *
+ * Возвращает одну из:
+ *   - `'gemini-3.1-flash-image'`
+ *   - `'gemini-3-pro-image'`
+ *   - `'gemini-2.5-flash-image'`
+ *   - `'flux'`     — black-forest-labs/flux.*
+ *   - `'sourceful'`
+ *   - `'unknown'`
+ */
+export function classifyOpenRouterModel(modelId) {
+    const id = String(modelId || '').toLowerCase().trim();
+    if (!id) return 'unknown';
+
+    // Gemini через OpenRouter: префикс `google/`.
+    if (id.startsWith('google/')) {
+        const stripped = id.slice('google/'.length);
+        const geminiKind = classifyGeminiModel(stripped);
+        if (geminiKind !== 'unknown') return geminiKind;
+    }
+
+    if (id.startsWith('black-forest-labs/')) return 'flux';
+    if (id.startsWith('sourceful/')) return 'sourceful';
+    return 'unknown';
+}
+
+function isGeminiOpenRouterModel(modelId) {
+    const kind = classifyOpenRouterModel(modelId);
+    return kind === 'gemini-3.1-flash-image'
+        || kind === 'gemini-3-pro-image'
+        || kind === 'gemini-2.5-flash-image';
+}
+
+/**
+ * Общий whitelist aspect ratios для generic OpenRouter моделей (flux и др.)
+ * Документация OpenRouter: эти пресеты маппятся в конкретные размеры на
+ * их стороне. 1:4/4:1/1:8/8:1 поддерживает только gemini-3.1-flash-image.
+ */
+const OPENROUTER_GENERIC_ASPECTS = Object.freeze(
+    ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'],
+);
+
+/**
+ * Capabilities OpenRouter-модели. Для gemini-* делегируется в GEMINI_CAPS,
+ * иначе — generic (без image_size, общий aspect whitelist).
+ */
+export function getOpenRouterCapabilities(modelId) {
+    const kind = classifyOpenRouterModel(modelId);
+    if (kind === 'gemini-3.1-flash-image' || kind === 'gemini-3-pro-image' || kind === 'gemini-2.5-flash-image') {
+        return GEMINI_CAPS[kind];
+    }
+    // flux / sourceful / unknown — aspect_ratio допустим, image_size не передаём.
+    return {
+        maxReferences: MAX_GENERATION_REFERENCE_IMAGES,
+        imageSizes: null,
+        aspectRatios: OPENROUTER_GENERIC_ASPECTS,
+    };
+}
+
 // ----- Base Provider -----
 
 /**
@@ -205,6 +269,41 @@ export class Provider {
     async generate(_request) {
         throw new Error(`Provider[${this.id}].generate() not implemented`);
     }
+
+    /**
+     * Возвращает список id моделей, доступных для генерации.
+     *
+     * Базовая реализация — OpenAI-совместимый `GET {endpoint}/v1/models`
+     * + фильтр по `isImageModel`. Провайдеры, у которых формат другой
+     * (OpenRouter, hypothetical custom endpoints), переопределяют.
+     *
+     * @returns {Promise<string[]>}
+     */
+    async fetchModels() {
+        const settings = getSettings();
+        const endpoint = getEffectiveEndpoint(settings);
+
+        if (!endpoint || !settings.apiKey) {
+            console.warn('[IIG] Cannot fetch models: endpoint or API key not set');
+            return [];
+        }
+
+        const url = `${endpoint}/v1/models`;
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${settings.apiKey}`,
+            },
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        const models = data.data || [];
+        return models.filter(m => isImageModel(m.id)).map(m => m.id);
+    }
 }
 
 // ----- OpenAI (OpenAI-compatible) -----
@@ -238,6 +337,20 @@ function classifyOpenAIModel(modelId) {
 function isGptImageFamily(kind) {
     return kind === 'gpt-image-2' || kind === 'gpt-image-1.5' || kind === 'gpt-image-1-mini'
         || kind === 'gpt-image-1' || kind === 'gpt-image';
+}
+
+/**
+ * Максимум референсов, поддерживаемых конкретной моделью в `/v1/images/edits`:
+ *   - gpt-image-*: до `MAX_GENERATION_REFERENCE_IMAGES` (мультиреф `image[]`).
+ *   - flux-1-kontext-*: 1 (у Flux Kontext дизайн — один reference).
+ *   - dall-e-2: 1.
+ *   - dall-e-3 / unknown: 0 — через /edits они не ходят.
+ */
+function getOpenAIModelMaxReferences(kind) {
+    if (isGptImageFamily(kind)) return MAX_GENERATION_REFERENCE_IMAGES;
+    if (kind === 'flux-kontext') return 1;
+    if (kind === 'dall-e-2') return 1;
+    return 0;
 }
 
 /**
@@ -339,34 +452,55 @@ async function parseOpenAIError(response) {
     const err = payload?.error || {};
     const message = err.message || err.detail || raw || `HTTP ${response.status}`;
     const code = err.code || err.type || String(response.status);
-    return { message: String(message).slice(0, 800), code };
+    return { message: String(message).slice(0, 800), code, status: response.status };
 }
 
 /**
  * Переводит TypeError/AbortError, возникающие при `fetch` на сетевом уровне,
- * в человеко-читаемое сообщение. Вызывается вокруг `fetchWithTimeout` в
- * провайдерах — без этого юзер видит "Failed to fetch" без контекста.
+ * в ProviderError с понятным текстом и `retryable: true`. Вызывается
+ * вокруг `fetchWithTimeout` в провайдерах.
+ *
+ * Если это уже ProviderError — пробрасывается как есть.
  *
  * @param {unknown} error
- * @param {string} endpointLabel — короткое имя endpoint-а для сообщения
+ * @param {string} endpointLabel — короткое имя endpoint-а для сообщения.
+ * @param {string} providerId
  */
-function rethrowNetworkErrorAsHuman(error, endpointLabel) {
+function throwAsProviderError(error, endpointLabel, providerId) {
+    if (error instanceof ProviderError) {
+        throw error;
+    }
     // AbortError = наш таймаут (fetchWithTimeout) или внешний abort.
     if (error?.name === 'AbortError') {
-        throw new Error(
-            `Превышено время ожидания ответа от ${endpointLabel}. `
-            + 'Проверьте подключение и попробуйте перегенерировать.'
-        );
+        throw new ProviderError({
+            message: `Превышено время ожидания ответа от ${endpointLabel}. `
+                + 'Проверьте подключение и попробуйте перегенерировать.',
+            code: 'timeout',
+            retryable: true,
+            providerId,
+            cause: error,
+        });
     }
     // TypeError: Failed to fetch — DNS, CORS, сервер недоступен, ERR_CONNECTION_*.
     if (error?.name === 'TypeError') {
-        throw new Error(
-            `Проблема с подключением к ${endpointLabel}. `
-            + 'Сервер недоступен или заблокирован. Попробуйте перегенерировать.'
-        );
+        throw new ProviderError({
+            message: `Проблема с подключением к ${endpointLabel}. `
+                + 'Сервер недоступен или заблокирован. Попробуйте перегенерировать.',
+            code: 'network',
+            retryable: true,
+            providerId,
+            cause: error,
+        });
     }
-    // Остальное — пробрасываем как есть (уже обработанная API-ошибка).
-    throw error;
+    // Неожиданная ошибка — заворачиваем в ProviderError с retryable=false,
+    // чтобы pipeline не ретраил подозрительное.
+    throw new ProviderError({
+        message: String(error?.message || error) || 'Unknown provider error',
+        code: 'unknown',
+        retryable: false,
+        providerId,
+        cause: error,
+    });
 }
 
 /**
@@ -404,6 +538,9 @@ export class OpenAIProvider extends Provider {
 
     async collectReferences({ prompt: _prompt, messageId, matchedAdditionalRefs = [] }) {
         const settings = getSettings();
+        const modelKind = classifyOpenAIModel(settings.model);
+        // Flux Kontext принимает только 1 reference; gpt-image-* — до MAX.
+        const maxRefs = getOpenAIModelMaxReferences(modelKind) || MAX_GENERATION_REFERENCE_IMAGES;
         const refs = [];
 
         if (settings.sendCharAvatar) {
@@ -416,7 +553,7 @@ export class OpenAIProvider extends Provider {
         }
 
         for (const ref of matchedAdditionalRefs) {
-            if (refs.length >= MAX_GENERATION_REFERENCE_IMAGES) break;
+            if (refs.length >= maxRefs) break;
             const imagePath = normalizeStoredImagePath(ref.imagePath);
             if (!imagePath) continue;
             const b64 = await imageUrlToBase64(imagePath);
@@ -429,15 +566,17 @@ export class OpenAIProvider extends Provider {
             refs.push(...contextRefs);
         }
 
-        if (refs.length > MAX_GENERATION_REFERENCE_IMAGES) {
-            refs.length = MAX_GENERATION_REFERENCE_IMAGES;
+        if (refs.length > maxRefs) {
+            refs.length = maxRefs;
         }
         return refs;
     }
 
     async generate({ prompt, style, references = [], options = {} }) {
         const settings = getSettings();
-        const baseUrl = String(settings.endpoint || '').replace(/\/$/, '');
+        // getEffectiveEndpoint подставит дефолт для provider с DEFAULT_ENDPOINTS
+        // (electronhub) если endpoint не задан; для `openai` — вернёт как есть.
+        const baseUrl = (getEffectiveEndpoint(settings) || String(settings.endpoint || '')).replace(/\/$/, '');
         const fullPrompt = buildFinalGenerationPrompt(prompt, style, options.matchedAdditionalRefs || [], settings);
 
         const modelKind = classifyOpenAIModel(settings.model);
@@ -506,12 +645,18 @@ export class OpenAIProvider extends Provider {
                 body: JSON.stringify(body),
             }, OPENAI_REQUEST_TIMEOUT_MS);
         } catch (error) {
-            rethrowNetworkErrorAsHuman(error, `OpenAI /v1/images/generations (${baseUrl})`);
+            throwAsProviderError(error, `OpenAI /v1/images/generations (${baseUrl})`, 'openai');
         }
 
         if (!response.ok) {
-            const { message, code } = await parseOpenAIError(response);
-            throw new Error(`OpenAI /generations ${response.status} ${code}: ${message}`);
+            const { message, code, status } = await parseOpenAIError(response);
+            throw new ProviderError({
+                message: `OpenAI /generations ${status} ${code}: ${message}`,
+                code,
+                status,
+                retryable: isRetryableHttpStatus(status),
+                providerId: 'openai',
+            });
         }
 
         const result = await response.json();
@@ -553,12 +698,18 @@ export class OpenAIProvider extends Provider {
                 body: form,
             }, OPENAI_REQUEST_TIMEOUT_MS);
         } catch (error) {
-            rethrowNetworkErrorAsHuman(error, `OpenAI /v1/images/edits (${baseUrl})`);
+            throwAsProviderError(error, `OpenAI /v1/images/edits (${baseUrl})`, 'openai');
         }
 
         if (!response.ok) {
-            const { message, code } = await parseOpenAIError(response);
-            throw new Error(`OpenAI /edits ${response.status} ${code}: ${message}`);
+            const { message, code, status } = await parseOpenAIError(response);
+            throw new ProviderError({
+                message: `OpenAI /edits ${status} ${code}: ${message}`,
+                code,
+                status,
+                retryable: isRetryableHttpStatus(status),
+                providerId: 'openai',
+            });
         }
 
         const result = await response.json();
@@ -585,7 +736,7 @@ async function parseGeminiError(response) {
     const err = payload?.error || {};
     const message = err.message || raw || `HTTP ${response.status}`;
     const code = err.status || err.code || String(response.status);
-    return { message: String(message).slice(0, 800), code };
+    return { message: String(message).slice(0, 800), code, status: response.status };
 }
 
 export class GeminiProvider extends Provider {
@@ -707,19 +858,30 @@ export class GeminiProvider extends Provider {
                 body: JSON.stringify(body),
             }, GEMINI_REQUEST_TIMEOUT_MS);
         } catch (error) {
-            rethrowNetworkErrorAsHuman(error, `Gemini ${model}`);
+            throwAsProviderError(error, `Gemini ${model}`, 'gemini');
         }
 
         if (!response.ok) {
-            const { message, code } = await parseGeminiError(response);
-            throw new Error(`Gemini ${model} ${response.status} ${code}: ${message}`);
+            const { message, code, status } = await parseGeminiError(response);
+            throw new ProviderError({
+                message: `Gemini ${model} ${status} ${code}: ${message}`,
+                code,
+                status,
+                retryable: isRetryableHttpStatus(status),
+                providerId: 'gemini',
+            });
         }
 
         const result = await response.json();
 
         const candidates = result.candidates || [];
         if (candidates.length === 0) {
-            throw new Error('No candidates in Gemini response');
+            throw new ProviderError({
+                message: 'No candidates in Gemini response',
+                code: 'empty_response',
+                retryable: false,
+                providerId: 'gemini',
+            });
         }
 
         const responseParts = candidates[0].content?.parts || [];
@@ -734,7 +896,314 @@ export class GeminiProvider extends Provider {
             }
         }
 
-        throw new Error('No image found in Gemini response');
+        throw new ProviderError({
+            message: 'No image found in Gemini response',
+            code: 'no_image',
+            retryable: false,
+            providerId: 'gemini',
+        });
+    }
+}
+
+// ----- OpenRouter (chat completions с modalities=image) -----
+
+const OPENROUTER_REQUEST_TIMEOUT_MS = 120_000;
+const OPENROUTER_DEFAULT_ENDPOINT = 'https://openrouter.ai/api/v1';
+
+/**
+ * Парсит ошибку от OpenRouter. Формат — как у OpenAI (`{ error: { message, code, type } }`),
+ * но иногда приходит просто `{ error: string }`.
+ */
+async function parseOpenRouterError(response) {
+    const raw = await response.text().catch(() => '');
+    let payload = null;
+    try {
+        payload = raw ? JSON.parse(raw) : null;
+    } catch (_e) {
+        payload = null;
+    }
+    const errField = payload?.error;
+    let message;
+    let code;
+    if (typeof errField === 'string') {
+        message = errField;
+        code = String(response.status);
+    } else {
+        message = errField?.message || errField?.detail || raw || `HTTP ${response.status}`;
+        code = errField?.code || errField?.type || String(response.status);
+    }
+    return { message: String(message).slice(0, 800), code, status: response.status };
+}
+
+export class OpenRouterProvider extends Provider {
+    get id() { return 'openrouter'; }
+    get displayName() { return 'OpenRouter'; }
+
+    get capabilities() {
+        return {
+            ...super.capabilities,
+            referencesFormat: 'dataUrl',
+        };
+    }
+
+    validate(settings) {
+        const errors = [];
+        if (!settings.apiKey) {
+            errors.push('API ключ не настроен');
+        }
+        // Endpoint имеет дефолт (https://openrouter.ai/api/v1), поэтому не требуем.
+        return errors;
+    }
+
+    async collectReferences({ prompt: _prompt, messageId, matchedAdditionalRefs = [] }) {
+        const settings = getSettings();
+        const caps = getOpenRouterCapabilities(settings.model);
+        const maxRefs = caps.maxReferences;
+        const refs = [];
+
+        // Референсы в формате dataUrl (OpenRouter принимает base64 data URL в image_url.url).
+        if (settings.sendCharAvatar) {
+            const d = await getCharacterAvatarDataUrl();
+            if (d) refs.push(d);
+        }
+        if (settings.sendUserAvatar) {
+            const d = await getUserAvatarDataUrl();
+            if (d) refs.push(d);
+        }
+
+        for (const ref of matchedAdditionalRefs) {
+            if (refs.length >= maxRefs) break;
+            const imagePath = normalizeStoredImagePath(ref.imagePath);
+            if (!imagePath) continue;
+            const d = await imageUrlToDataUrl(imagePath);
+            if (d) refs.push(d);
+        }
+
+        if (settings.imageContextEnabled) {
+            const contextCount = normalizeImageContextCount(settings.imageContextCount);
+            const contextRefs = await collectPreviousContextReferences(messageId, 'dataUrl', contextCount);
+            refs.push(...contextRefs);
+        }
+
+        if (refs.length > maxRefs) {
+            refs.length = maxRefs;
+        }
+        return refs;
+    }
+
+    async generate({ prompt, style, references = [], options = {} }) {
+        const settings = getSettings();
+        const endpoint = (String(settings.endpoint || '').trim() || OPENROUTER_DEFAULT_ENDPOINT)
+            .replace(/\/$/, '');
+        const url = `${endpoint}/chat/completions`;
+
+        const model = settings.model;
+        const caps = getOpenRouterCapabilities(model);
+        const isGeminiOR = isGeminiOpenRouterModel(model);
+
+        // aspect_ratio: валидируем по caps.
+        let aspectRatio = options.aspectRatio || settings.aspectRatio || '1:1';
+        if (!caps.aspectRatios.includes(aspectRatio)) {
+            iigLog('WARN', `Invalid aspect_ratio "${aspectRatio}" for ${model}, falling back`);
+            aspectRatio = caps.aspectRatios.includes(settings.aspectRatio) ? settings.aspectRatio : '1:1';
+        }
+
+        // image_size: только для Gemini 3 pro / 3.1 flash (список не null).
+        let imageSize = null;
+        if (Array.isArray(caps.imageSizes)) {
+            imageSize = options.imageSize || settings.imageSize || '1K';
+            if (!caps.imageSizes.includes(imageSize)) {
+                iigLog('WARN', `Invalid image_size "${imageSize}" for ${model}, falling back`);
+                imageSize = caps.imageSizes.includes(settings.imageSize) ? settings.imageSize : '1K';
+            }
+        }
+
+        let fullPrompt = buildFinalGenerationPrompt(prompt, style, options.matchedAdditionalRefs || [], settings);
+
+        if (references.length > 0) {
+            const refInstruction = `[CRITICAL: The reference image(s) above show the EXACT appearance of the character(s). You MUST precisely copy their: face structure, eye color, hair color and style, skin tone, body type, clothing, and all distinctive features. Do not deviate from the reference appearances.]`;
+            fullPrompt = `${refInstruction}\n\n${fullPrompt}`;
+        }
+
+        // messages.content: строка если нет refs, массив частей — если есть.
+        // По докам OpenRouter text должен идти первым, далее картинки.
+        let content;
+        if (references.length > 0) {
+            const parts = [{ type: 'text', text: fullPrompt }];
+            for (const dataUrl of references.slice(0, caps.maxReferences)) {
+                parts.push({
+                    type: 'image_url',
+                    image_url: { url: dataUrl },
+                });
+            }
+            content = parts;
+        } else {
+            content = fullPrompt;
+        }
+
+        // modalities: Gemini отдаёт и текст и картинку; Flux/Sourceful — только картинку.
+        const modalities = isGeminiOR ? ['image', 'text'] : ['image'];
+
+        const body = {
+            model,
+            messages: [{ role: 'user', content }],
+            modalities,
+        };
+
+        const imageConfig = { aspect_ratio: aspectRatio };
+        if (imageSize) imageConfig.image_size = imageSize;
+        body.image_config = imageConfig;
+
+        iigLog(
+            'INFO',
+            `OpenRouter request: model=${model} kind=${classifyOpenRouterModel(model)} refs=${references.length} aspect=${aspectRatio} size=${imageSize || '(default)'} modalities=${modalities.join(',')}`
+        );
+
+        let response;
+        try {
+            response = await fetchWithTimeout(url, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${settings.apiKey}`,
+                    'Content-Type': 'application/json',
+                    // OpenRouter приветствует эти два, но не требует.
+                    'HTTP-Referer': window.location.origin,
+                    'X-Title': 'SillyTavern Inline Image Generation',
+                },
+                body: JSON.stringify(body),
+            }, OPENROUTER_REQUEST_TIMEOUT_MS);
+        } catch (error) {
+            throwAsProviderError(error, `OpenRouter ${model}`, 'openrouter');
+        }
+
+        if (!response.ok) {
+            const { message, code, status } = await parseOpenRouterError(response);
+            throw new ProviderError({
+                message: `OpenRouter ${model} ${status} ${code}: ${message}`,
+                code,
+                status,
+                retryable: isRetryableHttpStatus(status),
+                providerId: 'openrouter',
+            });
+        }
+
+        const result = await response.json();
+        const message = result?.choices?.[0]?.message;
+        const images = Array.isArray(message?.images) ? message.images : [];
+        const imageUrl = images[0]?.image_url?.url;
+
+        if (!imageUrl || typeof imageUrl !== 'string') {
+            throw new ProviderError({
+                message: 'No image in OpenRouter response (message.images empty)',
+                code: 'no_image',
+                retryable: false,
+                providerId: 'openrouter',
+            });
+        }
+
+        // OpenRouter возвращает полный data URL с base64 — отдаём как есть.
+        return imageUrl;
+    }
+
+    /**
+     * Свой fetchModels: фильтры `input_modalities=image,text` + `output_modalities=image`.
+     */
+    async fetchModels() {
+        const settings = getSettings();
+        const endpoint = (String(settings.endpoint || '').trim() || OPENROUTER_DEFAULT_ENDPOINT)
+            .replace(/\/$/, '');
+
+        if (!settings.apiKey) {
+            console.warn('[IIG] OpenRouter fetchModels: API key not set');
+            return [];
+        }
+
+        const url = `${endpoint}/models?input_modalities=image%2Ctext&output_modalities=image`;
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${settings.apiKey}`,
+            },
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        const models = Array.isArray(data?.data) ? data.data : [];
+        return models.map(m => m.id).filter(Boolean);
+    }
+}
+
+// ----- Electron Hub (OpenAI-совместимый агрегатор, flux-1-kontext-*) -----
+
+const ELECTRONHUB_DEFAULT_ENDPOINT = 'https://api.electronhub.ai';
+
+/**
+ * Electron Hub — OpenAI-совместимый прокси с 200+ моделями. Отличия:
+ *   - `/v1/images/edits` принимает только один `image` (без `image[]`),
+ *     так что flux-1-kontext-* маршрутизируется через /edits с 1 референсом;
+ *   - `/v1/models` возвращает модели со всеми типами (chat/image/embeddings),
+ *     у image-моделей в поле `endpoints` есть `/v1/images/generations`
+ *     и/или `/v1/images/edits` — фильтруем именно по ним.
+ *
+ * Всё остальное наследуется от OpenAIProvider (classifier / aspect / quality
+ * / _generateWithEdits / _generateWithGenerations / error parsing).
+ */
+export class ElectronHubProvider extends OpenAIProvider {
+    get id() { return 'electronhub'; }
+    get displayName() { return 'Electron Hub'; }
+
+    /**
+     * Валидация: endpoint опционален (есть дефолт в normalizeConfiguredEndpoint),
+     * apiKey обязателен.
+     */
+    validate(settings) {
+        const errors = [];
+        if (!settings.apiKey) {
+            errors.push('API ключ не настроен');
+        }
+        return errors;
+    }
+
+    /**
+     * Список image-моделей через фильтр по полю `endpoints`. Если поле
+     * отсутствует в ответе — фолбэк на keyword-based isImageModel.
+     */
+    async fetchModels() {
+        const settings = getSettings();
+        const endpoint = (getEffectiveEndpoint(settings) || ELECTRONHUB_DEFAULT_ENDPOINT).replace(/\/$/, '');
+
+        if (!settings.apiKey) {
+            console.warn('[IIG] Electron Hub fetchModels: API key not set');
+            return [];
+        }
+
+        const url = `${endpoint}/v1/models`;
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${settings.apiKey}`,
+            },
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        const models = Array.isArray(data?.data) ? data.data : [];
+
+        return models.filter((m) => {
+            const eps = Array.isArray(m?.endpoints) ? m.endpoints.map(String) : null;
+            if (eps && eps.length > 0) {
+                return eps.some((e) =>
+                    e.includes('/images/generations') || e.includes('/images/edits'),
+                );
+            }
+            return isImageModel(m.id);
+        }).map((m) => m.id).filter(Boolean);
     }
 }
 
@@ -855,21 +1324,36 @@ export class NaisteraProvider extends Provider {
                 console.warn('[IIG] Failed to parse Naistera endpoint origin:', parseErr);
             }
             const rawMessage = String(error?.message || '').trim() || 'Failed to fetch';
-            throw new Error(
-                `Network/CORS error while requesting ${endpointOrigin} from ${pageOrigin}. `
-                + `The browser blocked access to the response before the API could return JSON. `
-                + `Original error: ${rawMessage}`
-            );
+            throw new ProviderError({
+                message: `Network/CORS error while requesting ${endpointOrigin} from ${pageOrigin}. `
+                    + `The browser blocked access to the response before the API could return JSON. `
+                    + `Original error: ${rawMessage}`,
+                code: 'network',
+                retryable: true,
+                providerId: 'naistera',
+                cause: error,
+            });
         }
 
         if (!response.ok) {
-            const text = await response.text();
-            throw new Error(`API Error (${response.status}): ${text}`);
+            const text = await response.text().catch(() => '');
+            throw new ProviderError({
+                message: `API Error (${response.status}): ${String(text).slice(0, 800)}`,
+                code: String(response.status),
+                status: response.status,
+                retryable: isRetryableHttpStatus(response.status),
+                providerId: 'naistera',
+            });
         }
 
         const result = await response.json();
         if (!result?.data_url) {
-            throw new Error('No data_url in response');
+            throw new ProviderError({
+                message: 'No data_url in response',
+                code: 'empty_response',
+                retryable: false,
+                providerId: 'naistera',
+            });
         }
         if (result.media_kind === 'video') {
             return {
@@ -912,40 +1396,25 @@ export function resolveActiveProvider(settings = getSettings()) {
     return providers.get(settings.apiType);
 }
 
-// Default registration: three current providers.
+// Default registration.
 registerProvider(new OpenAIProvider());
 registerProvider(new GeminiProvider());
+registerProvider(new OpenRouterProvider());
+registerProvider(new ElectronHubProvider());
 registerProvider(new NaisteraProvider());
 
-// ----- Models fetcher (общий для всех /v1/models-совместимых) -----
+// ----- Models fetcher (делегируется провайдеру) -----
 
 export async function fetchModels() {
     const settings = getSettings();
-    const endpoint = getEffectiveEndpoint(settings);
-
-    if (!endpoint || !settings.apiKey) {
-        console.warn('[IIG] Cannot fetch models: endpoint or API key not set');
+    const provider = resolveActiveProvider(settings);
+    if (!provider) {
+        console.warn('[IIG] fetchModels: no active provider for apiType=', settings.apiType);
         return [];
     }
 
-    const url = `${endpoint}/v1/models`;
-
     try {
-        const response = await fetch(url, {
-            method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${settings.apiKey}`,
-            },
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-        }
-
-        const data = await response.json();
-        const models = data.data || [];
-
-        return models.filter(m => isImageModel(m.id)).map(m => m.id);
+        return await provider.fetchModels();
     } catch (error) {
         console.error('[IIG] Failed to fetch models:', error);
         toastr.error(`Ошибка загрузки моделей: ${error.message}`, 'Генерация картинок');

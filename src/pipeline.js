@@ -18,6 +18,7 @@ import {
     saveNaisteraMediaToFile,
     ERROR_IMAGE_PATH,
     parseImageDataUrl,
+    ProviderError,
 } from './utils.js';
 import {
     applyConfiguredStyleToTag,
@@ -196,12 +197,20 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
             lastError = error;
             console.error(`[IIG] Generation attempt ${attempt + 1} failed:`, error);
 
-            const isRetryable = error.message?.includes('429') ||
-                               error.message?.includes('503') ||
-                               error.message?.includes('502') ||
-                               error.message?.includes('504') ||
-                               error.message?.includes('timeout') ||
-                               error.message?.includes('network');
+            // ProviderError даёт `retryable` явно. Для прочих ошибок (напр.
+            // всплывших из saveImageToFile / внутренностей JS) — fallback на
+            // прежнюю regex-эвристику, чтобы не потерять привычное поведение.
+            let isRetryable;
+            if (error instanceof ProviderError) {
+                isRetryable = error.retryable;
+            } else {
+                isRetryable = error.message?.includes('429') ||
+                              error.message?.includes('503') ||
+                              error.message?.includes('502') ||
+                              error.message?.includes('504') ||
+                              error.message?.includes('timeout') ||
+                              error.message?.includes('network');
+            }
 
             if (!isRetryable || attempt === maxRetries) {
                 break;

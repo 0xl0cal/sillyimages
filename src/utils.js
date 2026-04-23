@@ -378,3 +378,49 @@ export async function fetchWithTimeout(url, init = {}, timeoutMs = 120_000, exte
 // ----- Error / UI asset paths -----
 
 export const ERROR_IMAGE_PATH = '/scripts/extensions/third-party/sillyimages/error.svg';
+
+// ----- Provider error -----
+
+/**
+ * Унифицированная ошибка провайдера.
+ *
+ * Все провайдеры должны бросать только `ProviderError`. Это даёт pipeline:
+ *   - однозначное решение о retry через `retryable` (вместо regex по message);
+ *   - возможность логировать `code` / `status` / `providerId` отдельно от UI-текста;
+ *   - стабильное сообщение для toast'а (`message`).
+ */
+export class ProviderError extends Error {
+    /**
+     * @param {object} params
+     * @param {string} params.message — человекочитаемый текст для UI/логов.
+     * @param {string} [params.code] — код ошибки: 'network', 'timeout', '429',
+     *   'rate_limit_exceeded', 'invalid_request', ... По возможности берётся из
+     *   тела ответа API, иначе — HTTP-статус или служебная метка.
+     * @param {boolean} [params.retryable] — следует ли ретраить (см. isRetryableHttpStatus).
+     * @param {string} [params.providerId] — id провайдера ('openai' / 'gemini' / ...).
+     * @param {number} [params.status] — HTTP статус, если ошибка была ответом сервера.
+     * @param {unknown} [params.cause] — исходная ошибка (сохранение stack trace).
+     */
+    constructor({ message, code = 'unknown', retryable = false, providerId = '', status = 0, cause } = {}) {
+        super(message || code || 'Provider error');
+        this.name = 'ProviderError';
+        this.code = String(code);
+        this.retryable = Boolean(retryable);
+        this.providerId = String(providerId);
+        this.status = Number(status) || 0;
+        if (cause !== undefined) this.cause = cause;
+    }
+}
+
+/**
+ * Является ли HTTP-статус «временным» (имеет смысл повторить запрос).
+ *   - 408 Request Timeout, 429 Too Many Requests — да;
+ *   - 500/502/503/504 — да;
+ *   - всё остальное (включая 501/505/4xx) — нет.
+ */
+export function isRetryableHttpStatus(status) {
+    const s = Number(status) || 0;
+    if (s === 408 || s === 429) return true;
+    if (s === 500 || s === 502 || s === 503 || s === 504) return true;
+    return false;
+}

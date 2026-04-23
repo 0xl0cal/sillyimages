@@ -88,6 +88,8 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                 <select id="iig_api_type" class="flex1">
                     <option value="openai" ${settings.apiType === 'openai' ? 'selected' : ''}>OpenAI-совместимый (/v1/images/generations)</option>
                     <option value="gemini" ${settings.apiType === 'gemini' ? 'selected' : ''}>Gemini-совместимый (nano-banana)</option>
+                    <option value="openrouter" ${settings.apiType === 'openrouter' ? 'selected' : ''}>OpenRouter (chat/completions)</option>
+                    <option value="electronhub" ${settings.apiType === 'electronhub' ? 'selected' : ''}>Electron Hub (/v1/images/*)</option>
                     <option value="naistera" ${settings.apiType === 'naistera' ? 'selected' : ''}>Naistera (naistera.org)</option>
                 </select>
                 <div></div>
@@ -119,7 +121,7 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                 </div>
             </div>
 
-            <div class="flex-row ${settings.apiType !== 'openai' ? 'iig-hidden' : ''}" id="iig_size_row">
+            <div class="flex-row ${settings.apiType !== 'openai' && settings.apiType !== 'electronhub' ? 'iig-hidden' : ''}" id="iig_size_row">
                 <label for="iig_size">Размер</label>
                 <select id="iig_size" class="flex1">
                     <option value="1024x1024" ${settings.size === '1024x1024' ? 'selected' : ''}>1024x1024 (Квадрат)</option>
@@ -130,7 +132,7 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                 <div></div>
             </div>
 
-            <div class="flex-row ${settings.apiType !== 'openai' ? 'iig-hidden' : ''}" id="iig_quality_row">
+            <div class="flex-row ${settings.apiType !== 'openai' && settings.apiType !== 'electronhub' ? 'iig-hidden' : ''}" id="iig_quality_row">
                 <label for="iig_quality">Качество</label>
                 <select id="iig_quality" class="flex1">
                     <option value="standard" ${settings.quality === 'standard' ? 'selected' : ''}>Стандартное</option>
@@ -162,7 +164,7 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                 <div></div>
             </div>
 
-            <div id="iig_avatar_section" class="iig-settings-card-nested ${settings.apiType !== 'gemini' ? 'iig-hidden' : ''}">
+            <div id="iig_avatar_section" class="iig-settings-card-nested ${settings.apiType !== 'gemini' && settings.apiType !== 'openrouter' ? 'iig-hidden' : ''}">
                 <div class="flex-row">
                     <label for="iig_aspect_ratio">Соотношение сторон</label>
                     <select id="iig_aspect_ratio" class="flex1">
@@ -344,14 +346,23 @@ function buildReferencesSettingsSectionHtml(settings = getSettings()) {
     const refsSupported = provider ? provider.supportsReferences(settings) : false;
     const isGemini = settings.apiType === 'gemini';
     const isOpenAI = settings.apiType === 'openai';
-    const commonAvatarRefsVisible = (isGemini || isOpenAI) && refsSupported;
+    const isOpenRouter = settings.apiType === 'openrouter';
+    const isElectronHub = settings.apiType === 'electronhub';
+    const commonAvatarRefsVisible = (isGemini || isOpenAI || isOpenRouter || isElectronHub) && refsSupported;
     const naisteraRefsVisible = settings.apiType === 'naistera' && refsSupported;
+
+    // Заголовок секции аватаров — по активному провайдеру.
+    let avatarRefsTitle;
+    if (isOpenRouter) avatarRefsTitle = 'OpenRouter';
+    else if (isElectronHub) avatarRefsTitle = 'Electron Hub';
+    else if (isOpenAI) avatarRefsTitle = 'OpenAI / GPT Image';
+    else avatarRefsTitle = 'Gemini / nano-banana';
 
     const geminiAvatarsBlock = buildAvatarReferencesBlockHtml({
         sectionId: 'iig_avatar_refs_section',
         hiddenClass: 'iig-hidden',
         hidden: !commonAvatarRefsVisible,
-        title: isOpenAI ? 'OpenAI / GPT Image' : 'Gemini / nano-banana',
+        title: avatarRefsTitle,
         sendCharCheckboxId: 'iig_send_char_avatar',
         sendCharEnabled: settings.sendCharAvatar,
         sendUserCheckboxId: 'iig_send_user_avatar',
@@ -545,8 +556,10 @@ function bindApiSectionEvents(settings, updateVisibility) {
         settings.model = e.target.value;
         saveSettings();
 
-        // Auto-switch API type based on model
-        if (isGeminiModel(e.target.value)) {
+        // Auto-switch API type на 'gemini' применим только если сейчас
+        // выбран OpenAI (legacy — когда юзер через OpenAI endpoint выбрал
+        // nano-banana). Для openrouter/gemini/naistera не трогаем.
+        if (settings.apiType === 'openai' && isGeminiModel(e.target.value)) {
             document.getElementById('iig_api_type').value = 'gemini';
             settings.apiType = 'gemini';
         }
@@ -1029,6 +1042,8 @@ function buildUpdateVisibility(settings) {
         const isNaistera = apiType === 'naistera';
         const isGemini = apiType === 'gemini';
         const isOpenAI = apiType === 'openai';
+        const isOpenRouter = apiType === 'openrouter';
+        const isElectronHub = apiType === 'electronhub';
 
         // Поддерживает ли активный провайдер референсы (учитывая модель).
         const provider = resolveActiveProvider(settings);
@@ -1037,8 +1052,9 @@ function buildUpdateVisibility(settings) {
 
         // «Общий» avatar refs блок (char/user аватар с чекбоксами) — теперь
         // показывается не только для Gemini, но и для любого OpenAI-семейства,
-        // которое поддерживает /edits. Naistera использует свой отдельный блок.
-        const commonAvatarRefsVisible = (isGemini || isOpenAI) && refsSupported;
+        // которое поддерживает /edits, и для OpenRouter/Electron Hub. Naistera
+        // использует свой отдельный блок.
+        const commonAvatarRefsVisible = (isGemini || isOpenAI || isOpenRouter || isElectronHub) && refsSupported;
 
         // Model is used for OpenAI and Gemini; Naistera does not need a model.
         document.getElementById('iig_model_row')?.classList.toggle('iig-hidden', isNaistera);
@@ -1046,9 +1062,10 @@ function buildUpdateVisibility(settings) {
         document.getElementById('iig_image_context_count_row')?.classList.toggle('iig-hidden', !(refsSupported && settings.imageContextEnabled));
         document.getElementById('iig_additional_refs_section')?.classList.toggle('iig-hidden', !refsSupported);
 
-        // OpenAI-only params
-        document.getElementById('iig_size_row')?.classList.toggle('iig-hidden', !isOpenAI);
-        document.getElementById('iig_quality_row')?.classList.toggle('iig-hidden', !isOpenAI);
+        // OpenAI + Electron Hub params (size / quality) — Electron Hub
+        // принимает тот же формат JSON на /v1/images/{generations,edits}.
+        document.getElementById('iig_size_row')?.classList.toggle('iig-hidden', !(isOpenAI || isElectronHub));
+        document.getElementById('iig_quality_row')?.classList.toggle('iig-hidden', !(isOpenAI || isElectronHub));
 
         // Naistera-only params
         document.getElementById('iig_naistera_model_row')?.classList.toggle('iig-hidden', !isNaistera);
@@ -1069,21 +1086,25 @@ function buildUpdateVisibility(settings) {
             endpointInput.placeholder = getEndpointPlaceholder(apiType);
         }
 
-        // Nano-banana-specific params (aspect + image size) — только для Gemini.
+        // Aspect + image size — для Gemini и OpenRouter. В OpenAI размер
+        // задаётся другим селектором (#iig_size), в Naistera — своим.
         const avatarSection = document.getElementById('iig_avatar_section');
         if (avatarSection) {
-            avatarSection.classList.toggle('iig-hidden', !isGemini);
+            avatarSection.classList.toggle('iig-hidden', !(isGemini || isOpenRouter));
         }
 
-        // «Общий» avatar refs блок — для Gemini и OpenAI-c-refs.
+        // «Общий» avatar refs блок — для Gemini / OpenAI-c-refs / OpenRouter.
         const avatarRefsSection = document.getElementById('iig_avatar_refs_section');
         if (avatarRefsSection) {
             avatarRefsSection.classList.toggle('iig-hidden', !commonAvatarRefsVisible);
 
-            // Обновляем заголовок при смене провайдера (Gemini ↔ OpenAI).
+            // Обновляем заголовок при смене провайдера.
             const titleEl = avatarRefsSection.querySelector('h4');
             if (titleEl) {
-                titleEl.textContent = isOpenAI ? 'OpenAI / GPT Image' : 'Gemini / nano-banana';
+                if (isOpenRouter) titleEl.textContent = 'OpenRouter';
+                else if (isElectronHub) titleEl.textContent = 'Electron Hub';
+                else if (isOpenAI) titleEl.textContent = 'OpenAI / GPT Image';
+                else titleEl.textContent = 'Gemini / nano-banana';
             }
         }
         document.getElementById('iig_use_active_persona_avatar_row')?.classList.toggle(
