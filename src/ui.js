@@ -30,6 +30,13 @@ import {
     getEndpointPlaceholder,
     MAX_CONTEXT_IMAGES,
     MAX_ADDITIONAL_REFERENCES,
+    ensureConnectionProfiles,
+    getActiveConnectionProfile,
+    createConnectionProfile,
+    saveCurrentIntoProfile,
+    loadConnectionProfile,
+    renameConnectionProfile,
+    removeConnectionProfile,
 } from './settings.js';
 import {
     normalizeStoredImagePath,
@@ -71,9 +78,43 @@ function buildSettingsSectionHtml(sectionId, title, bodyHtml, expanded = true) {
 
 // ----- API section -----
 
+function buildConnectionProfilesBlockHtml(settings = getSettings()) {
+    const profiles = ensureConnectionProfiles(settings);
+    const activeId = settings.activeConnectionProfileId;
+    const optionsHtml = profiles.map((p) =>
+        `<option value="${sanitizeForHtml(p.id)}" ${p.id === activeId ? 'selected' : ''}>${sanitizeForHtml(p.name)}</option>`,
+    ).join('');
+    return `
+        <div class="iig-settings-card-nested iig-profile-bar">
+            <div class="flex-row">
+                <label for="iig_profile_select">Профиль</label>
+                <select id="iig_profile_select" class="flex1">
+                    ${optionsHtml || '<option value="">(нет профилей)</option>'}
+                </select>
+                <div class="iig-profile-buttons">
+                    <div id="iig_profile_save" class="menu_button" title="Сохранить текущие настройки в активный профиль">
+                        <i class="fa-solid fa-floppy-disk"></i>
+                    </div>
+                    <div id="iig_profile_save_as" class="menu_button" title="Сохранить как новый профиль">
+                        <i class="fa-solid fa-plus"></i>
+                    </div>
+                    <div id="iig_profile_rename" class="menu_button" title="Переименовать активный профиль">
+                        <i class="fa-solid fa-pen"></i>
+                    </div>
+                    <div id="iig_profile_remove" class="menu_button" title="Удалить активный профиль">
+                        <i class="fa-solid fa-trash"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
 function buildApiSettingsSectionHtml(settings = getSettings()) {
+    const profilesHtml = buildConnectionProfilesBlockHtml(settings);
     const bodyHtml = `
         <div class="iig-settings-card">
+            ${profilesHtml}
             <label class="checkbox_label">
                 <input type="checkbox" id="iig_enabled" ${settings.enabled ? 'checked' : ''}>
                 <span>Включить генерацию картинок</span>
@@ -482,6 +523,136 @@ function bindSectionToggles() {
             body.classList.toggle('iig-hidden');
             chevron?.classList.toggle('iig-section-chevron-collapsed', body.classList.contains('iig-hidden'));
         });
+    });
+}
+
+// ----- Connection profiles -----
+
+/**
+ * После `loadConnectionProfile` в settings подменены все connection-поля.
+ * Эта функция синхронизирует значения в уже отрисованных DOM-элементах
+ * (input / select / checkbox), чтобы юзер увидел актуальное состояние
+ * без полного re-render'а секции.
+ */
+function applyProfileValuesToInputs(settings) {
+    const setVal = (id, value) => {
+        const el = document.getElementById(id);
+        if (el && 'value' in el) el.value = value ?? '';
+    };
+    const setChk = (id, value) => {
+        const el = document.getElementById(id);
+        if (el && 'checked' in el) el.checked = Boolean(value);
+    };
+
+    setVal('iig_api_type', settings.apiType);
+    setVal('iig_endpoint', settings.endpoint);
+    setVal('iig_api_key', settings.apiKey);
+    setVal('iig_size', settings.size);
+    setVal('iig_quality', settings.quality);
+    setVal('iig_aspect_ratio', settings.aspectRatio);
+    setVal('iig_image_size', settings.imageSize);
+    setVal('iig_naistera_model', normalizeNaisteraModel(settings.naisteraModel));
+    setVal('iig_naistera_aspect_ratio', settings.naisteraAspectRatio);
+    setChk('iig_naistera_video_test', settings.naisteraVideoTest);
+    setVal('iig_naistera_video_every_n', settings.naisteraVideoEveryN);
+    setChk('iig_send_char_avatar', settings.sendCharAvatar);
+    setChk('iig_send_user_avatar', settings.sendUserAvatar);
+    setChk('iig_use_active_persona_avatar', settings.useActiveUserPersonaAvatar);
+    setChk('iig_naistera_send_char_avatar', settings.naisteraSendCharAvatar);
+    setChk('iig_naistera_send_user_avatar', settings.naisteraSendUserAvatar);
+    setChk('iig_naistera_use_active_persona_avatar', settings.useActiveUserPersonaAvatar);
+
+    // Model select: профиль хранит имя модели, но <option> с этим id может
+    // отсутствовать (список подгружается через Refresh). Добавляем опцию
+    // с текущим значением, иначе <select> сбросится в первую пустую.
+    const modelSelect = document.getElementById('iig_model');
+    if (modelSelect) {
+        const current = settings.model || '';
+        const hasOption = Array.from(modelSelect.options).some(o => o.value === current);
+        if (!hasOption) {
+            modelSelect.innerHTML = current
+                ? `<option value="${current}" selected>${current}</option>`
+                : '<option value="">-- Выберите модель --</option>';
+        } else {
+            modelSelect.value = current;
+        }
+    }
+
+    // Пересинхронизация avatar-дропдаунов (custom-элемент, не <select>).
+    syncUserAvatarSelection(settings.userAvatarFile);
+    syncActivePersonaAvatarMode(settings.useActiveUserPersonaAvatar);
+}
+
+function refreshProfileSelectOptions(settings) {
+    const select = document.getElementById('iig_profile_select');
+    if (!(select instanceof HTMLSelectElement)) return;
+    const profiles = ensureConnectionProfiles(settings);
+    select.innerHTML = profiles.map((p) =>
+        `<option value="${p.id}" ${p.id === settings.activeConnectionProfileId ? 'selected' : ''}>${sanitizeForHtml(p.name)}</option>`,
+    ).join('') || '<option value="">(нет профилей)</option>';
+}
+
+function bindConnectionProfilesEvents(settings, updateVisibility) {
+    document.getElementById('iig_profile_select')?.addEventListener('change', (e) => {
+        const id = e.target instanceof HTMLSelectElement ? e.target.value : '';
+        if (!id) return;
+        const profile = loadConnectionProfile(id, settings);
+        if (!profile) return;
+        saveSettings();
+        applyProfileValuesToInputs(settings);
+        updateVisibility();
+        iigLog('INFO', `Loaded connection profile: ${profile.name} (${profile.apiType})`);
+    });
+
+    document.getElementById('iig_profile_save')?.addEventListener('click', () => {
+        const profile = saveCurrentIntoProfile(null, settings);
+        if (!profile) {
+            toastr.warning('Нет активного профиля', 'Генерация картинок');
+            return;
+        }
+        saveSettings();
+        toastr.success(`Профиль «${profile.name}» сохранён`, 'Генерация картинок', { timeOut: 1500 });
+    });
+
+    document.getElementById('iig_profile_save_as')?.addEventListener('click', () => {
+        const name = prompt('Название нового профиля:');
+        if (name === null) return;
+        const profile = createConnectionProfile(name, settings);
+        saveSettings();
+        refreshProfileSelectOptions(settings);
+        toastr.success(`Создан профиль «${profile.name}»`, 'Генерация картинок', { timeOut: 1500 });
+    });
+
+    document.getElementById('iig_profile_rename')?.addEventListener('click', () => {
+        const profile = getActiveConnectionProfile(settings);
+        if (!profile) {
+            toastr.warning('Нет активного профиля', 'Генерация картинок');
+            return;
+        }
+        const newName = prompt('Новое название профиля:', profile.name);
+        if (newName === null) return;
+        renameConnectionProfile(profile.id, newName, settings);
+        saveSettings();
+        refreshProfileSelectOptions(settings);
+    });
+
+    document.getElementById('iig_profile_remove')?.addEventListener('click', () => {
+        const profile = getActiveConnectionProfile(settings);
+        if (!profile) return;
+        if (!confirm(`Удалить профиль «${profile.name}»?`)) return;
+        const ok = removeConnectionProfile(profile.id, settings);
+        if (!ok) {
+            toastr.warning('Нельзя удалить последний профиль', 'Генерация картинок');
+            return;
+        }
+        // Загружаем новый активный в settings чтобы синхронизировать DOM.
+        if (settings.activeConnectionProfileId) {
+            loadConnectionProfile(settings.activeConnectionProfileId, settings);
+        }
+        saveSettings();
+        refreshProfileSelectOptions(settings);
+        applyProfileValuesToInputs(settings);
+        updateVisibility();
     });
 }
 
@@ -1125,6 +1296,7 @@ function bindSettingsEvents() {
     const updateVisibility = buildUpdateVisibility(settings);
 
     bindSectionToggles();
+    bindConnectionProfilesEvents(settings, updateVisibility);
     bindApiSectionEvents(settings, updateVisibility);
 
     // Gemini avatar section

@@ -80,7 +80,167 @@ export const defaultSettings = Object.freeze({
     naisteraVideoTest: false,
     naisteraVideoEveryN: 1,
     additionalReferences: [],
+    // Connection profiles — именованные snapshot'ы настроек подключения
+    // (apiType / endpoint / apiKey / model / provider-specific). Переключение
+    // профиля копирует все поля из профиля в settings. См. CONNECTION_FIELDS.
+    connectionProfiles: [],
+    activeConnectionProfileId: '',
 });
+
+// ----- Connection profiles -----
+
+/**
+ * Список полей, которые входят в профиль подключения. Всё остальное
+ * (styles, additionalReferences, imageContext*, maxRetries, enabled, ...)
+ * — глобально и общее для всех профилей.
+ */
+export const CONNECTION_FIELDS = Object.freeze([
+    'apiType',
+    'endpoint',
+    'apiKey',
+    'model',
+    'size',
+    'quality',
+    'aspectRatio',
+    'imageSize',
+    'sendCharAvatar',
+    'sendUserAvatar',
+    'useActiveUserPersonaAvatar',
+    'userAvatarFile',
+    'naisteraAspectRatio',
+    'naisteraModel',
+    'naisteraSendCharAvatar',
+    'naisteraSendUserAvatar',
+    'naisteraVideoTest',
+    'naisteraVideoEveryN',
+]);
+
+function makeProfileId() {
+    return `iig-profile-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** Извлекает из settings только те поля, что входят в профиль. */
+export function extractConnectionFields(settings = getSettings()) {
+    const snapshot = {};
+    for (const key of CONNECTION_FIELDS) {
+        snapshot[key] = settings[key];
+    }
+    return snapshot;
+}
+
+/** Гарантирует валидность structure `connectionProfiles` и возвращает массив. */
+export function ensureConnectionProfiles(settings = getSettings()) {
+    if (!Array.isArray(settings.connectionProfiles)) {
+        settings.connectionProfiles = [];
+    }
+    // Нормализация каждого профиля.
+    settings.connectionProfiles = settings.connectionProfiles.map((raw) => {
+        const id = String(raw?.id || '').trim() || makeProfileId();
+        const name = String(raw?.name || '').trim() || 'Без названия';
+        const fields = {};
+        for (const key of CONNECTION_FIELDS) {
+            fields[key] = raw?.[key] ?? defaultSettings[key];
+        }
+        return { id, name, ...fields };
+    });
+    // Активный id валиден?
+    if (!settings.connectionProfiles.some(p => p.id === settings.activeConnectionProfileId)) {
+        settings.activeConnectionProfileId = settings.connectionProfiles[0]?.id || '';
+    }
+    return settings.connectionProfiles;
+}
+
+/** Возвращает активный профиль или null. */
+export function getActiveConnectionProfile(settings = getSettings()) {
+    const profiles = ensureConnectionProfiles(settings);
+    return profiles.find(p => p.id === settings.activeConnectionProfileId) || null;
+}
+
+/**
+ * Миграция: если connectionProfiles пусты, создаёт `Default` профиль
+ * со snapshot'ом текущих top-level connection-полей. Вызывать однократно
+ * при инициализации.
+ */
+export function migrateConnectionProfilesFromLegacy(settings = getSettings()) {
+    ensureConnectionProfiles(settings);
+    if (settings.connectionProfiles.length > 0) {
+        return;
+    }
+    const id = makeProfileId();
+    settings.connectionProfiles.push({
+        id,
+        name: 'Default',
+        ...extractConnectionFields(settings),
+    });
+    settings.activeConnectionProfileId = id;
+}
+
+/**
+ * Создаёт новый профиль со snapshot'ом текущих connection-полей.
+ * Активным становится новый профиль. Возвращает созданный профиль.
+ */
+export function createConnectionProfile(name, settings = getSettings()) {
+    ensureConnectionProfiles(settings);
+    const profile = {
+        id: makeProfileId(),
+        name: String(name || '').trim() || `Профиль ${settings.connectionProfiles.length + 1}`,
+        ...extractConnectionFields(settings),
+    };
+    settings.connectionProfiles.push(profile);
+    settings.activeConnectionProfileId = profile.id;
+    return profile;
+}
+
+/**
+ * Записывает текущие connection-поля settings в указанный профиль.
+ * По умолчанию — в активный. Возвращает обновлённый профиль или null.
+ */
+export function saveCurrentIntoProfile(profileId = null, settings = getSettings()) {
+    const targetId = profileId || settings.activeConnectionProfileId;
+    const profile = ensureConnectionProfiles(settings).find(p => p.id === targetId);
+    if (!profile) return null;
+    Object.assign(profile, extractConnectionFields(settings));
+    return profile;
+}
+
+/**
+ * Загружает профиль в top-level settings (копирует connection-поля).
+ * Обновляет `activeConnectionProfileId`. Возвращает загруженный профиль
+ * или null если не найден.
+ */
+export function loadConnectionProfile(profileId, settings = getSettings()) {
+    const profile = ensureConnectionProfiles(settings).find(p => p.id === profileId);
+    if (!profile) return null;
+    for (const key of CONNECTION_FIELDS) {
+        settings[key] = profile[key];
+    }
+    settings.activeConnectionProfileId = profile.id;
+    return profile;
+}
+
+export function renameConnectionProfile(profileId, newName, settings = getSettings()) {
+    const profile = ensureConnectionProfiles(settings).find(p => p.id === profileId);
+    if (!profile) return null;
+    profile.name = String(newName || '').trim() || profile.name;
+    return profile;
+}
+
+/**
+ * Удаляет профиль. Если удалённый был активным — активным становится первый
+ * оставшийся профиль (без загрузки его в settings — это отдельный шаг).
+ * Запрещает удаление последнего профиля (возвращает false).
+ */
+export function removeConnectionProfile(profileId, settings = getSettings()) {
+    const profiles = ensureConnectionProfiles(settings);
+    if (profiles.length <= 1) return false;
+    const index = profiles.findIndex(p => p.id === profileId);
+    if (index === -1) return false;
+    profiles.splice(index, 1);
+    if (settings.activeConnectionProfileId === profileId) {
+        settings.activeConnectionProfileId = profiles[0]?.id || '';
+    }
+    return true;
+}
 
 // ----- Image/Video model keyword lists (used by providers.js) -----
 

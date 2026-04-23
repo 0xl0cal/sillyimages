@@ -7,7 +7,7 @@
  * Вся логика вынесена в `src/`. Этот файл — только импорт + init.
  */
 
-import { getSettings } from './src/settings.js';
+import { getSettings, migrateConnectionProfilesFromLegacy, saveSettings } from './src/settings.js';
 import { createSettingsUI } from './src/ui.js';
 import { addButtonsToExistingMessages, subscribeEvents } from './src/events.js';
 
@@ -15,7 +15,12 @@ import { addButtonsToExistingMessages, subscribeEvents } from './src/events.js';
     const context = SillyTavern.getContext();
 
     // Load/seed settings eagerly so getSettings() сразу возвращает валидный объект.
-    getSettings();
+    const settings = getSettings();
+
+    // One-time migration: если в сохранённых настройках ещё нет профилей —
+    // создаём «Default» снапшот текущих connection-полей, сохраняем.
+    migrateConnectionProfilesFromLegacy(settings);
+    saveSettings();
 
     // Create settings UI when app is ready.
     context.eventSource.on(context.event_types.APP_READY, () => {

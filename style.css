@@ -126,6 +126,21 @@
     min-width: 0;
 }
 
+.iig-profile-bar {
+    margin-bottom: 4px;
+}
+
+.iig-profile-buttons {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.iig-profile-buttons .menu_button {
+    min-width: 28px;
+    padding: 4px 8px;
+}
+
 .iig-section {
     display: flex;
     flex-direction: column;
