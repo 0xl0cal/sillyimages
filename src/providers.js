@@ -63,12 +63,74 @@ export function isImageModel(modelId) {
 
 export function isGeminiModel(modelId) {
     const mid = String(modelId || '').toLowerCase();
-    return mid.includes('nano-banana');
+    // Принимаем как прокси-алиасы (nano-banana*), так и официальные id Google.
+    return mid.includes('nano-banana')
+        || mid.startsWith('gemini-2.5-flash-image')
+        || mid.startsWith('gemini-3-pro-image')
+        || mid.startsWith('gemini-3.1-flash-image');
 }
 
-// Valid params for Gemini / nano-banana.
-const VALID_GEMINI_ASPECT_RATIOS = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'];
-const VALID_GEMINI_IMAGE_SIZES = ['1K', '2K', '4K'];
+/**
+ * Классификация модели Gemini Image.
+ *
+ * Возвращает одну из:
+ *   - `'gemini-3.1-flash-image'` (Nano Banana 2 Preview)
+ *   - `'gemini-3-pro-image'`     (Nano Banana Pro Preview)
+ *   - `'gemini-2.5-flash-image'` (Nano Banana — stable)
+ *   - `'unknown'` — вернётся optimistic default для прокси с кастомными id.
+ */
+export function classifyGeminiModel(modelId) {
+    const id = String(modelId || '').toLowerCase().trim();
+    if (!id) return 'unknown';
+
+    // Официальные id — проверяем точные префиксы.
+    if (id.startsWith('gemini-3.1-flash-image')) return 'gemini-3.1-flash-image';
+    if (id.startsWith('gemini-3-pro-image')) return 'gemini-3-pro-image';
+    if (id.startsWith('gemini-2.5-flash-image')) return 'gemini-2.5-flash-image';
+
+    // Прокси-алиасы. Проверяем по убыванию специфичности.
+    if (id.includes('nano-banana-2') || id.includes('nano banana 2')) return 'gemini-3.1-flash-image';
+    if (id.includes('nano-banana-pro') || id.includes('nano banana pro')) return 'gemini-3-pro-image';
+    if (id.includes('nano-banana')) return 'gemini-2.5-flash-image';
+
+    return 'unknown';
+}
+
+/**
+ * Capabilities каждой Gemini-модели по официальным докам Google.
+ *
+ * - `maxReferences` — общее число входных картинок, которое модель обрабатывает
+ *   с высокой точностью (3 / 11 / 14).
+ * - `imageSizes` — whitelist значений для поля `imageConfig.imageSize`; для
+ *   2.5 Flash Google игнорирует/не поддерживает параметр → `null`.
+ * - `aspectRatios` — whitelist значений `imageConfig.aspectRatio`.
+ */
+const GEMINI_CAPS = Object.freeze({
+    'gemini-3.1-flash-image': {
+        maxReferences: 14,
+        imageSizes: ['512', '1K', '2K', '4K'],
+        aspectRatios: ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9', '1:4', '4:1', '1:8', '8:1'],
+    },
+    'gemini-3-pro-image': {
+        maxReferences: 11,
+        imageSizes: ['1K', '2K', '4K'],
+        aspectRatios: ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'],
+    },
+    'gemini-2.5-flash-image': {
+        maxReferences: 3,
+        imageSizes: null, // модель не принимает imageSize, не отправляем
+        aspectRatios: ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'],
+    },
+    'unknown': {
+        maxReferences: MAX_GENERATION_REFERENCE_IMAGES,
+        imageSizes: ['1K', '2K', '4K'],
+        aspectRatios: ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'],
+    },
+});
+
+export function getGeminiCapabilities(modelId) {
+    return GEMINI_CAPS[classifyGeminiModel(modelId)] || GEMINI_CAPS.unknown;
+}
 
 // ----- Base Provider -----
 
@@ -506,12 +568,34 @@ export class OpenAIProvider extends Provider {
 
 // ----- Gemini (nano-banana, gemini-*-image) -----
 
+const GEMINI_REQUEST_TIMEOUT_MS = 120_000;
+
+/**
+ * Парсит ошибку от Gemini-ответа в единообразный вид.
+ * Формат Google: `{ error: { code, message, status } }`.
+ */
+async function parseGeminiError(response) {
+    const raw = await response.text().catch(() => '');
+    let payload = null;
+    try {
+        payload = raw ? JSON.parse(raw) : null;
+    } catch (_e) {
+        payload = null;
+    }
+    const err = payload?.error || {};
+    const message = err.message || raw || `HTTP ${response.status}`;
+    const code = err.status || err.code || String(response.status);
+    return { message: String(message).slice(0, 800), code };
+}
+
 export class GeminiProvider extends Provider {
     get id() { return 'gemini'; }
     get displayName() { return 'Gemini / nano-banana'; }
 
     async collectReferences({ prompt: _prompt, messageId, matchedAdditionalRefs = [] }) {
         const settings = getSettings();
+        const caps = getGeminiCapabilities(settings.model);
+        const maxRefs = caps.maxReferences;
         const refs = [];
 
         if (settings.sendCharAvatar) {
@@ -524,7 +608,7 @@ export class GeminiProvider extends Provider {
         }
 
         for (const ref of matchedAdditionalRefs) {
-            if (refs.length >= MAX_GENERATION_REFERENCE_IMAGES) break;
+            if (refs.length >= maxRefs) break;
             const imagePath = normalizeStoredImagePath(ref.imagePath);
             if (!imagePath) continue;
             const b64 = await imageUrlToBase64(imagePath);
@@ -537,8 +621,8 @@ export class GeminiProvider extends Provider {
             refs.push(...contextRefs);
         }
 
-        if (refs.length > MAX_GENERATION_REFERENCE_IMAGES) {
-            refs.length = MAX_GENERATION_REFERENCE_IMAGES;
+        if (refs.length > maxRefs) {
+            refs.length = maxRefs;
         }
         return refs;
     }
@@ -546,27 +630,35 @@ export class GeminiProvider extends Provider {
     async generate({ prompt, style, references = [], options = {} }) {
         const settings = getSettings();
         const model = settings.model;
+        const caps = getGeminiCapabilities(model);
         const url = `${settings.endpoint.replace(/\/$/, '')}/v1beta/models/${model}:generateContent`;
 
-        // Determine aspect ratio: tag option > settings, with validation
+        // aspect ratio: tag > settings > дефолт `1:1`, с валидацией по модели.
         let aspectRatio = options.aspectRatio || settings.aspectRatio || '1:1';
-        if (!VALID_GEMINI_ASPECT_RATIOS.includes(aspectRatio)) {
-            iigLog('WARN', `Invalid aspect_ratio "${aspectRatio}", falling back to settings or default`);
-            aspectRatio = VALID_GEMINI_ASPECT_RATIOS.includes(settings.aspectRatio) ? settings.aspectRatio : '1:1';
+        if (!caps.aspectRatios.includes(aspectRatio)) {
+            iigLog('WARN', `Invalid aspect_ratio "${aspectRatio}" for ${model}, falling back`);
+            aspectRatio = caps.aspectRatios.includes(settings.aspectRatio) ? settings.aspectRatio : '1:1';
         }
 
-        // Determine image size: tag option > settings, with validation
-        let imageSize = options.imageSize || settings.imageSize || '1K';
-        if (!VALID_GEMINI_IMAGE_SIZES.includes(imageSize)) {
-            iigLog('WARN', `Invalid image_size "${imageSize}", falling back to settings or default`);
-            imageSize = VALID_GEMINI_IMAGE_SIZES.includes(settings.imageSize) ? settings.imageSize : '1K';
+        // imageSize: только если модель поддерживает (у 2.5 Flash — нет).
+        let imageSize = null;
+        if (Array.isArray(caps.imageSizes)) {
+            imageSize = options.imageSize || settings.imageSize || '1K';
+            if (!caps.imageSizes.includes(imageSize)) {
+                iigLog('WARN', `Invalid image_size "${imageSize}" for ${model}, falling back`);
+                imageSize = caps.imageSizes.includes(settings.imageSize) ? settings.imageSize : '1K';
+            }
         }
 
-        iigLog('INFO', `Using aspect ratio: ${aspectRatio}, image size: ${imageSize}`);
+        iigLog(
+            'INFO',
+            `Gemini ${model} (caps maxRefs=${caps.maxReferences}): aspect=${aspectRatio} size=${imageSize || '(default)'}`
+        );
 
         const parts = [];
 
-        for (const imgB64 of references.slice(0, MAX_GENERATION_REFERENCE_IMAGES)) {
+        // Лимит референсов — по модели, а не по глобальной константе.
+        for (const imgB64 of references.slice(0, caps.maxReferences)) {
             parts.push({
                 inlineData: {
                     mimeType: 'image/png',
@@ -586,6 +678,11 @@ export class GeminiProvider extends Provider {
 
         console.log(`[IIG] Gemini request: ${references.length} reference image(s) + prompt (${fullPrompt.length} chars)`);
 
+        const imageConfig = { aspectRatio };
+        if (imageSize) {
+            imageConfig.imageSize = imageSize;
+        }
+
         const body = {
             contents: [{
                 role: 'user',
@@ -593,34 +690,36 @@ export class GeminiProvider extends Provider {
             }],
             generationConfig: {
                 responseModalities: ['TEXT', 'IMAGE'],
-                imageConfig: {
-                    aspectRatio: aspectRatio,
-                    imageSize: imageSize,
-                },
+                imageConfig,
             },
         };
 
-        iigLog('INFO', `Gemini request config: model=${model}, aspectRatio=${aspectRatio}, imageSize=${imageSize}, promptLength=${fullPrompt.length}, refImages=${references.length}`);
+        iigLog('INFO', `Gemini request config: model=${model}, aspectRatio=${aspectRatio}, imageSize=${imageSize || '(default)'}, promptLength=${fullPrompt.length}, refImages=${references.length}`);
 
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${settings.apiKey}`,
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(body),
-        });
+        let response;
+        try {
+            response = await fetchWithTimeout(url, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${settings.apiKey}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(body),
+            }, GEMINI_REQUEST_TIMEOUT_MS);
+        } catch (error) {
+            rethrowNetworkErrorAsHuman(error, `Gemini ${model}`);
+        }
 
         if (!response.ok) {
-            const text = await response.text();
-            throw new Error(`API Error (${response.status}): ${text}`);
+            const { message, code } = await parseGeminiError(response);
+            throw new Error(`Gemini ${model} ${response.status} ${code}: ${message}`);
         }
 
         const result = await response.json();
 
         const candidates = result.candidates || [];
         if (candidates.length === 0) {
-            throw new Error('No candidates in response');
+            throw new Error('No candidates in Gemini response');
         }
 
         const responseParts = candidates[0].content?.parts || [];
