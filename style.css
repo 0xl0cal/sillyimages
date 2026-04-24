@@ -157,6 +157,16 @@
     padding: 4px 8px;
 }
 
+.iig-lorebook-buttons label.iig-lorebook-import-file {
+    min-width: 28px;
+    padding: 4px 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    margin: 0;
+}
+
 .iig-lorebook-buttons .checkbox_label {
     margin: 0;
     padding-right: 4px;
@@ -313,7 +323,7 @@
 
 .iig-additional-ref-header {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
     gap: 8px;
     align-items: center;
 }
@@ -353,7 +363,8 @@
     pointer-events: none;
 }
 
-.iig-additional-ref-upload {
+.iig-additional-ref-upload,
+.iig-additional-ref-upload-url {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -644,7 +655,7 @@
     }
 
     .iig-additional-ref-header {
-        grid-template-columns: minmax(0, 1fr) 38px 38px;
+        grid-template-columns: minmax(0, 1fr) 38px 38px 38px;
     }
 
     .iig-additional-ref-lorebook-grid {

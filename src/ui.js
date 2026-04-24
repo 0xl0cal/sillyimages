@@ -67,6 +67,12 @@ import {
     openReferenceImportModal,
     closeReferenceImportModal,
     importAdditionalReferencesFromUrls,
+    downloadReferenceImageFromUrl,
+    buildLorebookExportJson,
+    lorebookFileNameFromTitle,
+    triggerBrowserDownload,
+    importLorebookFromUrl,
+    importLorebookFromFile,
 } from './references.js';
 import { isGeminiModel, fetchModels, resolveActiveProvider, getActiveProviderMaxReferences } from './providers.js';
 import { t } from './i18n.js';
@@ -423,6 +429,16 @@ function buildLorebookBarHtml(settings = getSettings()) {
                     </div>
                     <div id="iig_lorebook_rename" class="menu_button" title="${t`Rename lorebook`}">
                         <i class="fa-solid fa-pen"></i>
+                    </div>
+                    <div id="iig_lorebook_import_url" class="menu_button" title="${t`Import lorebook from URL`}">
+                        <i class="fa-solid fa-link"></i>
+                    </div>
+                    <label class="menu_button iig-lorebook-import-file" title="${t`Import lorebook from local file`}">
+                        <i class="fa-solid fa-file-arrow-down"></i>
+                        <input type="file" accept="application/json,.json" id="iig_lorebook_import_file_input" style="display:none">
+                    </label>
+                    <div id="iig_lorebook_export" class="menu_button" title="${t`Export current lorebook as JSON`}">
+                        <i class="fa-solid fa-file-arrow-up"></i>
                     </div>
                     <div id="iig_lorebook_remove" class="menu_button" title="${t`Delete lorebook`}">
                         <i class="fa-solid fa-trash"></i>
@@ -1187,6 +1203,69 @@ function bindLorebookBarEvents(settings) {
         refreshLorebookBar(settings);
     });
 
+    async function afterLorebookImport(stats) {
+        refreshLorebookBar(settings);
+        refreshAdditionalReferencesList();
+        const tail = stats.imagesFailed > 0
+            ? ` (${t`${stats.imagesFailed} images failed to download`})`
+            : '';
+        toastr.success(
+            t`Imported ${stats.refsCount} refs, ${stats.imagesDownloaded} images downloaded${tail}`,
+            t`Image Generation`,
+            { timeOut: 4000 },
+        );
+    }
+
+    document.getElementById('iig_lorebook_import_url')?.addEventListener('click', async () => {
+        const url = await Popup.show.input(
+            t`Import lorebook from URL`,
+            t`Paste a direct URL to a JSON lorebook file:`,
+        );
+        if (typeof url !== 'string') return;
+        const trimmed = url.trim();
+        if (!trimmed) return;
+        try {
+            const stats = await importLorebookFromUrl(trimmed);
+            await afterLorebookImport(stats);
+        } catch (error) {
+            console.error('[IIG] Lorebook import failed:', error);
+            toastr.error(t`Import error: ${error.message || error}`, t`Image Generation`);
+        }
+    });
+
+    document.getElementById('iig_lorebook_import_file_input')?.addEventListener('change', async (e) => {
+        const input = e.target;
+        if (!(input instanceof HTMLInputElement)) return;
+        const file = input.files?.[0];
+        input.value = '';
+        if (!file) return;
+        try {
+            const stats = await importLorebookFromFile(file);
+            await afterLorebookImport(stats);
+        } catch (error) {
+            console.error('[IIG] Lorebook import failed:', error);
+            toastr.error(t`Import error: ${error.message || error}`, t`Image Generation`);
+        }
+    });
+
+    document.getElementById('iig_lorebook_export')?.addEventListener('click', async () => {
+        const active = getActiveLorebook(settings);
+        if (!active) return;
+
+        // Перед скачиванием показываем предупреждение про картинки.
+        const proceed = await Popup.show.confirm(
+            t`Export lorebook`,
+            t`Images are NOT included in the JSON. To share this lorebook, fill the empty "imageUrl" field of each reference with a direct link to its image. Continue?`,
+        );
+        if (!proceed) return;
+
+        const payload = buildLorebookExportJson(active);
+        const json = JSON.stringify(payload, null, 2);
+        const fileName = lorebookFileNameFromTitle(active.name);
+        triggerBrowserDownload(fileName, json);
+        toastr.success(t`Lorebook "${active.name}" exported`, t`Image Generation`, { timeOut: 2000 });
+    });
+
     document.getElementById('iig_lorebook_remove')?.addEventListener('click', async () => {
         const active = getActiveLorebook(settings);
         if (!active) return;
@@ -1416,10 +1495,11 @@ function bindAdditionalReferencesEvents(settings) {
         const target = e.target instanceof Element ? e.target : null;
         if (!target) return;
 
-        const removeBtn = target.closest('.iig-additional-ref-remove');
-        const upBtn = !removeBtn ? target.closest('.iig-additional-ref-move-up') : null;
-        const downBtn = !removeBtn && !upBtn ? target.closest('.iig-additional-ref-move-down') : null;
-        const button = removeBtn || upBtn || downBtn;
+        const urlBtn = target.closest('.iig-additional-ref-upload-url');
+        const removeBtn = !urlBtn ? target.closest('.iig-additional-ref-remove') : null;
+        const upBtn = !urlBtn && !removeBtn ? target.closest('.iig-additional-ref-move-up') : null;
+        const downBtn = !urlBtn && !removeBtn && !upBtn ? target.closest('.iig-additional-ref-move-down') : null;
+        const button = urlBtn || removeBtn || upBtn || downBtn;
         if (!button) return;
 
         const row = button.closest('.iig-additional-ref-row');
@@ -1427,6 +1507,28 @@ function bindAdditionalReferencesEvents(settings) {
         if (!Number.isInteger(index)) return;
 
         const refs = ensureAdditionalReferencesArray(settings);
+        if (urlBtn) {
+            if (!refs[index]) return;
+            const url = await Popup.show.input(t`Upload image by URL`, t`Paste a direct link to the image:`);
+            const trimmed = String(url || '').trim();
+            if (!trimmed) return;
+            try {
+                const savedPath = await downloadReferenceImageFromUrl(trimmed, {
+                    mode: 'additional-reference-upload-url',
+                    refIndex: index,
+                    refName: refs[index].name,
+                });
+                refs[index].imagePath = savedPath;
+                saveSettings();
+                refreshAdditionalReferencesList();
+                toastr.success(t`Additional reference saved`, t`Image Generation`);
+            } catch (error) {
+                console.error('[IIG] Failed to upload reference by URL:', error);
+                toastr.error(t`Reference upload failed: ${error.message || error}`, t`Image Generation`);
+            }
+            return;
+        }
+
         if (removeBtn) {
             const name = String(refs[index]?.name || '').trim() || t`Reference ${index + 1}`;
             const confirmed = await Popup.show.confirm(
