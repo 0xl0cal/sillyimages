@@ -178,9 +178,11 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
             <p id="iig_naistera_hint" class="hint ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}">${t`For Naistera: paste the token from the Telegram bot and pick a model (grok / grok-pro / nano banana 2 / novelai).`}</p>
 
             <div class="flex-row ${settings.apiType === 'naistera' ? 'iig-hidden' : ''}" id="iig_model_row">
-                <label for="iig_model">${t`Model`}</label>
-                <input type="text" id="iig_model" class="text_pole flex1" list="iig_model_list" value="${sanitizeForHtml(settings.model || '')}" placeholder="${t`-- Select or type a model --`}">
-                <datalist id="iig_model_list"></datalist>
+                <label for="iig_model_select">${t`Model`}</label>
+                <select id="iig_model_select" class="flex1 ${settings.rawEndpoint ? 'iig-hidden' : ''}">
+                    ${settings.model ? `<option value="${sanitizeForHtml(settings.model)}" selected>${sanitizeForHtml(settings.model)}</option>` : `<option value="" selected disabled>${t`-- Select a model --`}</option>`}
+                </select>
+                <input type="text" id="iig_model" class="text_pole flex1 ${settings.rawEndpoint ? '' : 'iig-hidden'}" value="${sanitizeForHtml(settings.model || '')}" placeholder="${t`Enter model name`}">
                 <div id="iig_refresh_models" class="menu_button iig-refresh-btn" title="${t`Refresh list`}">
                     <i class="fa-solid fa-sync"></i>
                 </div>
@@ -758,6 +760,19 @@ function applyProfileValuesToInputs(settings) {
     setChk('iig_raw_endpoint', settings.rawEndpoint);
     setVal('iig_api_key', settings.apiKey);
     setVal('iig_model', settings.model);
+    // Select holds model too — add option on-the-fly if profile's model isn't
+    // in the currently loaded list.
+    const modelSelect = /** @type {HTMLSelectElement|null} */ (document.getElementById('iig_model_select'));
+    if (modelSelect) {
+        const hasOption = Array.from(modelSelect.options).some((o) => o.value === settings.model);
+        if (!hasOption && settings.model) {
+            const opt = document.createElement('option');
+            opt.value = settings.model;
+            opt.textContent = settings.model;
+            modelSelect.appendChild(opt);
+        }
+        modelSelect.value = settings.model || '';
+    }
     setVal('iig_size', settings.size);
     setVal('iig_quality', settings.quality);
     setVal('iig_aspect_ratio', settings.aspectRatio);
@@ -895,6 +910,13 @@ function bindApiSectionEvents(settings, updateVisibility) {
         settings.apiType = nextApiType;
         saveSettings();
         updateVisibility();
+
+        // Switching providers → модель из прошлого провайдера скорее всего
+        // невалидна. Подтягиваем список нового провайдера, если это не raw
+        // и не Naistera (там свой селектор).
+        if (!settings.rawEndpoint && nextApiType !== 'naistera') {
+            reloadModelList({ announce: false }).catch(() => { /* silent */ });
+        }
     });
 
     document.getElementById('iig_endpoint')?.addEventListener('input', (e) => {
@@ -919,12 +941,30 @@ function bindApiSectionEvents(settings, updateVisibility) {
         }
     });
 
-    // iig_model теперь <input type="text" list="iig_model_list"> — даёт
-    // автокомплит из datalist И возможность ввести любое имя вручную
-    // (нужно для raw endpoint mode и редких моделей вне /v1/models).
+    // Две формы ввода модели: <select> для обычного режима (с fetchModels)
+    // и <input> для raw-режима (свободный ввод). Видимость переключается
+    // по rawEndpoint. Оба держим синхронно, чтобы юзер не терял значение
+    // при переключении.
+    const syncModelInputs = (value) => {
+        const select = /** @type {HTMLSelectElement|null} */ (document.getElementById('iig_model_select'));
+        const input = /** @type {HTMLInputElement|null} */ (document.getElementById('iig_model'));
+        if (input && input.value !== value) input.value = value ?? '';
+        if (select) {
+            const hasOption = Array.from(select.options).some((o) => o.value === value);
+            if (!hasOption && value) {
+                const opt = document.createElement('option');
+                opt.value = value;
+                opt.textContent = `${value} ${t`(custom)`}`;
+                select.appendChild(opt);
+            }
+            if (select.value !== value) select.value = value ?? '';
+        }
+    };
+
     const modelApplyChange = (value) => {
         settings.model = value;
         saveSettings();
+        syncModelInputs(value);
 
         // Auto-switch API type на 'gemini' применим только если сейчас
         // выбран OpenAI (legacy — когда юзер через OpenAI endpoint выбрал
@@ -938,27 +978,42 @@ function bindApiSectionEvents(settings, updateVisibility) {
         // поэтому перестраиваем видимость секций при любой смене.
         updateVisibility();
     };
-    document.getElementById('iig_model')?.addEventListener('change', (e) => modelApplyChange(e.target.value));
-    document.getElementById('iig_model')?.addEventListener('input', (e) => modelApplyChange(e.target.value));
+    document.getElementById('iig_model_select')?.addEventListener('change', (e) => {
+        if (e.target instanceof HTMLSelectElement) modelApplyChange(e.target.value);
+    });
+    document.getElementById('iig_model')?.addEventListener('change', (e) => {
+        if (e.target instanceof HTMLInputElement) modelApplyChange(e.target.value);
+    });
+    document.getElementById('iig_model')?.addEventListener('input', (e) => {
+        if (e.target instanceof HTMLInputElement) modelApplyChange(e.target.value);
+    });
 
     /**
-     * Обновляет datalist `iig_model_list` — либо через provider.fetchModels,
-     * либо чистит (raw-режим / нет провайдера). `announce` контролирует
-     * показ toastr'а с количеством найденных моделей.
+     * Populates the model <select> from provider.fetchModels. Preserves the
+     * currently selected value: if settings.model is not in the fetched list,
+     * it is appended as a "(custom)" option so the user doesn't lose it.
+     * announce=true shows a toastr with model count / error.
      */
     async function reloadModelList({ announce = false } = {}) {
-        const list = document.getElementById('iig_model_list');
+        const select = /** @type {HTMLSelectElement|null} */ (document.getElementById('iig_model_select'));
         const btn = document.getElementById('iig_refresh_models');
         btn?.classList.add('loading');
         try {
             const models = await fetchModels();
-            if (list instanceof HTMLDataListElement) {
-                list.innerHTML = models
-                    .map((m) => `<option value="${sanitizeForHtml(m)}"></option>`)
-                    .join('');
+            if (select) {
+                const current = settings.model || '';
+                const inList = current && models.includes(current);
+                const optionsHtml = [
+                    ...models.map((m) => `<option value="${sanitizeForHtml(m)}" ${m === current ? 'selected' : ''}>${sanitizeForHtml(m)}</option>`),
+                    ...(!inList && current ? [`<option value="${sanitizeForHtml(current)}" selected>${sanitizeForHtml(current)} ${t`(custom)`}</option>`] : []),
+                    ...(models.length === 0 && !current ? [`<option value="" selected disabled>${t`-- Select a model --`}</option>`] : []),
+                ];
+                select.innerHTML = optionsHtml.join('');
             }
             if (announce && models.length > 0) {
                 toastr.success(t`Models found: ${models.length}`, t`Image Generation`);
+            } else if (announce && models.length === 0) {
+                toastr.warning(t`No models returned by endpoint`, t`Image Generation`);
             }
             return models;
         } catch (error) {
@@ -980,15 +1035,19 @@ function bindApiSectionEvents(settings, updateVisibility) {
         settings.rawEndpoint = e.target.checked;
         saveSettings();
 
-        const list = document.getElementById('iig_model_list');
+        const select = document.getElementById('iig_model_select');
+        const input = document.getElementById('iig_model');
         if (settings.rawEndpoint) {
-            // Чистим datalist — в raw-режиме подсказки неактуальны, иначе
-            // после выключения рядом с полем будут висеть устаревшие опции.
-            if (list instanceof HTMLDataListElement) list.innerHTML = '';
+            // Raw: скрываем select (его опции неактуальны для произвольного
+            // эндпоинта), показываем свободный input.
+            select?.classList.add('iig-hidden');
+            input?.classList.remove('iig-hidden');
         } else {
-            // Выключили raw → юзер ожидает что поле снова станет dropdown'ом.
-            // Автоматически подтягиваем список моделей — не заставляем его
-            // жать Refresh руками.
+            // Обратно в режим provider → показываем select, прячем input,
+            // и автоматически подтягиваем модели, чтобы юзер не жал Refresh
+            // руками.
+            select?.classList.remove('iig-hidden');
+            input?.classList.add('iig-hidden');
             reloadModelList({ announce: true });
         }
     });
@@ -1036,6 +1095,14 @@ function bindApiSectionEvents(settings, updateVisibility) {
         e.target.value = String(normalized);
         saveSettings();
     });
+
+    // Auto-populate model list on init so the <select> isn't empty when the
+    // user first opens settings. In raw mode the select is hidden anyway,
+    // and for Naistera the whole row is hidden — fetchModels still tolerates
+    // those cases and returns [].
+    if (!settings.rawEndpoint && settings.apiType !== 'naistera') {
+        reloadModelList({ announce: false }).catch(() => { /* silent on init */ });
+    }
 }
 
 // ----- Avatar section events (общая фабрика для Gemini и Naistera) -----
