@@ -12,7 +12,11 @@ export const MODULE_NAME = 'inline_image_gen';
 // Limits / глобальные константы размерностей.
 export const MAX_CONTEXT_IMAGES = 3;
 export const MAX_GENERATION_REFERENCE_IMAGES = 5;
-export const MAX_ADDITIONAL_REFERENCES = 8;
+// Hard cap на размер коллекции additional references. В v2.0 старый лимит 8
+// был UI-ограничением; теперь «лорбук» даёт пользователю намного больше
+// записей, а на этап генерации всё равно попадает только столько, сколько
+// поддерживает активная модель (см. provider capabilities).
+export const MAX_ADDITIONAL_REFERENCES = 256;
 
 // Дефолтная «критическая» инструкция, которая дописывается в начало prompt'а
 // когда хотя бы один референс отправляется провайдеру. Раньше была
@@ -569,6 +573,34 @@ export function getEffectiveRefInstruction(settings = getSettings()) {
 
 // ----- Additional references array helpers -----
 
+/**
+ * Генерирует стабильный id для ref-записи (нужен для drag-reorder и
+ * детерминированных операций UI).
+ */
+function makeReferenceId() {
+    return `iig-ref-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * Нормализует строку с secondary-ключами в массив. Разделитель — запятая,
+ * игнорируем пустые и повторяющиеся (после нормализации). Оставляем
+ * comma-separated строку в хранилище — в matcher разбирается по месту.
+ */
+export function normalizeSecondaryKeysString(raw) {
+    return String(raw || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .join(', ');
+}
+
+/**
+ * Нормализует имя группы. Пустое → '' (ungrouped).
+ */
+export function normalizeGroupName(raw) {
+    return String(raw || '').trim();
+}
+
 export function ensureAdditionalReferencesArray(settings = getSettings()) {
     if (!Array.isArray(settings.additionalReferences)) {
         settings.additionalReferences = [];
@@ -576,13 +608,39 @@ export function ensureAdditionalReferencesArray(settings = getSettings()) {
 
     settings.additionalReferences = settings.additionalReferences
         .slice(0, MAX_ADDITIONAL_REFERENCES)
-        .map((ref) => ({
-            name: String(ref?.name || '').trim(),
-            description: String(ref?.description || '').trim(),
-            imagePath: String(ref?.imagePath || '').trim(),
-            matchMode: ref?.matchMode === 'always' ? 'always' : 'match',
-            enabled: ref?.enabled !== false,
-        }));
+        .map((ref) => {
+            const priorityRaw = Number.parseInt(String(ref?.priority ?? 0), 10);
+            return {
+                id: String(ref?.id || '').trim() || makeReferenceId(),
+                name: String(ref?.name || '').trim(),
+                description: String(ref?.description || '').trim(),
+                imagePath: String(ref?.imagePath || '').trim(),
+                matchMode: ref?.matchMode === 'always' ? 'always' : 'match',
+                enabled: ref?.enabled !== false,
+                // Лорбук-поля. Для старых записей — defaults.
+                group: normalizeGroupName(ref?.group),
+                priority: Number.isFinite(priorityRaw) ? priorityRaw : 0,
+                useRegex: ref?.useRegex === true,
+                secondaryKeys: normalizeSecondaryKeysString(ref?.secondaryKeys),
+            };
+        });
 
     return settings.additionalReferences;
+}
+
+/**
+ * Возвращает массив уникальных имён групп из ref-коллекции в порядке
+ * первого появления. Пустая группа ('') не включается.
+ */
+export function getAdditionalReferenceGroups(settings = getSettings()) {
+    const refs = ensureAdditionalReferencesArray(settings);
+    const seen = new Set();
+    const groups = [];
+    for (const ref of refs) {
+        const name = normalizeGroupName(ref.group);
+        if (!name || seen.has(name)) continue;
+        seen.add(name);
+        groups.push(name);
+    }
+    return groups;
 }

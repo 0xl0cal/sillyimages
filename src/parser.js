@@ -15,6 +15,7 @@ import {
     getSettings,
     getActiveStyle,
     ensureAdditionalReferencesArray,
+    normalizeGroupName,
     iigLog,
 } from './settings.js';
 import {
@@ -150,6 +151,52 @@ export function parseReferenceAliases(name) {
         .filter(Boolean);
 }
 
+/**
+ * Проверяет, матчится ли primary-ключ в prompt с учётом regex-режима.
+ * В regex-режиме `name` интерпретируется как строка JS-regex: поддерживаются
+ * `/pattern/flags` и просто `pattern` (flags по умолчанию — 'iu'). Если regex
+ * не парсится — fallback на literal-match.
+ */
+export function promptMatchesPrimaryKey(prompt, name, useRegex) {
+    if (!useRegex) {
+        const aliases = parseReferenceAliases(name);
+        return aliases.some((alias) => promptContainsReferenceName(prompt, alias));
+    }
+
+    const raw = String(name || '').trim();
+    if (!raw) return false;
+
+    let pattern = raw;
+    let flags = 'iu';
+    const slashMatch = raw.match(/^\/(.+)\/([gimsuvy]*)$/);
+    if (slashMatch) {
+        pattern = slashMatch[1];
+        flags = slashMatch[2] || 'iu';
+    }
+
+    try {
+        const regex = new RegExp(pattern, flags);
+        return regex.test(String(prompt || ''));
+    } catch (_error) {
+        // Broken regex — fallback на literal contains, чтобы юзер хоть как-то
+        // видел срабатывание и понял где ошибка.
+        return String(prompt || '').toLowerCase().includes(pattern.toLowerCase());
+    }
+}
+
+/**
+ * Secondary keys — comma-separated список, каждый ключ должен встретиться в
+ * prompt. Secondary keys ВСЕГДА literal (не regex), чтобы юзеру было проще.
+ */
+export function promptMatchesAllSecondaryKeys(prompt, secondaryKeysRaw) {
+    const keys = String(secondaryKeysRaw || '')
+        .split(',')
+        .map((k) => k.trim())
+        .filter(Boolean);
+    if (keys.length === 0) return true;
+    return keys.every((key) => promptContainsReferenceName(prompt, key));
+}
+
 // ----- Style block / prompt assembly -----
 
 const STYLE_BLOCK_RE = /\[\s*style\s*:\s*[^\]]*\]/gi;
@@ -216,11 +263,16 @@ export function buildFinalGenerationPrompt(prompt, style, matchedAdditionalRefs 
 export function getMatchedAdditionalReferences(prompt) {
     const refs = ensureAdditionalReferencesArray()
         .map((ref) => ({
+            id: String(ref?.id || '').trim(),
             name: String(ref?.name || '').trim(),
             description: String(ref?.description || '').trim(),
             imagePath: normalizeStoredImagePath(ref?.imagePath || ''),
             matchMode: ref?.matchMode === 'always' ? 'always' : 'match',
             enabled: ref?.enabled !== false,
+            group: normalizeGroupName(ref?.group),
+            priority: Number.isFinite(ref?.priority) ? ref.priority : 0,
+            useRegex: ref?.useRegex === true,
+            secondaryKeys: String(ref?.secondaryKeys || ''),
         }))
         .filter((ref) => ref.enabled && ref.name && ref.imagePath);
 
@@ -228,22 +280,28 @@ export function getMatchedAdditionalReferences(prompt) {
     const seenKeys = new Set();
 
     for (const ref of refs) {
-        const aliases = parseReferenceAliases(ref.name);
-        const isMatched = ref.matchMode === 'always'
-            || aliases.some((alias) => promptContainsReferenceName(prompt, alias));
-
+        let isMatched = ref.matchMode === 'always';
         if (!isMatched) {
+            isMatched = promptMatchesPrimaryKey(prompt, ref.name, ref.useRegex);
+        }
+        if (!isMatched) continue;
+
+        // Secondary keys — AND-фильтр (все ключи должны встретиться). Для
+        // режима 'always' тоже применяем — позволяет делать условно-always
+        // записи вида «отправляй всегда, но только если в промпте есть X».
+        if (!promptMatchesAllSecondaryKeys(prompt, ref.secondaryKeys)) {
             continue;
         }
 
         const dedupeKey = `${ref.name}::${ref.imagePath}`;
-        if (seenKeys.has(dedupeKey)) {
-            continue;
-        }
-
+        if (seenKeys.has(dedupeKey)) continue;
         seenKeys.add(dedupeKey);
         matched.push(ref);
     }
+
+    // Сортировка по priority (desc). При равном priority — сохраняем порядок
+    // из исходного массива (stable sort в современных движках).
+    matched.sort((a, b) => (b.priority || 0) - (a.priority || 0));
 
     return matched;
 }

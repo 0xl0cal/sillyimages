@@ -10,6 +10,7 @@
 import { getSettings, migrateConnectionProfilesFromLegacy, saveSettings } from './src/settings.js';
 import { createSettingsUI } from './src/ui.js';
 import { addButtonsToExistingMessages, subscribeEvents } from './src/events.js';
+import { registerIigBookMacro } from './src/references.js';
 
 (function init() {
     const context = SillyTavern.getContext();
@@ -21,6 +22,10 @@ import { addButtonsToExistingMessages, subscribeEvents } from './src/events.js';
     // создаём «Default» снапшот текущих connection-полей, сохраняем.
     migrateConnectionProfilesFromLegacy(settings);
     saveSettings();
+
+    // Register {{iig-book}} macro — делает refs-список доступным для вставки
+    // в карточки / пресеты, чтобы LLM видела какие триггеры можно ставить.
+    registerIigBookMacro();
 
     // Create settings UI when app is ready.
     context.eventSource.on(context.event_types.APP_READY, () => {

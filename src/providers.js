@@ -44,6 +44,33 @@ import {
     collectPreviousContextReferences,
 } from './references.js';
 
+// ----- Max references helper -----
+
+/**
+ * Возвращает максимальное число референсных картинок, которое принимает
+ * активный провайдер для текущей модели. Используется в UI (warning об
+ * усечении matched refs) и в провайдерских `collectReferences` (clipping).
+ *
+ * В случае provider/модели без поддержки референсов возвращает 0.
+ */
+export function getActiveProviderMaxReferences(settings = getSettings()) {
+    const apiType = settings.apiType;
+    if (apiType === 'openai' || apiType === 'electronhub') {
+        const kind = classifyOpenAIModel(settings.model);
+        return getOpenAIModelMaxReferences(kind) || 0;
+    }
+    if (apiType === 'gemini') {
+        return getGeminiCapabilities(settings.model).maxReferences || 0;
+    }
+    if (apiType === 'openrouter') {
+        return getOpenRouterCapabilities(settings.model).maxReferences || 0;
+    }
+    if (apiType === 'naistera') {
+        return MAX_GENERATION_REFERENCE_IMAGES;
+    }
+    return 0;
+}
+
 // ----- Endpoint URL builder (raw mode support) -----
 
 /**

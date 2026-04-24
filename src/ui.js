@@ -49,6 +49,7 @@ import {
 import {
     buildAdditionalReferenceRowsHtml,
     renderAdditionalReferencesList,
+    renderAdditionalReferencesStatus,
     buildUserAvatarDropdownControl,
     buildReferenceImportModalHtml,
     syncUserAvatarSelection,
@@ -60,7 +61,7 @@ import {
     closeReferenceImportModal,
     importAdditionalReferencesFromUrls,
 } from './references.js';
-import { isGeminiModel, fetchModels, resolveActiveProvider } from './providers.js';
+import { isGeminiModel, fetchModels, resolveActiveProvider, getActiveProviderMaxReferences } from './providers.js';
 import { t } from './i18n.js';
 // Относительный путь: /scripts/extensions/third-party/sillyimages/src/ui.js → /scripts/popup.js
 import { Popup } from '../../../../popup.js';
@@ -1071,6 +1072,16 @@ function bindStylesSectionEvents(settings) {
 
 // ----- Additional references events -----
 
+/**
+ * Обёртка над `renderAdditionalReferencesList`, пробрасывающая текущий
+ * provider-лимит референсов. Нужна чтобы references.js не зависел от
+ * providers.js (иначе ESM-цикл).
+ */
+function refreshAdditionalReferencesList() {
+    const maxRefs = getActiveProviderMaxReferences(getSettings());
+    renderAdditionalReferencesList(maxRefs);
+}
+
 function bindAdditionalReferencesEvents(settings) {
     document.getElementById('iig_additional_refs_add')?.addEventListener('click', () => {
         const refs = ensureAdditionalReferencesArray(settings);
@@ -1079,9 +1090,19 @@ function bindAdditionalReferencesEvents(settings) {
             return;
         }
 
-        refs.push({ name: '', description: '', imagePath: '', matchMode: 'match', enabled: true });
+        refs.push({
+            name: '',
+            description: '',
+            imagePath: '',
+            matchMode: 'match',
+            enabled: true,
+            group: '',
+            priority: 0,
+            useRegex: false,
+            secondaryKeys: '',
+        });
         saveSettings();
-        renderAdditionalReferencesList();
+        refreshAdditionalReferencesList();
     });
 
     document.getElementById('iig_additional_refs_import')?.addEventListener('click', () => {
@@ -1135,7 +1156,10 @@ function bindAdditionalReferencesEvents(settings) {
 
         const isNameField = target.classList.contains('iig-additional-ref-name');
         const isDescriptionField = target.classList.contains('iig-additional-ref-description');
-        if (!isNameField && !isDescriptionField) {
+        const isGroupField = target.classList.contains('iig-additional-ref-group');
+        const isSecondaryField = target.classList.contains('iig-additional-ref-secondary');
+        const isPriorityField = target.classList.contains('iig-additional-ref-priority');
+        if (!isNameField && !isDescriptionField && !isGroupField && !isSecondaryField && !isPriorityField) {
             return;
         }
 
@@ -1150,13 +1174,18 @@ function bindAdditionalReferencesEvents(settings) {
             return;
         }
 
-        if (isNameField) {
-            refs[index].name = target.value;
-        }
-        if (isDescriptionField) {
-            refs[index].description = target.value;
+        if (isNameField) refs[index].name = target.value;
+        if (isDescriptionField) refs[index].description = target.value;
+        if (isGroupField) refs[index].group = target.value;
+        if (isSecondaryField) refs[index].secondaryKeys = target.value;
+        if (isPriorityField) {
+            const parsed = Number.parseInt(target.value, 10);
+            refs[index].priority = Number.isFinite(parsed) ? parsed : 0;
         }
         saveSettings();
+        // Обновляем только статус (ссылок на provider-limit warning), не
+        // ре-рендерим карточки — иначе слетает фокус.
+        renderAdditionalReferencesStatus(getActiveProviderMaxReferences(settings));
     });
 
     document.getElementById('iig_additional_refs_list')?.addEventListener('change', async (e) => {
@@ -1175,7 +1204,7 @@ function bindAdditionalReferencesEvents(settings) {
 
             refs[index].enabled = target.checked;
             saveSettings();
-            renderAdditionalReferencesList();
+            refreshAdditionalReferencesList();
             return;
         }
 
@@ -1216,7 +1245,7 @@ function bindAdditionalReferencesEvents(settings) {
 
             refs[index].imagePath = normalizeStoredImagePath(savedPath);
             saveSettings();
-            renderAdditionalReferencesList();
+            refreshAdditionalReferencesList();
             toastr.success(t`Additional reference saved`, t`Image Generation`);
         } catch (error) {
             console.error('[IIG] Failed to upload additional reference:', error);
@@ -1228,43 +1257,51 @@ function bindAdditionalReferencesEvents(settings) {
 
     document.getElementById('iig_additional_refs_list')?.addEventListener('change', (e) => {
         const target = e.target;
-        if (!(target instanceof HTMLInputElement) || !target.classList.contains('iig-additional-ref-always')) {
-            return;
-        }
+        if (!(target instanceof HTMLInputElement)) return;
+
+        const isAlways = target.classList.contains('iig-additional-ref-always');
+        const isRegex = target.classList.contains('iig-additional-ref-regex');
+        if (!isAlways && !isRegex) return;
 
         const row = target.closest('.iig-additional-ref-row');
         const index = Number.parseInt(String(row?.getAttribute('data-ref-index') || ''), 10);
-        if (!Number.isInteger(index)) {
-            return;
-        }
+        if (!Number.isInteger(index)) return;
 
         const refs = ensureAdditionalReferencesArray(settings);
-        if (!refs[index]) {
-            return;
-        }
+        if (!refs[index]) return;
 
-        refs[index].matchMode = target.checked ? 'always' : 'match';
+        if (isAlways) refs[index].matchMode = target.checked ? 'always' : 'match';
+        if (isRegex) refs[index].useRegex = target.checked;
         saveSettings();
-        renderAdditionalReferencesList();
+        refreshAdditionalReferencesList();
     });
 
     document.getElementById('iig_additional_refs_list')?.addEventListener('click', (e) => {
-        const target = e.target;
-        const button = target instanceof Element ? target.closest('.iig-additional-ref-remove') : null;
-        if (!button) {
-            return;
-        }
+        const target = e.target instanceof Element ? e.target : null;
+        if (!target) return;
+
+        const removeBtn = target.closest('.iig-additional-ref-remove');
+        const upBtn = !removeBtn ? target.closest('.iig-additional-ref-move-up') : null;
+        const downBtn = !removeBtn && !upBtn ? target.closest('.iig-additional-ref-move-down') : null;
+        const button = removeBtn || upBtn || downBtn;
+        if (!button) return;
 
         const row = button.closest('.iig-additional-ref-row');
         const index = Number.parseInt(String(row?.getAttribute('data-ref-index') || ''), 10);
-        if (!Number.isInteger(index)) {
-            return;
-        }
+        if (!Number.isInteger(index)) return;
 
         const refs = ensureAdditionalReferencesArray(settings);
-        refs.splice(index, 1);
+        if (removeBtn) {
+            refs.splice(index, 1);
+        } else if (upBtn && index > 0) {
+            [refs[index - 1], refs[index]] = [refs[index], refs[index - 1]];
+        } else if (downBtn && index < refs.length - 1) {
+            [refs[index], refs[index + 1]] = [refs[index + 1], refs[index]];
+        } else {
+            return; // no-op (edge)
+        }
         saveSettings();
-        renderAdditionalReferencesList();
+        refreshAdditionalReferencesList();
     });
 }
 
@@ -1349,6 +1386,10 @@ function buildUpdateVisibility(settings) {
         document.getElementById('iig_image_context_count_row')?.classList.toggle('iig-hidden', !(refsSupported && settings.imageContextEnabled));
         document.getElementById('iig_additional_refs_section')?.classList.toggle('iig-hidden', !refsSupported);
         document.getElementById('iig_ref_instruction_section')?.classList.toggle('iig-hidden', !refsSupported);
+
+        // Обновляем provider-limit warning в status-строке без ре-рендера
+        // карточек (чтобы не терять фокус в inputs).
+        renderAdditionalReferencesStatus(getActiveProviderMaxReferences(settings));
 
         // OpenAI + Electron Hub params (size / quality) — Electron Hub
         // принимает тот же формат JSON на /v1/images/{generations,edits}.
@@ -1449,7 +1490,7 @@ function bindSettingsEvents() {
     // Apply initial state
     syncUserAvatarSelection(settings.userAvatarFile);
     syncActivePersonaAvatarMode(settings.useActiveUserPersonaAvatar);
-    renderAdditionalReferencesList();
+    refreshAdditionalReferencesList();
     updateVisibility();
 }
 

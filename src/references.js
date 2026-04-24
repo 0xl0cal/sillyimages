@@ -13,6 +13,7 @@ import {
     saveSettings,
     ensureAdditionalReferencesArray,
     normalizeImageContextCount,
+    normalizeGroupName,
     MAX_ADDITIONAL_REFERENCES,
 } from './settings.js';
 import {
@@ -426,13 +427,18 @@ export function buildAdditionalReferenceRowsHtml(settings = getSettings()) {
         return '<p class="hint">Пока пусто. Добавь референс с именем-триггером и картинкой.</p>';
     }
 
+    const lastIndex = refs.length - 1;
     return refs.map((ref, index) => {
         const previewSrc = normalizeStoredImagePath(ref.imagePath);
         const isAlways = ref.matchMode === 'always';
         const isEnabled = ref.enabled !== false;
+        const useRegex = ref.useRegex === true;
         const previewHtml = previewSrc
             ? `<img src="${sanitizeForHtml(previewSrc)}" alt="${sanitizeForHtml(ref.name || `ref-${index + 1}`)}" class="iig-additional-ref-thumb">`
             : `<div class="iig-additional-ref-thumb iig-additional-ref-thumb-placeholder">${t`none`}</div>`;
+
+        const isFirst = index === 0;
+        const isLast = index === lastIndex;
 
         return `
             <div class="iig-additional-ref-row ${isEnabled ? '' : 'iig-additional-ref-row-disabled'}" data-ref-index="${index}">
@@ -449,7 +455,7 @@ export function buildAdditionalReferenceRowsHtml(settings = getSettings()) {
                             <input
                                 type="text"
                                 class="text_pole flex1 iig-additional-ref-name"
-                                placeholder="${t`Reference name`}"
+                                placeholder="${t`Trigger name (or regex)`}"
                                 value="${sanitizeForHtml(ref.name || '')}"
                             >
                             <label class="menu_button iig-additional-ref-upload" title="${t`Upload image`}">
@@ -465,11 +471,45 @@ export function buildAdditionalReferenceRowsHtml(settings = getSettings()) {
                             rows="2"
                             placeholder="${t`Reference description`}"
                         >${sanitizeForHtml(ref.description || '')}</textarea>
+                        <div class="iig-additional-ref-lorebook-grid">
+                            <input
+                                type="text"
+                                class="text_pole iig-additional-ref-group"
+                                placeholder="${t`Group (e.g. characters, locations)`}"
+                                value="${sanitizeForHtml(ref.group || '')}"
+                            >
+                            <input
+                                type="text"
+                                class="text_pole iig-additional-ref-secondary"
+                                placeholder="${t`Secondary keys (AND, comma-separated)`}"
+                                value="${sanitizeForHtml(ref.secondaryKeys || '')}"
+                            >
+                            <input
+                                type="number"
+                                class="text_pole iig-additional-ref-priority"
+                                placeholder="${t`Priority`}"
+                                step="1"
+                                value="${Number.isFinite(ref.priority) ? ref.priority : 0}"
+                                title="${t`Higher priority is matched first when provider limits references`}"
+                            >
+                        </div>
                         <div class="iig-additional-ref-footer">
                             <label class="checkbox_label">
                                 <input type="checkbox" class="iig-additional-ref-always" ${isAlways ? 'checked' : ''}>
                                 <span>${isAlways ? t`Always send` : t`Send on match`}</span>
                             </label>
+                            <label class="checkbox_label" title="${t`Interpret trigger as JS regex (e.g. /cat|kitten/i). Secondary keys remain literal.`}">
+                                <input type="checkbox" class="iig-additional-ref-regex" ${useRegex ? 'checked' : ''}>
+                                <span>${t`Regex`}</span>
+                            </label>
+                            <div class="iig-additional-ref-move">
+                                <div class="menu_button iig-additional-ref-move-up ${isFirst ? 'disabled' : ''}" title="${t`Move up`}" ${isFirst ? 'aria-disabled="true"' : ''}>
+                                    <i class="fa-solid fa-arrow-up"></i>
+                                </div>
+                                <div class="menu_button iig-additional-ref-move-down ${isLast ? 'disabled' : ''}" title="${t`Move down`}" ${isLast ? 'aria-disabled="true"' : ''}>
+                                    <i class="fa-solid fa-arrow-down"></i>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -478,22 +518,130 @@ export function buildAdditionalReferenceRowsHtml(settings = getSettings()) {
     }).join('');
 }
 
-export function renderAdditionalReferencesList() {
+/**
+ * Обновляет только статус-строку под списком, без ре-рендера карточек.
+ * Нужно, чтобы при смене провайдера / модели не терять фокус в inputs.
+ *
+ * `providerMaxRefs` — лимит картинок на один запрос у активного
+ * провайдера/модели. 0 — предупреждение не показывается.
+ */
+export function renderAdditionalReferencesStatus(providerMaxRefs = 0) {
+    const status = document.getElementById('iig_additional_refs_status');
+    if (!status) return;
+
+    const refs = ensureAdditionalReferencesArray().filter((ref) => String(ref?.name || '').trim() && String(ref?.imagePath || '').trim());
+    const enabledRefs = refs.filter((ref) => ref.enabled !== false);
+    const alwaysCount = enabledRefs.filter((ref) => ref.matchMode === 'always').length;
+    const parts = [];
+    if (refs.length > 0) {
+        parts.push(t`Active additional references: ${enabledRefs.length}/${refs.length}. Always sent: ${alwaysCount}.`);
+    }
+    if (providerMaxRefs > 0 && enabledRefs.length > providerMaxRefs) {
+        parts.push(t`Provider accepts up to ${providerMaxRefs} refs per request — extras will be dropped by priority.`);
+    }
+    status.textContent = parts.join(' ');
+}
+
+/**
+ * Перерисовывает список ref-карточек + статус-строку.
+ *
+ * `providerMaxRefs` (optional) — лимит картинок на один запрос у активного
+ * провайдера/модели.
+ */
+export function renderAdditionalReferencesList(providerMaxRefs = 0) {
     const container = document.getElementById('iig_additional_refs_list');
     if (!container) {
         return;
     }
 
     container.innerHTML = buildAdditionalReferenceRowsHtml();
+    renderAdditionalReferencesStatus(providerMaxRefs);
+}
 
-    const status = document.getElementById('iig_additional_refs_status');
-    if (status) {
-        const refs = ensureAdditionalReferencesArray().filter((ref) => String(ref?.name || '').trim() && String(ref?.imagePath || '').trim());
-        const enabledRefs = refs.filter((ref) => ref.enabled !== false);
-        const alwaysCount = enabledRefs.filter((ref) => ref.matchMode === 'always').length;
-        status.textContent = refs.length > 0
-            ? t`Active additional references: ${enabledRefs.length}/${refs.length}. Always sent: ${alwaysCount}.`
-            : '';
+// ----- Lorebook-style macro {{iig-book}} -----
+
+/**
+ * Первый alias из `name` (разделитель — запятая) для использования в качестве
+ * «триггерного слова» в макросе. Если имя пустое — возвращает пустую строку.
+ */
+function getPrimaryTrigger(ref) {
+    const raw = String(ref?.name || '').trim();
+    if (!raw) return '';
+    const first = raw.split(',')[0];
+    return first.trim();
+}
+
+/**
+ * Короткое описание для макроса. Пустое description → fallback на имя.
+ */
+function getBookDescription(ref) {
+    const desc = String(ref?.description || '').trim();
+    return desc || String(ref?.name || '').trim();
+}
+
+/**
+ * Рендерит все additional references в формат, удобный для LLM-подсказок:
+ *
+ * ```
+ * [locations]
+ * tavern (tavern) — cozy wooden inn in the mountains
+ *
+ * [characters]
+ * alice (alice) — red-haired mage with green eyes
+ * bob (bob) — tall knight in silver armor
+ * ```
+ *
+ * Порядок групп — порядок первого появления в массиве. Refs без группы
+ * складываются в секцию «[other]». Отключённые refs не включаются.
+ */
+export function renderIigBookMacro(settings = getSettings()) {
+    const refs = ensureAdditionalReferencesArray(settings)
+        .filter((ref) => ref.enabled !== false && String(ref?.name || '').trim());
+
+    if (refs.length === 0) return '';
+
+    const groupOrder = [];
+    const byGroup = new Map();
+    for (const ref of refs) {
+        const groupName = normalizeGroupName(ref.group) || 'other';
+        if (!byGroup.has(groupName)) {
+            byGroup.set(groupName, []);
+            groupOrder.push(groupName);
+        }
+        byGroup.get(groupName).push(ref);
+    }
+
+    const sections = groupOrder.map((group) => {
+        const lines = byGroup.get(group).map((ref) => {
+            const trigger = getPrimaryTrigger(ref);
+            const desc = getBookDescription(ref);
+            return `${ref.name} (${trigger}) — ${desc}`;
+        });
+        return `[${group}]\n${lines.join('\n')}`;
+    });
+
+    return sections.join('\n\n');
+}
+
+/**
+ * Регистрирует макрос `{{iig-book}}` через ST context. Вызывается один раз
+ * из `index.js`. Использует deprecated `context.registerMacro` — для
+ * совместимости с текущей фактической версией ST. Если API недоступно —
+ * тихо пропускает регистрацию (extension продолжает работать).
+ */
+export function registerIigBookMacro() {
+    try {
+        const context = SillyTavern.getContext();
+        if (typeof context?.registerMacro === 'function') {
+            context.registerMacro(
+                'iig-book',
+                () => renderIigBookMacro(),
+                'Inline Image Generation: renders additional references grouped by category for LLM hints.',
+            );
+            console.log('[IIG] Registered {{iig-book}} macro');
+        }
+    } catch (error) {
+        console.warn('[IIG] Failed to register {{iig-book}} macro:', error);
     }
 }
 
