@@ -231,10 +231,10 @@ export class Provider {
         const errors = [];
         const caps = this.capabilities;
         if (!settings.endpoint && this.id !== 'naistera') {
-            errors.push(tEndpoint URL is not configured);
+            errors.push(t`Endpoint URL is not configured`);
         }
         if (caps.requiresApiKey && !settings.apiKey) {
-            errors.push(tAPI key is not configured);
+            errors.push(t`API key is not configured`);
         }
         return errors;
     }
@@ -948,7 +948,7 @@ export class OpenRouterProvider extends Provider {
     validate(settings) {
         const errors = [];
         if (!settings.apiKey) {
-            errors.push(tAPI key is not configured);
+            errors.push(t`API key is not configured`);
         }
         // Endpoint имеет дефолт (https://openrouter.ai/api/v1), поэтому не требуем.
         return errors;
@@ -1161,7 +1161,7 @@ export class ElectronHubProvider extends OpenAIProvider {
     validate(settings) {
         const errors = [];
         if (!settings.apiKey) {
-            errors.push(tAPI key is not configured);
+            errors.push(t`API key is not configured`);
         }
         return errors;
     }
@@ -1222,7 +1222,7 @@ export class NaisteraProvider extends Provider {
     validate(settings) {
         const errors = [];
         if (!settings.apiKey) {
-            errors.push(tAPI key is not configured);
+            errors.push(t`API key is not configured`);
         }
         const m = normalizeNaisteraModel(settings.naisteraModel);
         if (!NAISTERA_MODELS.includes(m)) {
