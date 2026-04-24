@@ -124,6 +124,12 @@
     "Imported ${0} refs, ${1} images downloaded": "Импортировано ${0} референсов, скачано ${1} картинок",
     "Imported ${0} refs, ${1} images downloaded${2}": "Импортировано ${0} референсов, скачано ${1} картинок${2}",
     "${0} images failed to download": "${0} картинок не скачались",
+
+    "Show {{iig-book}} preview": "Показать превью {{iig-book}}",
+    "Preview the rendered {{iig-book}} macro as the LLM will see it": "Посмотреть как макрос {{iig-book}} будет раскрыт для LLM",
+    "{{iig-book}} preview": "Превью {{iig-book}}",
+    "Paste {{iig-book}} into a character card or preset to inject this text into the LLM's context. Only enabled lorebooks with active references are included.": "Вставьте {{iig-book}} в карточку персонажа или пресет, чтобы этот текст попал в контекст LLM. Попадают только включённые лорбуки с активными референсами.",
+    "The macro is currently empty: no enabled lorebook has any references with a name.": "Макрос сейчас пуст: ни в одном включённом лорбуке нет референсов с именем.",
     "Add reference": "Добавить референс",
     "Import reference": "Загрузить референс",
     "Additional reference saved": "Дополнительный референс сохранён",

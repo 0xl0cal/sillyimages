@@ -73,6 +73,7 @@ import {
     triggerBrowserDownload,
     importLorebookFromUrl,
     importLorebookFromFile,
+    renderIigBookMacro,
 } from './references.js';
 import { isGeminiModel, fetchModels, resolveActiveProvider, getActiveProviderMaxReferences } from './providers.js';
 import { t } from './i18n.js';
@@ -597,6 +598,9 @@ function buildDebugSettingsSectionHtml(settings = getSettings()) {
                 <div id="iig_show_last_request" class="menu_button iig-button-inline" title="${t`View prompt and references sent in the most recent generation`}">
                     <i class="fa-solid fa-magnifying-glass"></i> ${t`Show last request`}
                 </div>
+                <div id="iig_show_book_macro" class="menu_button iig-button-inline" title="${t`Preview the rendered {{iig-book}} macro as the LLM will see it`}">
+                    <i class="fa-solid fa-book"></i> ${t`Show {{iig-book}} preview`}
+                </div>
             </div>
         </div>
     `;
@@ -658,6 +662,17 @@ async function showLastRequestPopup() {
     }
     const html = buildLastRequestPopupHtml(snapshot);
     await Popup.show.text(t`Last generation request`, html, { allowVerticalScrolling: true, wide: true });
+}
+
+// ----- {{iig-book}} macro preview popup -----
+
+async function showIigBookPreviewPopup() {
+    const rendered = renderIigBookMacro();
+    const hintHtml = `<p class="hint">${t`Paste {{iig-book}} into a character card or preset to inject this text into the LLM's context. Only enabled lorebooks with active references are included.`}</p>`;
+    const bodyHtml = rendered
+        ? `${hintHtml}<pre class="iig-last-req-prompt">${sanitizeForHtml(rendered)}</pre>`
+        : `${hintHtml}<p class="hint">${t`The macro is currently empty: no enabled lorebook has any references with a name.`}</p>`;
+    await Popup.show.text(t`{{iig-book}} preview`, bodyHtml, { allowVerticalScrolling: true, wide: true });
 }
 
 // ----- Section toggles -----
@@ -1599,6 +1614,10 @@ function bindDebugSectionEvents(settings) {
 
     document.getElementById('iig_show_last_request')?.addEventListener('click', () => {
         showLastRequestPopup();
+    });
+
+    document.getElementById('iig_show_book_macro')?.addEventListener('click', () => {
+        showIigBookPreviewPopup();
     });
 }
 
