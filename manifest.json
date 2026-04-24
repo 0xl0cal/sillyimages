@@ -6,7 +6,11 @@
     "js": "index.js",
     "css": "style.css",
     "author": "local & astera",
-    "version": "1.2",
+    "version": "2.0",
     "homePage": "https://github.com/0xl0cal/sillyimages/",
-    "auto_update": true
+    "auto_update": true,
+    "i18n": {
+        "ru-ru": "i18n/ru-ru.json",
+        "uk-ua": "i18n/uk-ua.json"
+    }
 }
