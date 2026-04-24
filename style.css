@@ -977,6 +977,9 @@
     max-width: 100%;
     border-radius: 8px;
     margin: 10px 0;
+}
+
+#chat img[data-iig-instruction]:not(.iig-error-image) {
     cursor: zoom-in;
 }
 
