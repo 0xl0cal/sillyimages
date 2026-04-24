@@ -60,6 +60,7 @@ export function initLightbox() {
     let dragStartTy = 0;
     let dragMoved = false;
     let lastTapTime = 0;
+    let tapCloseTimer = null;
     let swipeStartX = 0;
     let swipeStartY = 0;
     let swipeActive = false;
@@ -68,26 +69,38 @@ export function initLightbox() {
         imgEl.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
     };
 
+    // Use element's layout size (pre-transform) to compute pan bounds —
+    // getBoundingClientRect reflects the old transform until applyTransform runs.
     const clampPan = () => {
         if (scale <= 1) {
             tx = 0;
             ty = 0;
             return;
         }
-        const rect = imgEl.getBoundingClientRect();
-        const contentRect = imgEl.parentElement.getBoundingClientRect();
-        const overflowX = Math.max(0, (rect.width - contentRect.width) / 2);
-        const overflowY = Math.max(0, (rect.height - contentRect.height) / 2);
+        const baseW = imgEl.offsetWidth || imgEl.naturalWidth || 0;
+        const baseH = imgEl.offsetHeight || imgEl.naturalHeight || 0;
+        const parent = imgEl.parentElement;
+        const pw = parent?.clientWidth || window.innerWidth;
+        const ph = parent?.clientHeight || window.innerHeight;
+        const overflowX = Math.max(0, (baseW * scale - pw) / 2);
+        const overflowY = Math.max(0, (baseH * scale - ph) / 2);
         tx = Math.max(-overflowX, Math.min(overflowX, tx));
         ty = Math.max(-overflowY, Math.min(overflowY, ty));
+    };
+
+    const clearTapCloseTimer = () => {
+        if (tapCloseTimer) {
+            clearTimeout(tapCloseTimer);
+            tapCloseTimer = null;
+        }
     };
 
     const resetZoom = () => {
         scale = 1;
         tx = 0;
         ty = 0;
-        applyTransform();
         overlay.classList.remove('zoomed');
+        applyTransform();
     };
 
     const zoomAtPoint = (newScale, pointX, pointY) => {
@@ -100,9 +113,11 @@ export function initLightbox() {
         tx = pointX - cx - factor * (pointX - cx - tx);
         ty = pointY - cy - factor * (pointY - cy - ty);
         scale = newScale;
+        // Toggle class BEFORE applyTransform so CSS transition state matches the
+        // first rendered frame (avoids pinch stutter on the first move).
+        overlay.classList.toggle('zoomed', scale > 1);
         clampPan();
         applyTransform();
-        overlay.classList.toggle('zoomed', scale > 1);
     };
 
     const zoomAtCenter = (newScale) => {
@@ -135,6 +150,8 @@ export function initLightbox() {
     };
 
     const openAt = (img) => {
+        clearTapCloseTimer();
+        lastTapTime = 0;
         imageList = collectImagesFromChat();
         currentIndex = Math.max(0, imageList.findIndex((x) => x === img));
         if (currentIndex < 0) {
@@ -153,6 +170,8 @@ export function initLightbox() {
             e.preventDefault();
             e.stopPropagation();
         }
+        clearTapCloseTimer();
+        lastTapTime = 0;
         overlay.classList.remove('open');
         overlay.setAttribute('aria-hidden', 'true');
         document.body.style.overflow = '';
@@ -191,16 +210,6 @@ export function initLightbox() {
         const delta = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
         zoomAtPoint(scale * delta, e.clientX, e.clientY);
     }, { passive: false });
-
-    imgEl.addEventListener('dblclick', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (scale > 1) {
-            resetZoom();
-        } else {
-            zoomAtPoint(2, e.clientX, e.clientY);
-        }
-    });
 
     imgEl.addEventListener('pointerdown', (e) => {
         e.preventDefault();
@@ -250,9 +259,9 @@ export function initLightbox() {
             tx = midX - cx - factor * (pinchMidX - cx - pinchStartTx);
             ty = midY - cy - factor * (pinchMidY - cy - pinchStartTy);
             scale = targetScale;
+            overlay.classList.toggle('zoomed', scale > 1);
             clampPan();
             applyTransform();
-            overlay.classList.toggle('zoomed', scale > 1);
             dragMoved = true;
         } else if (pointers.size === 1 && scale > 1) {
             const dx = e.clientX - dragStartX;
@@ -294,12 +303,15 @@ export function initLightbox() {
         if (!dragMoved && scale === 1) {
             const now = Date.now();
             if (now - lastTapTime < DOUBLE_TAP_MS) {
+                clearTapCloseTimer();
                 zoomAtPoint(2, e.clientX, e.clientY);
                 lastTapTime = 0;
             } else {
                 lastTapTime = now;
-                setTimeout(() => {
-                    if (lastTapTime && Date.now() - lastTapTime >= DOUBLE_TAP_MS && scale === 1 && !dragMoved) {
+                clearTapCloseTimer();
+                tapCloseTimer = setTimeout(() => {
+                    tapCloseTimer = null;
+                    if (scale === 1 && overlay.classList.contains('open')) {
                         close();
                     }
                 }, DOUBLE_TAP_MS);
@@ -347,11 +359,12 @@ export function initLightbox() {
         }
     });
 
-    const chatEl = document.getElementById('chat');
-    chatEl?.addEventListener('click', (e) => {
+    // Document-level delegation so we survive any rebuild of #chat.
+    document.addEventListener('click', (e) => {
         const target = /** @type {HTMLElement} */ (e.target);
         const img = /** @type {HTMLImageElement|null} */ (target?.closest(IMG_SELECTOR));
         if (!img) return;
+        if (!img.closest('#chat')) return;
         if (img.classList.contains('iig-error-image')) return;
         if (!img.src || img.src.endsWith('[IMG:GEN]')) return;
         e.preventDefault();
