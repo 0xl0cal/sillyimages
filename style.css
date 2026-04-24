@@ -1015,7 +1015,6 @@
     left: 0;
     width: 100vw;
     height: 100vh;
-    /* dvh поверх vh — на iOS address bar корректирует высоту */
     height: 100dvh;
     z-index: 999999;
     display: flex;
@@ -1031,6 +1030,8 @@
     padding-bottom: env(safe-area-inset-bottom, 16px);
     overflow: hidden;
     -webkit-transform: translateZ(0);
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 .iig-lightbox.open {
@@ -1044,10 +1045,16 @@
     cursor: zoom-out;
 }
 
-.iig-lightbox-close {
-    position: relative;
-    align-self: flex-end;
-    margin-bottom: 8px;
+.iig-lightbox-toolbar {
+    position: absolute;
+    top: calc(env(safe-area-inset-top, 0px) + 12px);
+    right: 12px;
+    display: flex;
+    gap: 8px;
+    z-index: 3;
+}
+
+.iig-lightbox-btn {
     background: rgba(255, 255, 255, 0.1);
     border: 1px solid rgba(255, 255, 255, 0.2);
     color: #fff;
@@ -1060,25 +1067,54 @@
     justify-content: center;
     cursor: pointer;
     font-size: 1em;
-    z-index: 2;
     -webkit-tap-highlight-color: transparent;
-    flex-shrink: 0;
+    padding: 0;
 }
 
-.iig-lightbox-close:hover {
+.iig-lightbox-btn:hover {
     background: rgba(255, 255, 255, 0.2);
 }
 
+.iig-lightbox-nav {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #fff;
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 1.1em;
+    z-index: 3;
+    -webkit-tap-highlight-color: transparent;
+    padding: 0;
+}
+
+.iig-lightbox-nav:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.iig-lightbox-prev { left: 12px; }
+.iig-lightbox-next { right: 12px; }
+
 .iig-lightbox-content {
     position: relative;
-    max-width: 95vw;
-    max-height: calc(100vh - 120px);
-    max-height: calc(100dvh - 120px);
+    width: 100%;
+    height: 100%;
     display: flex;
     flex-direction: column;
     align-items: center;
+    justify-content: center;
     gap: 8px;
     z-index: 1;
+    overflow: hidden;
+    touch-action: none;
 }
 
 .iig-lightbox-img {
@@ -1087,11 +1123,25 @@
     max-height: calc(100dvh - 140px);
     border-radius: 8px;
     object-fit: contain;
-    cursor: zoom-out;
+    cursor: zoom-in;
     background: #000;
+    transform: translate(0, 0) scale(1);
+    transform-origin: center center;
+    transition: transform 0.15s ease-out;
+    touch-action: none;
+    -webkit-user-drag: none;
+}
+
+.iig-lightbox.zoomed .iig-lightbox-img {
+    cursor: grab;
+    transition: none;
 }
 
 .iig-lightbox-caption {
+    position: absolute;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+    left: 50%;
+    transform: translateX(-50%);
     color: rgba(255, 255, 255, 0.6);
     font-size: 0.8em;
     max-width: 600px;
@@ -1102,6 +1152,7 @@
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
+    pointer-events: none;
 }
 
 /* Regenerate button in message extra menu - inherits mes_button styling */
