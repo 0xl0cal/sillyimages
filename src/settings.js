@@ -514,6 +514,43 @@ export function removeStyle(styleId) {
     return true;
 }
 
+// ----- Last request snapshot (in-memory, NOT persisted) -----
+
+/**
+ * Снимок последнего запроса генерации для UI «Show last request».
+ * Живёт только в памяти страницы: при перезагрузке SillyTavern сбрасывается.
+ * НЕ входит в defaultSettings и НЕ сохраняется в `context.extensionSettings`.
+ *
+ * @type {null | {
+ *   timestamp: number,
+ *   prompt: string,
+ *   references: Array<{ dataUrl: string, label: string }>,
+ *   metadata: {
+ *     provider: string,
+ *     apiType: string,
+ *     model: string,
+ *     aspectRatio?: string,
+ *     imageSize?: string,
+ *     size?: string,
+ *     quality?: string,
+ *     refInstructionApplied: boolean,
+ *   }
+ * }}
+ */
+let lastRequestSnapshot = null;
+
+export function setLastRequestSnapshot(snapshot) {
+    lastRequestSnapshot = snapshot || null;
+}
+
+export function getLastRequestSnapshot() {
+    return lastRequestSnapshot;
+}
+
+export function clearLastRequestSnapshot() {
+    lastRequestSnapshot = null;
+}
+
 // ----- Ref instruction -----
 
 /**

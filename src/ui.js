@@ -23,6 +23,7 @@ import {
     removeStyle,
     ensureAdditionalReferencesArray,
     DEFAULT_REF_INSTRUCTION,
+    getLastRequestSnapshot,
     normalizeNaisteraModel,
     normalizeNaisteraVideoFrequency,
     normalizeImageContextCount,
@@ -532,10 +533,70 @@ function buildDebugSettingsSectionHtml(settings = getSettings()) {
                 <div id="iig_export_logs" class="menu_button iig-button-inline">
                     <i class="fa-solid fa-download"></i> ${t`Export logs`}
                 </div>
+                <div id="iig_show_last_request" class="menu_button iig-button-inline" title="${t`View prompt and references sent in the most recent generation`}">
+                    <i class="fa-solid fa-magnifying-glass"></i> ${t`Show last request`}
+                </div>
             </div>
         </div>
     `;
     return buildSettingsSectionHtml('iig_debug_section', t`Debug`, bodyHtml, false);
+}
+
+// ----- Last request popup -----
+
+function formatTimestampLocal(ts) {
+    if (!Number.isFinite(ts)) return '';
+    try {
+        return new Date(ts).toLocaleString();
+    } catch (_e) {
+        return new Date(ts).toISOString();
+    }
+}
+
+function buildLastRequestPopupHtml(snapshot) {
+    const meta = snapshot.metadata || {};
+    const rows = [];
+    const pushRow = (labelText, value) => {
+        if (value === undefined || value === null || value === '') return;
+        rows.push(`<div class="iig-last-req-meta-row"><span class="iig-last-req-meta-label">${sanitizeForHtml(labelText)}</span><span class="iig-last-req-meta-value">${sanitizeForHtml(String(value))}</span></div>`);
+    };
+    pushRow(t`Time`, formatTimestampLocal(snapshot.timestamp));
+    pushRow(t`Provider`, meta.provider);
+    pushRow(t`API type`, meta.apiType);
+    pushRow(t`Model`, meta.model);
+    pushRow(t`Aspect ratio`, meta.aspectRatio);
+    pushRow(t`Resolution`, meta.imageSize);
+    pushRow(t`Size`, meta.size);
+    pushRow(t`Quality`, meta.quality);
+    pushRow(t`Reference instruction applied`, meta.refInstructionApplied ? t`yes` : t`no`);
+
+    const refsHtml = Array.isArray(snapshot.references) && snapshot.references.length > 0
+        ? snapshot.references.map((ref) => `
+            <div class="iig-last-req-ref">
+                <img class="iig-last-req-ref-thumb" src="${sanitizeForHtml(ref.dataUrl)}" alt="${sanitizeForHtml(ref.label || '')}">
+                <span class="iig-last-req-ref-label">${sanitizeForHtml(ref.label || '')}</span>
+            </div>`).join('')
+        : `<p class="hint">${t`No references were sent.`}</p>`;
+
+    return `
+        <div class="iig-last-req">
+            <div class="iig-last-req-meta">${rows.join('')}</div>
+            <h4>${t`Final prompt sent to provider`}</h4>
+            <pre class="iig-last-req-prompt">${sanitizeForHtml(snapshot.prompt || '')}</pre>
+            <h4>${t`References`} (${Array.isArray(snapshot.references) ? snapshot.references.length : 0})</h4>
+            <div class="iig-last-req-refs">${refsHtml}</div>
+        </div>
+    `;
+}
+
+async function showLastRequestPopup() {
+    const snapshot = getLastRequestSnapshot();
+    if (!snapshot) {
+        toastr.info(t`No request recorded yet. Generate an image first.`, t`Image Generation`);
+        return;
+    }
+    const html = buildLastRequestPopupHtml(snapshot);
+    await Popup.show.text(t`Last generation request`, html, { allowVerticalScrolling: true, wide: true });
 }
 
 // ----- Section toggles -----
@@ -1253,6 +1314,10 @@ function bindDebugSectionEvents(settings) {
 
     document.getElementById('iig_export_logs')?.addEventListener('click', () => {
         exportLogs();
+    });
+
+    document.getElementById('iig_show_last_request')?.addEventListener('click', () => {
+        showLastRequestPopup();
     });
 }
 

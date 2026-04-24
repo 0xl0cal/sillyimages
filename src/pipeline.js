@@ -12,6 +12,9 @@
 import {
     getSettings,
     iigLog,
+    getEffectiveRefInstruction,
+    setLastRequestSnapshot,
+    normalizeNaisteraModel,
 } from './settings.js';
 import {
     saveImageToFile,
@@ -22,6 +25,7 @@ import {
 } from './utils.js';
 import {
     applyConfiguredStyleToTag,
+    buildFinalGenerationPrompt,
     buildPersistedMediaTag,
     convertLegacyTagsToInstructionFormat,
     createGeneratedMediaElement,
@@ -37,6 +41,70 @@ import {
     validateSettings,
 } from './providers.js';
 import { t } from './i18n.js';
+
+// ----- Last request snapshot builder -----
+
+/**
+ * Провайдеры, которые префиксуют final prompt через `refInstruction`
+ * когда references.length > 0. OpenAI и ElectronHub работают через
+ * /v1/images/edits и не дописывают эту инструкцию.
+ */
+const REF_INSTRUCTION_PROVIDERS = new Set(['gemini', 'openrouter', 'naistera']);
+
+/**
+ * Приводит любой представление референса (base64 строка или data URL)
+ * к data URL для превью в модалке.
+ */
+function refToPreviewDataUrl(ref) {
+    const value = String(ref || '');
+    if (!value) return '';
+    return value.startsWith('data:') ? value : `data:image/png;base64,${value}`;
+}
+
+/**
+ * Строит snapshot финального запроса для in-memory отображения в UI.
+ * Воспроизводит apiType-зависимую логику сборки prompt'а (refInstruction
+ * префикс только для провайдеров из REF_INSTRUCTION_PROVIDERS).
+ */
+function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs, options, provider, settings }) {
+    let snapshotPrompt = buildFinalGenerationPrompt(prompt, style, matchedAdditionalRefs || [], settings);
+    let refInstructionApplied = false;
+
+    if (references.length > 0 && REF_INSTRUCTION_PROVIDERS.has(settings.apiType)) {
+        const refInstr = getEffectiveRefInstruction(settings);
+        if (refInstr) {
+            snapshotPrompt = `${refInstr}\n\n${snapshotPrompt}`;
+            refInstructionApplied = true;
+        }
+    }
+
+    const model = settings.apiType === 'naistera'
+        ? normalizeNaisteraModel(settings.naisteraModel)
+        : (settings.model || '');
+
+    const aspectRatio = settings.apiType === 'naistera'
+        ? (options?.aspectRatio || settings.naisteraAspectRatio)
+        : (options?.aspectRatio || settings.aspectRatio);
+
+    return {
+        timestamp: Date.now(),
+        prompt: snapshotPrompt,
+        references: references.map((ref, index) => ({
+            dataUrl: refToPreviewDataUrl(ref),
+            label: `ref ${index + 1}`,
+        })),
+        metadata: {
+            provider: provider?.displayName || settings.apiType,
+            apiType: settings.apiType,
+            model,
+            aspectRatio,
+            imageSize: options?.imageSize || settings.imageSize || '',
+            size: settings.size || '',
+            quality: options?.quality || settings.quality || '',
+            refInstructionApplied,
+        },
+    };
+}
 
 // Set of messageIds currently being processed (shared between processMessageTags
 // and regenerate to prevent double-runs).
@@ -152,6 +220,19 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
         matchedAdditionalRefs,
         providerOptions: options,
     });
+
+    // Записываем snapshot (in-memory, перезатирается на каждой генерации) для
+    // кнопки «Show last request» в настройках. Делаем до generate, чтобы
+    // snapshot был доступен даже если провайдер упадёт.
+    setLastRequestSnapshot(buildRequestSnapshot({
+        prompt,
+        style,
+        references,
+        matchedAdditionalRefs,
+        options,
+        provider,
+        settings,
+    }));
 
     let lastError;
 
