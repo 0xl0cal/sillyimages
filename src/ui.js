@@ -59,7 +59,9 @@ import {
     importAdditionalReferencesFromUrls,
 } from './references.js';
 import { isGeminiModel, fetchModels, resolveActiveProvider } from './providers.js';
-import { t, translate } from './i18n.js';
+import { t } from './i18n.js';
+// Относительный путь: /scripts/extensions/third-party/sillyimages/src/ui.js → /scripts/popup.js
+import { Popup } from '../../../../popup.js';
 
 // ----- Section wrapper -----
 
@@ -606,32 +608,33 @@ function bindConnectionProfilesEvents(settings, updateVisibility) {
         toastr.success(t`Profile "${profile.name}" saved`, t`Image Generation`, { timeOut: 1500 });
     });
 
-    document.getElementById('iig_profile_save_as')?.addEventListener('click', () => {
-        const name = prompt(translate('New profile name:'));
-        if (name === null) return;
+    document.getElementById('iig_profile_save_as')?.addEventListener('click', async () => {
+        const name = await Popup.show.input(t`New profile`, t`Enter a name for the new profile:`);
+        if (!name) return;
         const profile = createConnectionProfile(name, settings);
         saveSettings();
         refreshProfileSelectOptions(settings);
         toastr.success(t`Created profile "${profile.name}"`, t`Image Generation`, { timeOut: 1500 });
     });
 
-    document.getElementById('iig_profile_rename')?.addEventListener('click', () => {
+    document.getElementById('iig_profile_rename')?.addEventListener('click', async () => {
         const profile = getActiveConnectionProfile(settings);
         if (!profile) {
             toastr.warning(t`No active profile`, t`Image Generation`);
             return;
         }
-        const newName = prompt(translate('New profile name:'), profile.name);
-        if (newName === null) return;
+        const newName = await Popup.show.input(t`Rename profile`, t`Enter a new name:`, profile.name);
+        if (!newName) return;
         renameConnectionProfile(profile.id, newName, settings);
         saveSettings();
         refreshProfileSelectOptions(settings);
     });
 
-    document.getElementById('iig_profile_remove')?.addEventListener('click', () => {
+    document.getElementById('iig_profile_remove')?.addEventListener('click', async () => {
         const profile = getActiveConnectionProfile(settings);
         if (!profile) return;
-        if (!confirm(t`Delete profile "${profile.name}"?`)) return;
+        const confirmed = await Popup.show.confirm(t`Delete profile`, t`Delete profile "${profile.name}"? This cannot be undone.`);
+        if (!confirmed) return;
         const ok = removeConnectionProfile(profile.id, settings);
         if (!ok) {
             toastr.warning(t`Cannot delete the last profile`, t`Image Generation`);

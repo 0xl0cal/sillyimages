@@ -406,7 +406,7 @@ export function shouldReplaceEndpointForApiType(apiType, endpoint) {
 
     // Если в endpoint уже записан чужой дефолт из ENDPOINT_PLACEHOLDERS —
     // значит юзер переключает тип API и не правил endpoint вручную. В этом
-    // случае заменяем на дефолт нового типа. Сравниваем без протокола/слэшей
+    // случае заменяем на дефолт нового типа. Сравниваем без протокола/слэшей,
     // чтобы поймать и `https://api.openai.com` и `https://api.openai.com/`.
     const norm = trimmed.replace(/^https?:\/\//i, '').replace(/\/+$/, '').toLowerCase();
     for (const [type, url] of Object.entries(ENDPOINT_PLACEHOLDERS)) {
@@ -417,14 +417,11 @@ export function shouldReplaceEndpointForApiType(apiType, endpoint) {
         }
     }
 
-    // Naistera: доп. эвристика — если ранее был OpenAI /v1/images/... или
-    // Gemini /v1beta/models/... путь, заменяем на чистый naistera endpoint.
-    if (apiType === 'naistera') {
-        return /\/v1\/images\/generations\/?$/i.test(trimmed)
-            || /\/v1\/models\/?$/i.test(trimmed)
-            || /\/v1beta\/models\//i.test(trimmed);
-    }
-    return false;
+    // Оригинальная Naistera-ветка (не трогать).
+    if (apiType !== 'naistera') return false;
+    return /\/v1\/images\/generations\/?$/i.test(trimmed)
+        || /\/v1\/models\/?$/i.test(trimmed)
+        || /\/v1beta\/models\//i.test(trimmed);
 }
 
 export function getEffectiveEndpoint(settings = getSettings()) {
