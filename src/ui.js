@@ -1412,7 +1412,7 @@ function bindAdditionalReferencesEvents(settings) {
         refreshAdditionalReferencesList();
     });
 
-    document.getElementById('iig_additional_refs_list')?.addEventListener('click', (e) => {
+    document.getElementById('iig_additional_refs_list')?.addEventListener('click', async (e) => {
         const target = e.target instanceof Element ? e.target : null;
         if (!target) return;
 
@@ -1428,6 +1428,12 @@ function bindAdditionalReferencesEvents(settings) {
 
         const refs = ensureAdditionalReferencesArray(settings);
         if (removeBtn) {
+            const name = String(refs[index]?.name || '').trim() || t`Reference ${index + 1}`;
+            const confirmed = await Popup.show.confirm(
+                t`Delete reference`,
+                t`Delete reference "${name}"? This cannot be undone.`,
+            );
+            if (!confirmed) return;
             refs.splice(index, 1);
         } else if (upBtn && index > 0) {
             [refs[index - 1], refs[index]] = [refs[index], refs[index - 1]];
