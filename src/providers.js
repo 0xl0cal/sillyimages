@@ -23,6 +23,7 @@ import {
     normalizeImageContextCount,
     normalizeNaisteraVideoFrequency,
     getEffectiveEndpoint,
+    getEffectiveRefInstruction,
 } from './settings.js';
 import {
     normalizeStoredImagePath,
@@ -836,8 +837,10 @@ export class GeminiProvider extends Provider {
         let fullPrompt = buildFinalGenerationPrompt(prompt, style, options.matchedAdditionalRefs || [], settings);
 
         if (references.length > 0) {
-            const refInstruction = `[CRITICAL: The reference image(s) above show the EXACT appearance of the character(s). You MUST precisely copy their: face structure, eye color, hair color and style, skin tone, body type, clothing, and all distinctive features. Do not deviate from the reference appearances.]`;
-            fullPrompt = `${refInstruction}\n\n${fullPrompt}`;
+            const refInstruction = getEffectiveRefInstruction(settings);
+            if (refInstruction) {
+                fullPrompt = `${refInstruction}\n\n${fullPrompt}`;
+            }
         }
 
         parts.push({ text: fullPrompt });
@@ -1088,8 +1091,10 @@ export class OpenRouterProvider extends Provider {
         let fullPrompt = buildFinalGenerationPrompt(prompt, style, options.matchedAdditionalRefs || [], settings);
 
         if (references.length > 0) {
-            const refInstruction = `[CRITICAL: The reference image(s) above show the EXACT appearance of the character(s). You MUST precisely copy their: face structure, eye color, hair color and style, skin tone, body type, clothing, and all distinctive features. Do not deviate from the reference appearances.]`;
-            fullPrompt = `${refInstruction}\n\n${fullPrompt}`;
+            const refInstruction = getEffectiveRefInstruction(settings);
+            if (refInstruction) {
+                fullPrompt = `${refInstruction}\n\n${fullPrompt}`;
+            }
         }
 
         // messages.content: строка если нет refs, массив частей — если есть.
@@ -1354,8 +1359,10 @@ export class NaisteraProvider extends Provider {
         let fullPrompt = buildFinalGenerationPrompt(prompt, style, options.matchedAdditionalRefs || [], settings);
 
         if (references.length > 0) {
-            const refInstruction = `[CRITICAL: The reference image(s) above show the EXACT appearance of the character(s). You MUST precisely copy their: face structure, eye color, hair color and style, skin tone, body type, clothing, and all distinctive features. Do not deviate from the reference appearances.]`;
-            fullPrompt = `${refInstruction}\n\n${fullPrompt}`;
+            const refInstruction = getEffectiveRefInstruction(settings);
+            if (refInstruction) {
+                fullPrompt = `${refInstruction}\n\n${fullPrompt}`;
+            }
         }
 
         const body = {

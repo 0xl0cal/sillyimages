@@ -113,6 +113,13 @@
     "Reference limit reached: ${0}": "Досягнуто ліміт референсів: ${0}",
     "Failed to load image: ${0}": "Не вдалося завантажити зображення: ${0}",
 
+    "Reference instruction": "Інструкція щодо референсів",
+    "Prepended to the prompt whenever at least one reference image is sent to the provider. Helps the model copy appearance from refs.": "Дописується на початок промпта щоразу, коли провайдеру надсилається хоча б один референс. Допомагає моделі копіювати зовнішність з референсів.",
+    "Send reference instruction": "Надсилати інструкцію щодо референсів",
+    "Restore default text": "Відновити текст за замовчуванням",
+    "Reset to default": "Скинути до дефолту",
+    "Reference instruction reset to default": "Інструкцію щодо референсів скинуто до дефолту",
+
     "Debug": "Налагодження",
     "Max retries": "Макс. повторів",
     "Retry delay (ms)": "Затримка (мс)",

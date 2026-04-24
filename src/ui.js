@@ -22,6 +22,7 @@ import {
     updateStyle,
     removeStyle,
     ensureAdditionalReferencesArray,
+    DEFAULT_REF_INSTRUCTION,
     normalizeNaisteraModel,
     normalizeNaisteraVideoFrequency,
     normalizeImageContextCount,
@@ -483,6 +484,27 @@ function buildReferencesSettingsSectionHtml(settings = getSettings()) {
                 </div>
                 <div id="iig_additional_refs_status" class="hint" style="margin-bottom: 8px;"></div>
                 <div id="iig_additional_refs_list"></div>
+            </div>
+
+            <div class="iig-settings-card-nested ${refsSectionVisible ? '' : 'iig-hidden'}" id="iig_ref_instruction_section">
+                <h4>${t`Reference instruction`}</h4>
+                <p class="hint">${t`Prepended to the prompt whenever at least one reference image is sent to the provider. Helps the model copy appearance from refs.`}</p>
+                <label class="checkbox_label">
+                    <input type="checkbox" id="iig_ref_instruction_enabled" ${settings.refInstructionEnabled !== false ? 'checked' : ''}>
+                    <span>${t`Send reference instruction`}</span>
+                </label>
+                <textarea
+                    id="iig_ref_instruction"
+                    class="text_pole flex1 iig-settings-textarea"
+                    rows="4"
+                    placeholder="${sanitizeForHtml(DEFAULT_REF_INSTRUCTION)}"
+                    ${settings.refInstructionEnabled === false ? 'disabled' : ''}
+                >${sanitizeForHtml(settings.refInstruction ?? DEFAULT_REF_INSTRUCTION)}</textarea>
+                <div class="iig-debug-actions">
+                    <div id="iig_ref_instruction_reset" class="menu_button iig-button-inline" title="${t`Restore default text`}">
+                        <i class="fa-solid fa-rotate-left"></i> ${t`Reset to default`}
+                    </div>
+                </div>
             </div>
         </div>
     `;
@@ -1185,6 +1207,37 @@ function bindAdditionalReferencesEvents(settings) {
     });
 }
 
+// ----- Reference instruction events -----
+
+function bindRefInstructionEvents(settings) {
+    const checkbox = document.getElementById('iig_ref_instruction_enabled');
+    const textarea = document.getElementById('iig_ref_instruction');
+    const resetBtn = document.getElementById('iig_ref_instruction_reset');
+
+    checkbox?.addEventListener('change', (e) => {
+        if (!(e.target instanceof HTMLInputElement)) return;
+        settings.refInstructionEnabled = e.target.checked;
+        if (textarea instanceof HTMLTextAreaElement) {
+            textarea.disabled = !e.target.checked;
+        }
+        saveSettings();
+    });
+
+    textarea?.addEventListener('input', (e) => {
+        if (!(e.target instanceof HTMLTextAreaElement)) return;
+        settings.refInstruction = e.target.value;
+        saveSettings();
+    });
+
+    resetBtn?.addEventListener('click', () => {
+        if (!(textarea instanceof HTMLTextAreaElement)) return;
+        textarea.value = DEFAULT_REF_INSTRUCTION;
+        settings.refInstruction = DEFAULT_REF_INSTRUCTION;
+        saveSettings();
+        toastr.success(t`Reference instruction reset to default`, t`Image Generation`, { timeOut: 1500 });
+    });
+}
+
 // ----- Debug section events -----
 
 function bindDebugSectionEvents(settings) {
@@ -1230,6 +1283,7 @@ function buildUpdateVisibility(settings) {
         document.getElementById('iig_image_context_section')?.classList.toggle('iig-hidden', !refsSupported);
         document.getElementById('iig_image_context_count_row')?.classList.toggle('iig-hidden', !(refsSupported && settings.imageContextEnabled));
         document.getElementById('iig_additional_refs_section')?.classList.toggle('iig-hidden', !refsSupported);
+        document.getElementById('iig_ref_instruction_section')?.classList.toggle('iig-hidden', !refsSupported);
 
         // OpenAI + Electron Hub params (size / quality) — Electron Hub
         // принимает тот же формат JSON на /v1/images/{generations,edits}.
@@ -1324,6 +1378,7 @@ function bindSettingsEvents() {
     bindAvatarDropdownToggles();
     bindStylesSectionEvents(settings);
     bindAdditionalReferencesEvents(settings);
+    bindRefInstructionEvents(settings);
     bindDebugSectionEvents(settings);
 
     // Apply initial state

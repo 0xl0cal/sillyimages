@@ -14,6 +14,12 @@ export const MAX_CONTEXT_IMAGES = 3;
 export const MAX_GENERATION_REFERENCE_IMAGES = 5;
 export const MAX_ADDITIONAL_REFERENCES = 8;
 
+// Дефолтная «критическая» инструкция, которая дописывается в начало prompt'а
+// когда хотя бы один референс отправляется провайдеру. Раньше была
+// захардкожена в 3 местах `providers.js` (Gemini / OpenRouter / Naistera).
+// Теперь редактируется в настройках и может быть отключена целиком.
+export const DEFAULT_REF_INSTRUCTION = '[CRITICAL: The reference image(s) above show the EXACT appearance of the character(s). You MUST precisely copy their: face structure, eye color, hair color and style, skin tone, body type, clothing, and all distinctive features. Do not deviate from the reference appearances.]';
+
 // ----- Logger -----
 
 const MAX_LOG_ENTRIES = 200;
@@ -89,6 +95,11 @@ export const defaultSettings = Object.freeze({
     naisteraVideoTest: false,
     naisteraVideoEveryN: 1,
     additionalReferences: [],
+    // Ref instruction — критический префикс, дописываемый к prompt'у когда
+    // хотя бы один reference image отправляется провайдеру. Глобальный
+    // (не привязан к connection profile).
+    refInstructionEnabled: true,
+    refInstruction: DEFAULT_REF_INSTRUCTION,
     // Connection profiles — именованные snapshot'ы настроек подключения
     // (apiType / endpoint / apiKey / model / provider-specific). Переключение
     // профиля копирует все поля из профиля в settings. См. CONNECTION_FIELDS.
@@ -501,6 +512,22 @@ export function removeStyle(styleId) {
         settings.activeStyleId = styles[0]?.id || '';
     }
     return true;
+}
+
+// ----- Ref instruction -----
+
+/**
+ * Возвращает актуальную «критическую инструкцию» для провайдера или пустую
+ * строку, если юзер её выключил. Пустое значение `refInstruction` trimmed до
+ * нуля тоже трактуется как «выключено», чтобы случайный clear textarea не
+ * ломал логику `if (refInstruction)` в провайдерах.
+ */
+export function getEffectiveRefInstruction(settings = getSettings()) {
+    if (settings.refInstructionEnabled === false) {
+        return '';
+    }
+    const raw = String(settings.refInstruction ?? '').trim();
+    return raw || DEFAULT_REF_INSTRUCTION;
 }
 
 // ----- Additional references array helpers -----
