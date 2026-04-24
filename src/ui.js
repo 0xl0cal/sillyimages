@@ -868,32 +868,56 @@ function bindApiSectionEvents(settings, updateVisibility) {
     document.getElementById('iig_model')?.addEventListener('change', (e) => modelApplyChange(e.target.value));
     document.getElementById('iig_model')?.addEventListener('input', (e) => modelApplyChange(e.target.value));
 
-    document.getElementById('iig_refresh_models')?.addEventListener('click', async (e) => {
-        const btn = e.currentTarget;
-        btn.classList.add('loading');
-
+    /**
+     * Обновляет datalist `iig_model_list` — либо через provider.fetchModels,
+     * либо чистит (raw-режим / нет провайдера). `announce` контролирует
+     * показ toastr'а с количеством найденных моделей.
+     */
+    async function reloadModelList({ announce = false } = {}) {
+        const list = document.getElementById('iig_model_list');
+        const btn = document.getElementById('iig_refresh_models');
+        btn?.classList.add('loading');
         try {
             const models = await fetchModels();
-            const list = document.getElementById('iig_model_list');
             if (list instanceof HTMLDataListElement) {
                 list.innerHTML = models
                     .map((m) => `<option value="${sanitizeForHtml(m)}"></option>`)
                     .join('');
             }
-
-            if (models.length > 0) {
+            if (announce && models.length > 0) {
                 toastr.success(t`Models found: ${models.length}`, t`Image Generation`);
             }
+            return models;
         } catch (error) {
-            toastr.error(t`Failed to load models`, t`Image Generation`);
+            if (announce) {
+                toastr.error(t`Failed to load models`, t`Image Generation`);
+            }
+            return [];
         } finally {
-            btn.classList.remove('loading');
+            btn?.classList.remove('loading');
         }
+    }
+
+    document.getElementById('iig_refresh_models')?.addEventListener('click', () => {
+        reloadModelList({ announce: true });
     });
 
     document.getElementById('iig_raw_endpoint')?.addEventListener('change', (e) => {
+        if (!(e.target instanceof HTMLInputElement)) return;
         settings.rawEndpoint = e.target.checked;
         saveSettings();
+
+        const list = document.getElementById('iig_model_list');
+        if (settings.rawEndpoint) {
+            // Чистим datalist — в raw-режиме подсказки неактуальны, иначе
+            // после выключения рядом с полем будут висеть устаревшие опции.
+            if (list instanceof HTMLDataListElement) list.innerHTML = '';
+        } else {
+            // Выключили raw → юзер ожидает что поле снова станет dropdown'ом.
+            // Автоматически подтягиваем список моделей — не заставляем его
+            // жать Refresh руками.
+            reloadModelList({ announce: true });
+        }
     });
 
     document.getElementById('iig_size')?.addEventListener('change', (e) => {
