@@ -130,6 +130,13 @@
     "{{iig-book}} preview": "Превʼю {{iig-book}}",
     "Paste {{iig-book}} into a character card or preset to inject this text into the LLM's context. Only enabled lorebooks with active references are included.": "Вставте {{iig-book}} у картку персонажа або пресет, щоб цей текст потрапив у контекст LLM. Потрапляють лише увімкнені лорбуки з активними референсами.",
     "The macro is currently empty: no enabled lorebook has any references with a name.": "Макрос наразі порожній: у жодному ввімкненому лорбуку немає референсів з імʼям.",
+
+    "Matched references": "Зматчені референси",
+    "No additional references were matched in this request.": "У цьому запиті жоден additional reference не зматчився.",
+    "always": "завжди",
+    "alias: ${0}": "аліас: ${0}",
+    "regex: ${0}": "regex: ${0}",
+    "invalid regex, fell back to literal: ${0}": "некоректний regex, відкат на буквальний пошук: ${0}",
     "Add reference": "Додати референс",
     "Import reference": "Завантажити референс",
     "Additional reference saved": "Додатковий референс збережено",

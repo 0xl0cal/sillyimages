@@ -208,6 +208,14 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
         ? (options?.aspectRatio || settings.naisteraAspectRatio)
         : (options?.aspectRatio || settings.aspectRatio);
 
+    const matchedRefsInfo = (Array.isArray(matchedAdditionalRefs) ? matchedAdditionalRefs : []).map((ref) => ({
+        name: String(ref?.name || ''),
+        group: String(ref?.group || ''),
+        priority: Number.isFinite(ref?.priority) ? ref.priority : 0,
+        lorebookName: String(ref?._lorebookName || ''),
+        reason: ref?._matchReason || null,
+    }));
+
     return {
         timestamp: Date.now(),
         prompt: snapshotPrompt,
@@ -215,6 +223,7 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
             dataUrl: refToPreviewDataUrl(ref),
             label: `ref ${index + 1}`,
         })),
+        matchedRefs: matchedRefsInfo,
         metadata: {
             provider: provider?.displayName || settings.apiType,
             apiType: settings.apiType,

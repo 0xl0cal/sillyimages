@@ -739,6 +739,10 @@ export function ensureAdditionalReferencesArray(settings = getSettings()) {
  * Все refs из всех enabled лорбуков в один плоский массив. Matcher использует
  * это для поиска совпадений по prompt. Порядок сохраняет: refs внутри лорбука
  * в исходном порядке, лорбуки — в порядке массива `settings.lorebooks`.
+ *
+ * К каждому ref добавляется «невидимое» поле `_lorebookName` (underscore-
+ * префикс, чтобы не путали с persisted-полями). UI/debug используют это
+ * чтобы показать, из какого лорбука пришёл сматченный ref.
  */
 export function getAllEnabledLorebookReferences(settings = getSettings()) {
     const lorebooks = ensureLorebooks(settings);
@@ -746,7 +750,7 @@ export function getAllEnabledLorebookReferences(settings = getSettings()) {
     for (const lb of lorebooks) {
         if (!lb.enabled) continue;
         for (const ref of lb.refs) {
-            result.push(ref);
+            result.push({ ...ref, _lorebookName: lb.name });
         }
     }
     return result;

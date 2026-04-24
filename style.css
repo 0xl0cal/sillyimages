@@ -799,6 +799,39 @@
     font-size: 0.9em;
 }
 
+.iig-matched-refs {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.iig-matched-ref-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: baseline;
+    padding: 4px 8px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor) 60%, transparent);
+    font-size: 0.9em;
+}
+
+.iig-matched-ref-name {
+    font-weight: 600;
+}
+
+.iig-matched-ref-meta {
+    color: var(--SmartThemeQuoteColor);
+    font-size: 0.85em;
+}
+
+.iig-matched-ref-reason {
+    margin-left: auto;
+    font-family: monospace;
+    font-size: 0.85em;
+    opacity: 0.85;
+}
+
 .iig-last-req-refs {
     display: flex;
     flex-wrap: wrap;

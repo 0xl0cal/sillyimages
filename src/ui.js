@@ -618,6 +618,44 @@ function formatTimestampLocal(ts) {
     }
 }
 
+function formatMatchReason(reason) {
+    if (!reason || typeof reason !== 'object') return '';
+    switch (reason.kind) {
+        case 'always':
+            return t`always`;
+        case 'primary':
+            return t`alias: ${reason.detail || ''}`;
+        case 'regex':
+            return t`regex: ${reason.detail || ''}`;
+        case 'regex-fallback':
+            return t`invalid regex, fell back to literal: ${reason.detail || ''}`;
+        default:
+            return reason.kind || '';
+    }
+}
+
+function buildMatchedRefsSectionHtml(matched) {
+    if (!Array.isArray(matched) || matched.length === 0) {
+        return `<p class="hint">${t`No additional references were matched in this request.`}</p>`;
+    }
+    const rows = matched.map((m) => {
+        const primary = String(m.name || '').split(',')[0].trim();
+        const metaBits = [];
+        if (m.lorebookName) metaBits.push(sanitizeForHtml(m.lorebookName));
+        if (m.group) metaBits.push(`[${sanitizeForHtml(m.group)}]`);
+        if (Number.isFinite(m.priority) && m.priority !== 0) metaBits.push(`p=${m.priority}`);
+        const reasonText = sanitizeForHtml(formatMatchReason(m.reason));
+        return `
+            <div class="iig-matched-ref-row">
+                <span class="iig-matched-ref-name">${sanitizeForHtml(primary || m.name || '')}</span>
+                ${metaBits.length > 0 ? `<span class="iig-matched-ref-meta">${metaBits.join(' · ')}</span>` : ''}
+                ${reasonText ? `<span class="iig-matched-ref-reason">${reasonText}</span>` : ''}
+            </div>
+        `;
+    });
+    return `<div class="iig-matched-refs">${rows.join('')}</div>`;
+}
+
 function buildLastRequestPopupHtml(snapshot) {
     const meta = snapshot.metadata || {};
     const rows = [];
@@ -643,9 +681,13 @@ function buildLastRequestPopupHtml(snapshot) {
             </div>`).join('')
         : `<p class="hint">${t`No references were sent.`}</p>`;
 
+    const matchedCount = Array.isArray(snapshot.matchedRefs) ? snapshot.matchedRefs.length : 0;
+
     return `
         <div class="iig-last-req">
             <div class="iig-last-req-meta">${rows.join('')}</div>
+            <h4>${t`Matched references`} (${matchedCount})</h4>
+            ${buildMatchedRefsSectionHtml(snapshot.matchedRefs || [])}
             <h4>${t`Final prompt sent to provider`}</h4>
             <pre class="iig-last-req-prompt">${sanitizeForHtml(snapshot.prompt || '')}</pre>
             <h4>${t`References`} (${Array.isArray(snapshot.references) ? snapshot.references.length : 0})</h4>

@@ -153,18 +153,21 @@ export function parseReferenceAliases(name) {
 
 /**
  * Проверяет, матчится ли primary-ключ в prompt с учётом regex-режима.
+ * Возвращает детали: `null` если не матч, иначе `{ kind, detail }`.
+ *
  * В regex-режиме `name` интерпретируется как строка JS-regex: поддерживаются
  * `/pattern/flags` и просто `pattern` (flags по умолчанию — 'iu'). Если regex
  * не парсится — fallback на literal-match.
  */
-export function promptMatchesPrimaryKey(prompt, name, useRegex) {
+export function findPrimaryKeyMatch(prompt, name, useRegex) {
     if (!useRegex) {
         const aliases = parseReferenceAliases(name);
-        return aliases.some((alias) => promptContainsReferenceName(prompt, alias));
+        const hit = aliases.find((alias) => promptContainsReferenceName(prompt, alias));
+        return hit ? { kind: 'primary', detail: hit } : null;
     }
 
     const raw = String(name || '').trim();
-    if (!raw) return false;
+    if (!raw) return null;
 
     let pattern = raw;
     let flags = 'iu';
@@ -176,12 +179,22 @@ export function promptMatchesPrimaryKey(prompt, name, useRegex) {
 
     try {
         const regex = new RegExp(pattern, flags);
-        return regex.test(String(prompt || ''));
+        return regex.test(String(prompt || '')) ? { kind: 'regex', detail: raw } : null;
     } catch (_error) {
         // Broken regex — fallback на literal contains, чтобы юзер хоть как-то
         // видел срабатывание и понял где ошибка.
-        return String(prompt || '').toLowerCase().includes(pattern.toLowerCase());
+        if (String(prompt || '').toLowerCase().includes(pattern.toLowerCase())) {
+            return { kind: 'regex-fallback', detail: raw };
+        }
+        return null;
     }
+}
+
+/**
+ * Обратная совместимость: boolean-версия `findPrimaryKeyMatch`.
+ */
+export function promptMatchesPrimaryKey(prompt, name, useRegex) {
+    return findPrimaryKeyMatch(prompt, name, useRegex) !== null;
 }
 
 /**
@@ -275,6 +288,7 @@ export function getMatchedAdditionalReferences(prompt) {
             priority: Number.isFinite(ref?.priority) ? ref.priority : 0,
             useRegex: ref?.useRegex === true,
             secondaryKeys: String(ref?.secondaryKeys || ''),
+            _lorebookName: String(ref?._lorebookName || ''),
         }))
         .filter((ref) => ref.enabled && ref.name && ref.imagePath);
 
@@ -282,11 +296,13 @@ export function getMatchedAdditionalReferences(prompt) {
     const seenKeys = new Set();
 
     for (const ref of refs) {
-        let isMatched = ref.matchMode === 'always';
-        if (!isMatched) {
-            isMatched = promptMatchesPrimaryKey(prompt, ref.name, ref.useRegex);
+        let matchReason = null;
+        if (ref.matchMode === 'always') {
+            matchReason = { kind: 'always', detail: '' };
+        } else {
+            matchReason = findPrimaryKeyMatch(prompt, ref.name, ref.useRegex);
         }
-        if (!isMatched) continue;
+        if (!matchReason) continue;
 
         // Secondary keys — AND-фильтр (все ключи должны встретиться). Для
         // режима 'always' тоже применяем — позволяет делать условно-always
@@ -298,7 +314,7 @@ export function getMatchedAdditionalReferences(prompt) {
         const dedupeKey = `${ref.name}::${ref.imagePath}`;
         if (seenKeys.has(dedupeKey)) continue;
         seenKeys.add(dedupeKey);
-        matched.push(ref);
+        matched.push({ ...ref, _matchReason: matchReason });
     }
 
     // Сортировка по priority (desc). При равном priority — сохраняем порядок
