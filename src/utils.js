@@ -353,10 +353,12 @@ export function dataUrlToBlob(dataUrl) {
  * Обёртка над fetch с AbortController и таймаутом.
  * @param {string | URL} url
  * @param {RequestInit} init
- * @param {number} timeoutMs — по умолчанию 120 000 (2 минуты) для долгих image-запросов.
- * @param {AbortSignal} [externalSignal] — опц. внешний сигнал (если хочется композиции).
+ * @param {number} timeoutMs — по умолчанию 600 000 (10 минут). Некоторые
+ *   image-модели (gpt-image-2 HQ, flux-kontext на бесплатных прокси,
+ *   медленные Gemini инстансы) спокойно работают 3-5 минут. Меньший
+ *   таймаут давал ложные fail'ы.
  */
-export async function fetchWithTimeout(url, init = {}, timeoutMs = 120_000, externalSignal = null) {
+export async function fetchWithTimeout(url, init = {}, timeoutMs = 600_000, externalSignal = null) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(new DOMException('Timeout', 'AbortError')), timeoutMs);
 

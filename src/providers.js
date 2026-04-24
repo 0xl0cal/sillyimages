@@ -358,7 +358,7 @@ export class Provider {
 
 // Таймаут для image-запросов. OpenAI допускает долгую генерацию на сложных
 // промптах, особенно gpt-image-*.
-const OPENAI_REQUEST_TIMEOUT_MS = 120_000;
+const OPENAI_REQUEST_TIMEOUT_MS = 600_000;
 
 /**
  * Классификация модели OpenAI-совместимого API.
@@ -771,7 +771,7 @@ export class OpenAIProvider extends Provider {
 
 // ----- Gemini (nano-banana, gemini-*-image) -----
 
-const GEMINI_REQUEST_TIMEOUT_MS = 120_000;
+const GEMINI_REQUEST_TIMEOUT_MS = 600_000;
 
 /**
  * Парсит ошибку от Gemini-ответа в единообразный вид.
@@ -1015,7 +1015,7 @@ export class GeminiProvider extends Provider {
 
 // ----- OpenRouter (chat completions с modalities=image) -----
 
-const OPENROUTER_REQUEST_TIMEOUT_MS = 120_000;
+const OPENROUTER_REQUEST_TIMEOUT_MS = 600_000;
 const OPENROUTER_DEFAULT_ENDPOINT = 'https://openrouter.ai/api/v1';
 
 /**
