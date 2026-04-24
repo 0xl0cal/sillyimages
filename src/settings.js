@@ -5,6 +5,8 @@
  * Все остальные модули могут безопасно импортировать отсюда.
  */
 
+import { t } from './i18n.js';
+
 export const MODULE_NAME = 'inline_image_gen';
 
 // Limits / глобальные константы размерностей.
@@ -45,7 +47,7 @@ export function exportLogs() {
     a.download = `iig-logs-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
     a.click();
     URL.revokeObjectURL(url);
-    toastr.success('Логи экспортированы', 'Генерация картинок');
+    toastr.success(t`Logs exported`, t`Image Generation`);
 }
 
 // ----- Defaults -----
@@ -136,7 +138,7 @@ export function ensureConnectionProfiles(settings = getSettings()) {
     // Нормализация каждого профиля.
     settings.connectionProfiles = settings.connectionProfiles.map((raw) => {
         const id = String(raw?.id || '').trim() || makeProfileId();
-        const name = String(raw?.name || '').trim() || 'Без названия';
+        const name = String(raw?.name || '').trim() || t`Untitled`;
         const fields = {};
         for (const key of CONNECTION_FIELDS) {
             fields[key] = raw?.[key] ?? defaultSettings[key];
@@ -183,7 +185,7 @@ export function createConnectionProfile(name, settings = getSettings()) {
     ensureConnectionProfiles(settings);
     const profile = {
         id: makeProfileId(),
-        name: String(name || '').trim() || `Профиль ${settings.connectionProfiles.length + 1}`,
+        name: String(name || '').trim() || t`Profile ${settings.connectionProfiles.length + 1}`,
         ...extractConnectionFields(settings),
     };
     settings.connectionProfiles.push(profile);
@@ -417,7 +419,7 @@ export function ensureStyles(settings = getSettings()) {
 
     settings.styles = settings.styles.map((style, index) => ({
         id: String(style?.id || `iig-style-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`),
-        name: String(style?.name || `Стиль ${index + 1}`).trim() || `Стиль ${index + 1}`,
+        name: String(style?.name || t`Style ${index + 1}`).trim() || t`Style ${index + 1}`,
         value: String(style?.value ?? style?.style ?? '').trim(),
     }));
 
@@ -433,7 +435,7 @@ export function createStyle(name = '') {
     const styles = ensureStyles(settings);
     const style = {
         id: `iig-style-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        name: String(name || '').trim() || `Стиль ${styles.length + 1}`,
+        name: String(name || '').trim() || t`Style ${styles.length + 1}`,
         value: '',
     };
     styles.push(style);

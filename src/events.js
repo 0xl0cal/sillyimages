@@ -4,6 +4,7 @@
 
 import { getSettings, iigLog } from './settings.js';
 import { processMessageTags, regenerateMessageImages } from './pipeline.js';
+import { t } from './i18n.js';
 
 // ----- Regenerate button (three-dots menu) -----
 
@@ -17,7 +18,7 @@ export function addRegenerateButton(messageElement, messageId) {
 
     const btn = document.createElement('div');
     btn.className = 'mes_button iig-regenerate-btn fa-solid fa-images interactable';
-    btn.title = 'Перегенерировать картинки';
+    btn.title = t`Regenerate images`;
     btn.tabIndex = 0;
     btn.addEventListener('click', async (e) => {
         e.stopPropagation();

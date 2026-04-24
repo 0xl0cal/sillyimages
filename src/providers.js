@@ -34,6 +34,7 @@ import {
     isRetryableHttpStatus,
 } from './utils.js';
 import { buildFinalGenerationPrompt } from './parser.js';
+import { t } from './i18n.js';
 import {
     getCharacterAvatarBase64,
     getCharacterAvatarDataUrl,
@@ -230,10 +231,10 @@ export class Provider {
         const errors = [];
         const caps = this.capabilities;
         if (!settings.endpoint && this.id !== 'naistera') {
-            errors.push('URL эндпоинта не настроен');
+            errors.push(tEndpoint URL is not configured);
         }
         if (caps.requiresApiKey && !settings.apiKey) {
-            errors.push('API ключ не настроен');
+            errors.push(tAPI key is not configured);
         }
         return errors;
     }
@@ -473,8 +474,7 @@ function throwAsProviderError(error, endpointLabel, providerId) {
     // AbortError = наш таймаут (fetchWithTimeout) или внешний abort.
     if (error?.name === 'AbortError') {
         throw new ProviderError({
-            message: `Превышено время ожидания ответа от ${endpointLabel}. `
-                + 'Проверьте подключение и попробуйте перегенерировать.',
+            message: t`Request to ${endpointLabel} timed out. Check your connection and try regenerating.`,
             code: 'timeout',
             retryable: true,
             providerId,
@@ -484,8 +484,7 @@ function throwAsProviderError(error, endpointLabel, providerId) {
     // TypeError: Failed to fetch — DNS, CORS, сервер недоступен, ERR_CONNECTION_*.
     if (error?.name === 'TypeError') {
         throw new ProviderError({
-            message: `Проблема с подключением к ${endpointLabel}. `
-                + 'Сервер недоступен или заблокирован. Попробуйте перегенерировать.',
+            message: t`Connection problem with ${endpointLabel}. Server is unreachable or blocked. Try regenerating.`,
             code: 'network',
             retryable: true,
             providerId,
@@ -949,7 +948,7 @@ export class OpenRouterProvider extends Provider {
     validate(settings) {
         const errors = [];
         if (!settings.apiKey) {
-            errors.push('API ключ не настроен');
+            errors.push(tAPI key is not configured);
         }
         // Endpoint имеет дефолт (https://openrouter.ai/api/v1), поэтому не требуем.
         return errors;
@@ -1162,7 +1161,7 @@ export class ElectronHubProvider extends OpenAIProvider {
     validate(settings) {
         const errors = [];
         if (!settings.apiKey) {
-            errors.push('API ключ не настроен');
+            errors.push(tAPI key is not configured);
         }
         return errors;
     }
@@ -1223,11 +1222,11 @@ export class NaisteraProvider extends Provider {
     validate(settings) {
         const errors = [];
         if (!settings.apiKey) {
-            errors.push('API ключ не настроен');
+            errors.push(tAPI key is not configured);
         }
         const m = normalizeNaisteraModel(settings.naisteraModel);
         if (!NAISTERA_MODELS.includes(m)) {
-            errors.push('Для Naistera выберите модель: grok / grok-pro / nano banana');
+            errors.push(t`For Naistera, select a model: grok / grok-pro / nano banana`);
         }
         return errors;
     }
@@ -1417,7 +1416,7 @@ export async function fetchModels() {
         return await provider.fetchModels();
     } catch (error) {
         console.error('[IIG] Failed to fetch models:', error);
-        toastr.error(`Ошибка загрузки моделей: ${error.message}`, 'Генерация картинок');
+        toastr.error(t`Failed to load models: ${error.message}`, t`Image Generation`);
         return [];
     }
 }
@@ -1428,16 +1427,16 @@ export function validateSettings() {
     const settings = getSettings();
     const provider = resolveActiveProvider(settings);
     if (!provider) {
-        throw new Error(`Ошибка настроек: неизвестный API (${settings.apiType})`);
+        throw new Error(t`Settings error: unknown API (${settings.apiType})`);
     }
     const errors = provider.validate(settings);
 
     // Общий чек: для openai/gemini требуется model.
     if (provider.id !== 'naistera' && !settings.model) {
-        errors.push('Модель не выбрана');
+        errors.push(t`Model is not selected`);
     }
 
     if (errors.length > 0) {
-        throw new Error(`Ошибка настроек: ${errors.join(', ')}`);
+        throw new Error(t`Settings error: ${errors.join(', ')}`);
     }
 }

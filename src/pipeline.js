@@ -36,6 +36,7 @@ import {
     resolveActiveProvider,
     validateSettings,
 } from './providers.js';
+import { t } from './i18n.js';
 
 // Set of messageIds currently being processed (shared between processMessageTags
 // and regenerate to prevent double-runs).
@@ -49,7 +50,7 @@ export function createLoadingPlaceholder(tagId) {
     placeholder.dataset.tagId = tagId;
     placeholder.innerHTML = `
         <div class="iig-spinner"></div>
-        <div class="iig-status">Генерация картинки...</div>
+        <div class="iig-status">${t`Generating image...`}</div>
     `;
     return placeholder;
 }
@@ -58,8 +59,8 @@ export function createErrorPlaceholder(tagId, errorMessage, tagInfo) {
     const img = document.createElement('img');
     img.className = 'iig-error-image';
     img.src = ERROR_IMAGE_PATH;
-    img.alt = 'Ошибка генерации';
-    img.title = `Ошибка: ${errorMessage}`;
+    img.alt = t`Generation error`;
+    img.title = t`Error: ${errorMessage}`;
     img.dataset.tagId = tagId;
 
     // Preserve data-iig-instruction for regenerate button functionality
@@ -93,7 +94,7 @@ export async function persistGeneratedMedia(generated, statusEl, meta) {
     let persistedPosterSrc = '';
 
     if (isGeneratedVideoResult(generated)) {
-        if (statusEl) statusEl.textContent = 'Сохранение видео...';
+        if (statusEl) statusEl.textContent = t`Saving video...`;
         persistedSrc = await saveNaisteraMediaToFile(generated.dataUrl, 'video', {
             messageId,
             tagIndex,
@@ -101,8 +102,8 @@ export async function persistGeneratedMedia(generated, statusEl, meta) {
             apiType,
         });
         if (generated.posterDataUrl) {
-            if (statusEl) statusEl.textContent = 'Сохранение превью...';
-            persistedPosterSrc = await saveImageToFile(generated.posterDataUrl, {
+            if (statusEl) statusEl.textContent = t`Saving preview...`;
+            persistedSrc = await saveImageToFile(generated.posterDataUrl, {
                 messageId,
                 tagIndex,
                 mode: `${mode}-video-poster`,
@@ -110,7 +111,7 @@ export async function persistGeneratedMedia(generated, statusEl, meta) {
             });
         }
     } else {
-        if (statusEl) statusEl.textContent = 'Сохранение...';
+        if (statusEl) statusEl.textContent = t`Saving...`;
         persistedSrc = await saveImageToFile(generated, {
             messageId,
             tagIndex,
@@ -130,7 +131,7 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
     const settings = getSettings();
     const provider = resolveActiveProvider(settings);
     if (!provider) {
-        throw new Error(`Неизвестный API: ${settings.apiType}`);
+        throw new Error(t`Unknown API: ${settings.apiType}`);
     }
 
     const maxRetries = settings.maxRetries;
@@ -156,7 +157,10 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
-            onStatusUpdate?.(`Генерация${attempt > 0 ? ` (повтор ${attempt}/${maxRetries})` : ''}...`);
+            const statusText = attempt > 0
+                ? t`Generating (retry ${attempt}/${maxRetries})...`
+                : t`Generating...`;
+            onStatusUpdate?.(statusText);
 
             const generated = await provider.generate({
                 prompt,
@@ -217,7 +221,7 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
             }
 
             const delay = baseDelay * Math.pow(2, attempt);
-            onStatusUpdate?.(`Повтор через ${delay / 1000}с...`);
+            onStatusUpdate?.(t`Retry in ${delay / 1000}s...`);
             await new Promise(resolve => setTimeout(resolve, delay));
         }
     }
@@ -253,13 +257,13 @@ export async function processMessageTags(messageId) {
 
     processingMessages.add(messageId);
     iigLog('INFO', `Found ${tags.length} image tag(s) in message ${messageId}`);
-    toastr.info(`Найдено тегов: ${tags.length}. Генерация...`, 'Генерация картинок', { timeOut: 3000 });
+    toastr.info(t`Tags found: ${tags.length}. Generating...`, t`Image Generation`, { timeOut: 3000 });
 
     // DOM is ready because we use CHARACTER_MESSAGE_RENDERED event
     const messageElement = document.querySelector(`#chat .mes[mesid="${messageId}"]`);
     if (!messageElement) {
         console.error('[IIG] Message element not found for ID:', messageId);
-        toastr.error('Не удалось найти элемент сообщения', 'Генерация картинок');
+        toastr.error(t`Could not locate message element`, t`Image Generation`);
         return;
     }
 
@@ -414,11 +418,10 @@ export async function processMessageTags(messageId) {
             replaceTagInMessageSource(message, tag, updatedTag);
 
             iigLog('INFO', `Successfully generated ${isGeneratedVideoResult(generated) ? 'video' : 'image'} for tag ${index}`);
-            toastr.success(
-                `${isGeneratedVideoResult(generated) ? 'Видео' : 'Картинка'} ${index + 1}/${tags.length} готов${isGeneratedVideoResult(generated) ? 'о' : 'а'}`,
-                'Генерация картинок',
-                { timeOut: 2000 }
-            );
+            const readyMsg = isGeneratedVideoResult(generated)
+                ? t`Video ${index + 1}/${tags.length} ready`
+                : t`Image ${index + 1}/${tags.length} ready`;
+            toastr.success(readyMsg, t`Image Generation`, { timeOut: 2000 });
         } catch (error) {
             iigLog('ERROR', `Failed to generate image for tag ${index}:`, error.message);
 
@@ -435,7 +438,7 @@ export async function processMessageTags(messageId) {
             }
             iigLog('INFO', `Marked tag as failed in message.mes`);
 
-            toastr.error(`Ошибка генерации: ${error.message}`, 'Генерация картинок');
+            toastr.error(t`Generation error: ${error.message}`, t`Image Generation`);
         }
     };
 
@@ -468,19 +471,19 @@ export async function regenerateMessageImages(messageId) {
     const message = context.chat[messageId];
 
     if (!message) {
-        toastr.error('Сообщение не найдено', 'Генерация картинок');
+        toastr.error(t`Message not found`, t`Image Generation`);
         return;
     }
 
     const tags = await parseMessageImageTags(message, { forceAll: true });
 
     if (tags.length === 0) {
-        toastr.warning('Нет тегов для перегенерации', 'Генерация картинок');
+        toastr.warning(t`No tags to regenerate`, t`Image Generation`);
         return;
     }
 
     iigLog('INFO', `Regenerating ${tags.length} images in message ${messageId}`);
-    toastr.info(`Перегенерация ${tags.length} картинок...`, 'Генерация картинок');
+    toastr.info(t`Regenerating ${tags.length} images...`, t`Image Generation`);
 
     processingMessages.add(messageId);
 
@@ -549,15 +552,14 @@ export async function regenerateMessageImages(messageId) {
                 const updatedTag = buildPersistedMediaTag(tag, generated, persistedSrc, persistedPosterSrc);
                 replaceTagInMessageSource(message, tag, updatedTag);
 
-                toastr.success(
-                    `${isGeneratedVideoResult(generated) ? 'Видео' : 'Картинка'} ${index + 1}/${tags.length} готов${isGeneratedVideoResult(generated) ? 'о' : 'а'}`,
-                    'Генерация картинок',
-                    { timeOut: 2000 }
-                );
+                const readyMsg = isGeneratedVideoResult(generated)
+                    ? t`Video ${index + 1}/${tags.length} ready`
+                    : t`Image ${index + 1}/${tags.length} ready`;
+                toastr.success(readyMsg, t`Image Generation`, { timeOut: 2000 });
             }
         } catch (error) {
             iigLog('ERROR', `Regeneration failed for tag ${index}:`, error.message);
-            toastr.error(`Ошибка: ${error.message}`, 'Генерация картинок');
+            toastr.error(t`Error: ${error.message}`, t`Image Generation`);
         }
     }
 

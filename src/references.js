@@ -26,6 +26,7 @@ import {
     extractGeneratedImageUrlsFromText,
     getMessageRenderText,
 } from './parser.js';
+import { t } from './i18n.js';
 
 // ----- Модульное состояние (раньше были module-level let) -----
 
@@ -431,14 +432,14 @@ export function buildAdditionalReferenceRowsHtml(settings = getSettings()) {
         const isEnabled = ref.enabled !== false;
         const previewHtml = previewSrc
             ? `<img src="${sanitizeForHtml(previewSrc)}" alt="${sanitizeForHtml(ref.name || `ref-${index + 1}`)}" class="iig-additional-ref-thumb">`
-            : '<div class="iig-additional-ref-thumb iig-additional-ref-thumb-placeholder">нет</div>';
+            : `<div class="iig-additional-ref-thumb iig-additional-ref-thumb-placeholder">${t`none`}</div>`;
 
         return `
             <div class="iig-additional-ref-row ${isEnabled ? '' : 'iig-additional-ref-row-disabled'}" data-ref-index="${index}">
                 <div class="iig-additional-ref-content">
                     <div class="iig-additional-ref-preview">
                         ${previewHtml}
-                        <label class="checkbox_label iig-additional-ref-enabled-toggle" title="${isEnabled ? 'Выключить референс' : 'Включить референс'}">
+                        <label class="checkbox_label iig-additional-ref-enabled-toggle" title="${isEnabled ? t`Disable reference` : t`Enable reference`}">
                             <input type="checkbox" class="iig-additional-ref-enabled" ${isEnabled ? 'checked' : ''}>
                             <span></span>
                         </label>
@@ -448,26 +449,26 @@ export function buildAdditionalReferenceRowsHtml(settings = getSettings()) {
                             <input
                                 type="text"
                                 class="text_pole flex1 iig-additional-ref-name"
-                                placeholder="Имя референса"
+                                placeholder="${t`Reference name`}"
                                 value="${sanitizeForHtml(ref.name || '')}"
                             >
-                            <label class="menu_button iig-additional-ref-upload" title="Загрузить картинку">
+                            <label class="menu_button iig-additional-ref-upload" title="${t`Upload image`}">
                                 <i class="fa-solid fa-upload"></i>
                                 <input type="file" accept="image/*" class="iig-additional-ref-file" style="display:none">
                             </label>
-                            <div class="menu_button iig-additional-ref-remove" title="Удалить">
+                            <div class="menu_button iig-additional-ref-remove" title="${t`Delete`}">
                                 <i class="fa-solid fa-trash"></i>
                             </div>
                         </div>
                         <textarea
                             class="text_pole flex1 iig-additional-ref-description"
                             rows="2"
-                            placeholder="Описание референса"
+                            placeholder="${t`Reference description`}"
                         >${sanitizeForHtml(ref.description || '')}</textarea>
                         <div class="iig-additional-ref-footer">
                             <label class="checkbox_label">
                                 <input type="checkbox" class="iig-additional-ref-always" ${isAlways ? 'checked' : ''}>
-                                <span>${isAlways ? 'Отправлять всегда' : 'Отправлять по совпадению'}</span>
+                                <span>${isAlways ? t`Always send` : t`Send on match`}</span>
                             </label>
                         </div>
                     </div>
@@ -491,7 +492,7 @@ export function renderAdditionalReferencesList() {
         const enabledRefs = refs.filter((ref) => ref.enabled !== false);
         const alwaysCount = enabledRefs.filter((ref) => ref.matchMode === 'always').length;
         status.textContent = refs.length > 0
-            ? `Активных доп. референсов: ${enabledRefs.length}/${refs.length}. Всегда отправляются: ${alwaysCount}.`
+            ? t`Active additional references: ${enabledRefs.length}/${refs.length}. Always sent: ${alwaysCount}.`
             : '';
     }
 }
@@ -504,8 +505,8 @@ export function buildReferenceImportModalHtml() {
             <div class="iig-modal-backdrop" data-iig-modal-close="true"></div>
             <div class="iig-modal-card" role="dialog" aria-modal="true" aria-labelledby="iig_ref_import_title">
                 <div class="iig-modal-header">
-                    <h4 id="iig_ref_import_title">Загрузить референс по ссылке</h4>
-                    <div id="iig_ref_import_close" class="menu_button" title="Закрыть">
+                    <h4 id="iig_ref_import_title">${t`Import reference by URL`}</h4>
+                    <div id="iig_ref_import_close" class="menu_button" title="${t`Close`}">
                         <i class="fa-solid fa-xmark"></i>
                     </div>
                 </div>
@@ -513,11 +514,11 @@ export function buildReferenceImportModalHtml() {
                     id="iig_ref_import_urls"
                     class="text_pole iig-modal-textarea"
                     rows="6"
-                    placeholder="Одна ссылка на строку"
+                    placeholder="${t`One URL per line`}"
                 ></textarea>
                 <div class="iig-modal-actions">
                     <div id="iig_ref_import_submit" class="menu_button iig-button-inline">
-                        <i class="fa-solid fa-plus"></i> Добавить
+                        <i class="fa-solid fa-plus"></i> ${t`Add`}
                     </div>
                 </div>
             </div>
@@ -551,12 +552,12 @@ export async function importAdditionalReferencesFromUrls(rawValue) {
     const refs = ensureAdditionalReferencesArray(settings);
     const urls = normalizeReferenceUrlList(rawValue);
     if (urls.length === 0) {
-        throw new Error('Добавьте хотя бы одну ссылку');
+        throw new Error(t`Add at least one URL`);
     }
 
     const availableSlots = MAX_ADDITIONAL_REFERENCES - refs.length;
     if (availableSlots <= 0) {
-        throw new Error(`Достигнут лимит референсов: ${MAX_ADDITIONAL_REFERENCES}`);
+        throw new Error(t`Reference limit reached: ${MAX_ADDITIONAL_REFERENCES}`);
     }
 
     const queue = urls.slice(0, availableSlots);
@@ -566,7 +567,7 @@ export async function importAdditionalReferencesFromUrls(rawValue) {
         const url = queue[index];
         const dataUrl = await imageUrlToDataUrl(url);
         if (!dataUrl) {
-            throw new Error(`Не удалось загрузить изображение: ${url}`);
+            throw new Error(t`Failed to load image: ${url}`);
         }
 
         const name = getReferenceNameFromUrl(url, refs.length + index);
