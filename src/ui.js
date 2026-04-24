@@ -143,6 +143,11 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                 <div></div>
             </div>
 
+            <label class="checkbox_label" title="${t`Use endpoint URL as-is: do not append /v1/images/generations, /chat/completions, etc. Model list refresh is disabled — enter model name manually.`}">
+                <input type="checkbox" id="iig_raw_endpoint" ${settings.rawEndpoint ? 'checked' : ''}>
+                <span>${t`Raw endpoint (do not append paths)`}</span>
+            </label>
+
             <div class="flex-row">
                 <label for="iig_api_key">${t`API key`}</label>
                 <input type="password" id="iig_api_key" class="text_pole flex1" value="${settings.apiKey}">
@@ -155,9 +160,8 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
 
             <div class="flex-row ${settings.apiType === 'naistera' ? 'iig-hidden' : ''}" id="iig_model_row">
                 <label for="iig_model">${t`Model`}</label>
-                <select id="iig_model" class="flex1">
-                    ${settings.model ? `<option value="${settings.model}" selected>${settings.model}</option>` : `<option value="">${t`-- Select a model --`}</option>`}
-                </select>
+                <input type="text" id="iig_model" class="text_pole flex1" list="iig_model_list" value="${sanitizeForHtml(settings.model || '')}" placeholder="${t`-- Select or type a model --`}">
+                <datalist id="iig_model_list"></datalist>
                 <div id="iig_refresh_models" class="menu_button iig-refresh-btn" title="${t`Refresh list`}">
                     <i class="fa-solid fa-sync"></i>
                 </div>
@@ -548,7 +552,9 @@ function applyProfileValuesToInputs(settings) {
 
     setVal('iig_api_type', settings.apiType);
     setVal('iig_endpoint', settings.endpoint);
+    setChk('iig_raw_endpoint', settings.rawEndpoint);
     setVal('iig_api_key', settings.apiKey);
+    setVal('iig_model', settings.model);
     setVal('iig_size', settings.size);
     setVal('iig_quality', settings.quality);
     setVal('iig_aspect_ratio', settings.aspectRatio);
@@ -564,22 +570,6 @@ function applyProfileValuesToInputs(settings) {
     setChk('iig_naistera_send_user_avatar', settings.naisteraSendUserAvatar);
     setChk('iig_naistera_use_active_persona_avatar', settings.useActiveUserPersonaAvatar);
 
-    // Model select: профиль хранит имя модели, но <option> с этим id может
-    // отсутствовать (список подгружается через Refresh). Добавляем опцию
-    // с текущим значением, иначе <select> сбросится в первую пустую.
-    const modelSelect = document.getElementById('iig_model');
-    if (modelSelect) {
-        const current = settings.model || '';
-        const hasOption = Array.from(modelSelect.options).some(o => o.value === current);
-        if (!hasOption) {
-            modelSelect.innerHTML = current
-                ? `<option value="${current}" selected>${current}</option>`
-                : '<option value="">-- Выберите модель --</option>';
-        } else {
-            modelSelect.value = current;
-        }
-    }
-
     // Пересинхронизация avatar-дропдаунов (custom-элемент, не <select>).
     syncUserAvatarSelection(settings.userAvatarFile);
     syncActivePersonaAvatarMode(settings.useActiveUserPersonaAvatar);
@@ -591,7 +581,7 @@ function refreshProfileSelectOptions(settings) {
     const profiles = ensureConnectionProfiles(settings);
     select.innerHTML = profiles.map((p) =>
         `<option value="${p.id}" ${p.id === settings.activeConnectionProfileId ? 'selected' : ''}>${sanitizeForHtml(p.name)}</option>`,
-    ).join('') || '<option value="">(нет профилей)</option>';
+    ).join('') || `<option value="">${t`(no profiles)`}</option>`;
 }
 
 function bindConnectionProfilesEvents(settings, updateVisibility) {
@@ -725,14 +715,17 @@ function bindApiSectionEvents(settings, updateVisibility) {
         }
     });
 
-    document.getElementById('iig_model')?.addEventListener('change', (e) => {
-        settings.model = e.target.value;
+    // iig_model теперь <input type="text" list="iig_model_list"> — даёт
+    // автокомплит из datalist И возможность ввести любое имя вручную
+    // (нужно для raw endpoint mode и редких моделей вне /v1/models).
+    const modelApplyChange = (value) => {
+        settings.model = value;
         saveSettings();
 
         // Auto-switch API type на 'gemini' применим только если сейчас
         // выбран OpenAI (legacy — когда юзер через OpenAI endpoint выбрал
         // nano-banana). Для openrouter/gemini/naistera не трогаем.
-        if (settings.apiType === 'openai' && isGeminiModel(e.target.value)) {
+        if (settings.apiType === 'openai' && isGeminiModel(value)) {
             document.getElementById('iig_api_type').value = 'gemini';
             settings.apiType = 'gemini';
         }
@@ -740,7 +733,9 @@ function bindApiSectionEvents(settings, updateVisibility) {
         // Модель влияет на поддержку референсов (gpt-image-* vs dall-e-*),
         // поэтому перестраиваем видимость секций при любой смене.
         updateVisibility();
-    });
+    };
+    document.getElementById('iig_model')?.addEventListener('change', (e) => modelApplyChange(e.target.value));
+    document.getElementById('iig_model')?.addEventListener('input', (e) => modelApplyChange(e.target.value));
 
     document.getElementById('iig_refresh_models')?.addEventListener('click', async (e) => {
         const btn = e.currentTarget;
@@ -748,26 +743,26 @@ function bindApiSectionEvents(settings, updateVisibility) {
 
         try {
             const models = await fetchModels();
-            const select = document.getElementById('iig_model');
-
-            const currentModel = settings.model;
-
-            select.innerHTML = '<option value="">-- Выберите модель --</option>';
-
-            for (const model of models) {
-                const option = document.createElement('option');
-                option.value = model;
-                option.textContent = model;
-                option.selected = model === currentModel;
-                select.appendChild(option);
+            const list = document.getElementById('iig_model_list');
+            if (list instanceof HTMLDataListElement) {
+                list.innerHTML = models
+                    .map((m) => `<option value="${sanitizeForHtml(m)}"></option>`)
+                    .join('');
             }
 
-            toastr.success(t`Models found: ${models.length}`, t`Image Generation`);
+            if (models.length > 0) {
+                toastr.success(t`Models found: ${models.length}`, t`Image Generation`);
+            }
         } catch (error) {
             toastr.error(t`Failed to load models`, t`Image Generation`);
         } finally {
             btn.classList.remove('loading');
         }
+    });
+
+    document.getElementById('iig_raw_endpoint')?.addEventListener('change', (e) => {
+        settings.rawEndpoint = e.target.checked;
+        saveSettings();
     });
 
     document.getElementById('iig_size')?.addEventListener('change', (e) => {

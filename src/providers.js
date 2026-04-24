@@ -43,6 +43,25 @@ import {
     collectPreviousContextReferences,
 } from './references.js';
 
+// ----- Endpoint URL builder (raw mode support) -----
+
+/**
+ * Возвращает URL для POST-запроса генерации с учётом флага `rawEndpoint`.
+ * В raw-режиме суффикс игнорируется — используется endpoint целиком.
+ *
+ * @param {object} settings
+ * @param {string} pathSuffix — путь, который дописывается в обычном режиме
+ *   (например, `/v1/images/generations`). Должен начинаться со `/`.
+ * @returns {string} абсолютный URL
+ */
+export function buildGenerationUrl(settings, pathSuffix) {
+    const base = (getEffectiveEndpoint(settings) || String(settings.endpoint || '')).replace(/\/$/, '');
+    if (settings.rawEndpoint) {
+        return base;
+    }
+    return `${base}${pathSuffix}`;
+}
+
 // ----- Model detection helpers -----
 
 export function isImageModel(modelId) {
@@ -573,9 +592,6 @@ export class OpenAIProvider extends Provider {
 
     async generate({ prompt, style, references = [], options = {} }) {
         const settings = getSettings();
-        // getEffectiveEndpoint подставит дефолт для provider с DEFAULT_ENDPOINTS
-        // (electronhub) если endpoint не задан; для `openai` — вернёт как есть.
-        const baseUrl = (getEffectiveEndpoint(settings) || String(settings.endpoint || '')).replace(/\/$/, '');
         const fullPrompt = buildFinalGenerationPrompt(prompt, style, options.matchedAdditionalRefs || [], settings);
 
         const modelKind = classifyOpenAIModel(settings.model);
@@ -586,14 +602,16 @@ export class OpenAIProvider extends Provider {
 
         iigLog(
             'INFO',
-            `OpenAI generate: model=${settings.model} kind=${modelKind} refs=${references.length} size=${requestedSize} quality=${quality}`
+            `OpenAI generate: model=${settings.model} kind=${modelKind} refs=${references.length} size=${requestedSize} quality=${quality} raw=${!!settings.rawEndpoint}`
         );
 
         // Роутинг: есть референсы → /v1/images/edits (multipart),
-        // иначе → /v1/images/generations (JSON).
+        // иначе → /v1/images/generations (JSON). В raw-режиме оба пути шлются
+        // на один URL (settings.endpoint целиком) — юзер сам отвечает за
+        // корректность настройки.
         if (references.length > 0) {
             return await this._generateWithEdits({
-                baseUrl,
+                url: buildGenerationUrl(settings, '/v1/images/edits'),
                 apiKey: settings.apiKey,
                 model: settings.model,
                 modelKind,
@@ -605,7 +623,7 @@ export class OpenAIProvider extends Provider {
         }
 
         return await this._generateWithGenerations({
-            baseUrl,
+            url: buildGenerationUrl(settings, '/v1/images/generations'),
             apiKey: settings.apiKey,
             model: settings.model,
             modelKind,
@@ -615,8 +633,7 @@ export class OpenAIProvider extends Provider {
         });
     }
 
-    async _generateWithGenerations({ baseUrl, apiKey, model, modelKind, prompt, size, quality }) {
-        const url = `${baseUrl}/v1/images/generations`;
+    async _generateWithGenerations({ url, apiKey, model, modelKind, prompt, size, quality }) {
 
         const body = {
             model,
@@ -644,7 +661,7 @@ export class OpenAIProvider extends Provider {
                 body: JSON.stringify(body),
             }, OPENAI_REQUEST_TIMEOUT_MS);
         } catch (error) {
-            throwAsProviderError(error, `OpenAI /v1/images/generations (${baseUrl})`, 'openai');
+            throwAsProviderError(error, `OpenAI /v1/images/generations (${url})`, 'openai');
         }
 
         if (!response.ok) {
@@ -662,8 +679,7 @@ export class OpenAIProvider extends Provider {
         return extractImageFromResult(result);
     }
 
-    async _generateWithEdits({ baseUrl, apiKey, model, modelKind, prompt, size, quality, references }) {
-        const url = `${baseUrl}/v1/images/edits`;
+    async _generateWithEdits({ url, apiKey, model, modelKind, prompt, size, quality, references }) {
         const form = new FormData();
 
         form.append('model', model);
@@ -697,7 +713,7 @@ export class OpenAIProvider extends Provider {
                 body: form,
             }, OPENAI_REQUEST_TIMEOUT_MS);
         } catch (error) {
-            throwAsProviderError(error, `OpenAI /v1/images/edits (${baseUrl})`, 'openai');
+            throwAsProviderError(error, `OpenAI /v1/images/edits (${url})`, 'openai');
         }
 
         if (!response.ok) {
@@ -781,7 +797,7 @@ export class GeminiProvider extends Provider {
         const settings = getSettings();
         const model = settings.model;
         const caps = getGeminiCapabilities(model);
-        const url = `${settings.endpoint.replace(/\/$/, '')}/v1beta/models/${model}:generateContent`;
+        const url = buildGenerationUrl(settings, `/v1beta/models/${model}:generateContent`);
 
         // aspect ratio: tag > settings > дефолт `1:1`, с валидацией по модели.
         let aspectRatio = options.aspectRatio || settings.aspectRatio || '1:1';
@@ -902,6 +918,60 @@ export class GeminiProvider extends Provider {
             providerId: 'gemini',
         });
     }
+
+    /**
+     * Gemini models listing. Стратегия двух попыток:
+     *   1) Нативный Google API: `GET {endpoint}/v1beta/models?key={apiKey}`
+     *      — ответ формата `{ models: [{ name: 'models/gemini-...', ...supportedGenerationMethods }] }`.
+     *   2) OpenAI-совместимый прокси: `GET {endpoint}/v1/models` с `Authorization: Bearer`
+     *      — ответ формата `{ data: [{ id }] }`.
+     *
+     * Если первая попытка провалилась (4xx/5xx/network) — пробуем вторую.
+     * Фильтруем только image-генеративные модели (см. isImageModel).
+     */
+    async fetchModels() {
+        const settings = getSettings();
+        const endpoint = getEffectiveEndpoint(settings);
+
+        if (!endpoint || !settings.apiKey) {
+            console.warn('[IIG] Gemini fetchModels: endpoint or API key not set');
+            return [];
+        }
+
+        // Attempt 1 — native Google API.
+        try {
+            const url = `${endpoint}/v1beta/models?key=${encodeURIComponent(settings.apiKey)}`;
+            const response = await fetch(url, { method: 'GET' });
+            if (response.ok) {
+                const data = await response.json();
+                const models = Array.isArray(data?.models) ? data.models : [];
+                // name = 'models/gemini-2.5-flash-image' → вырезаем 'models/'.
+                return models
+                    .map(m => String(m?.name || '').replace(/^models\//, ''))
+                    .filter(id => id && isImageModel(id));
+            }
+            console.debug('[IIG] Gemini native /v1beta/models failed, status', response.status);
+        } catch (e) {
+            console.debug('[IIG] Gemini native /v1beta/models error', e?.message || e);
+        }
+
+        // Attempt 2 — OpenAI-compatible proxy fallback.
+        try {
+            const url = `${endpoint}/v1/models`;
+            const response = await fetch(url, {
+                method: 'GET',
+                headers: { 'Authorization': `Bearer ${settings.apiKey}` },
+            });
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const data = await response.json();
+            const models = Array.isArray(data?.data) ? data.data : [];
+            return models.map(m => m.id).filter(id => id && isImageModel(id));
+        } catch (e) {
+            throw new Error(`Gemini fetchModels: both /v1beta/models and /v1/models failed (${e?.message || e})`);
+        }
+    }
 }
 
 // ----- OpenRouter (chat completions с modalities=image) -----
@@ -992,9 +1062,7 @@ export class OpenRouterProvider extends Provider {
 
     async generate({ prompt, style, references = [], options = {} }) {
         const settings = getSettings();
-        const endpoint = (String(settings.endpoint || '').trim() || OPENROUTER_DEFAULT_ENDPOINT)
-            .replace(/\/$/, '');
-        const url = `${endpoint}/chat/completions`;
+        const url = buildGenerationUrl(settings, '/chat/completions');
 
         const model = settings.model;
         const caps = getOpenRouterCapabilities(model);
@@ -1409,6 +1477,14 @@ export async function fetchModels() {
     const provider = resolveActiveProvider(settings);
     if (!provider) {
         console.warn('[IIG] fetchModels: no active provider for apiType=', settings.apiType);
+        return [];
+    }
+
+    // Raw endpoint mode: юзер дал полный URL генерации; дискавери моделей
+    // не производится — юзер вводит имя модели вручную.
+    if (settings.rawEndpoint) {
+        iigLog('INFO', 'fetchModels skipped: raw endpoint mode (enter model name manually)');
+        toastr.info(t`Raw endpoint mode: enter model name manually`, t`Image Generation`, { timeOut: 3000 });
         return [];
     }
 

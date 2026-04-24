@@ -61,6 +61,13 @@ export const defaultSettings = Object.freeze({
     activeStyleId: '',
     apiType: 'openai', // 'openai' | 'gemini' | 'openrouter' | 'electronhub' | 'naistera'
     endpoint: '',
+    /**
+     * Если true — endpoint используется «как есть» для генерации (никаких
+     * /v1/images/generations, /v1beta/models/..., /chat/completions не
+     * дописывается). Fetchmodels в этом режиме отключён: юзер вводит имя
+     * модели вручную.
+     */
+    rawEndpoint: false,
     apiKey: '',
     model: '',
     size: '1024x1024',
@@ -99,6 +106,7 @@ export const defaultSettings = Object.freeze({
 export const CONNECTION_FIELDS = Object.freeze([
     'apiType',
     'endpoint',
+    'rawEndpoint',
     'apiKey',
     'model',
     'size',
@@ -395,10 +403,28 @@ export function normalizeConfiguredEndpoint(apiType, endpoint) {
 export function shouldReplaceEndpointForApiType(apiType, endpoint) {
     const trimmed = String(endpoint || '').trim();
     if (!trimmed) return true;
-    if (apiType !== 'naistera') return false;
-    return /\/v1\/images\/generations\/?$/i.test(trimmed)
-        || /\/v1\/models\/?$/i.test(trimmed)
-        || /\/v1beta\/models\//i.test(trimmed);
+
+    // Если в endpoint уже записан чужой дефолт из ENDPOINT_PLACEHOLDERS —
+    // значит юзер переключает тип API и не правил endpoint вручную. В этом
+    // случае заменяем на дефолт нового типа. Сравниваем без протокола/слэшей
+    // чтобы поймать и `https://api.openai.com` и `https://api.openai.com/`.
+    const norm = trimmed.replace(/^https?:\/\//i, '').replace(/\/+$/, '').toLowerCase();
+    for (const [type, url] of Object.entries(ENDPOINT_PLACEHOLDERS)) {
+        if (type === apiType) continue;
+        const otherNorm = String(url).replace(/^https?:\/\//i, '').replace(/\/+$/, '').toLowerCase();
+        if (norm === otherNorm) {
+            return true;
+        }
+    }
+
+    // Naistera: доп. эвристика — если ранее был OpenAI /v1/images/... или
+    // Gemini /v1beta/models/... путь, заменяем на чистый naistera endpoint.
+    if (apiType === 'naistera') {
+        return /\/v1\/images\/generations\/?$/i.test(trimmed)
+            || /\/v1\/models\/?$/i.test(trimmed)
+            || /\/v1beta\/models\//i.test(trimmed);
+    }
+    return false;
 }
 
 export function getEffectiveEndpoint(settings = getSettings()) {
