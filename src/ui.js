@@ -59,6 +59,7 @@ import {
     importAdditionalReferencesFromUrls,
 } from './references.js';
 import { isGeminiModel, fetchModels, resolveActiveProvider } from './providers.js';
+import { t, translate } from './i18n.js';
 
 // ----- Section wrapper -----
 
@@ -87,21 +88,21 @@ function buildConnectionProfilesBlockHtml(settings = getSettings()) {
     return `
         <div class="iig-settings-card-nested iig-profile-bar">
             <div class="flex-row">
-                <label for="iig_profile_select">Профиль</label>
+                <label for="iig_profile_select">${t`Profile`}</label>
                 <select id="iig_profile_select" class="flex1">
-                    ${optionsHtml || '<option value="">(нет профилей)</option>'}
+                    ${optionsHtml || `<option value="">${t`(no profiles)`}</option>`}
                 </select>
                 <div class="iig-profile-buttons">
-                    <div id="iig_profile_save" class="menu_button" title="Сохранить текущие настройки в активный профиль">
+                    <div id="iig_profile_save" class="menu_button" title="${t`Save current settings into active profile`}">
                         <i class="fa-solid fa-floppy-disk"></i>
                     </div>
-                    <div id="iig_profile_save_as" class="menu_button" title="Сохранить как новый профиль">
+                    <div id="iig_profile_save_as" class="menu_button" title="${t`Save as new profile`}">
                         <i class="fa-solid fa-plus"></i>
                     </div>
-                    <div id="iig_profile_rename" class="menu_button" title="Переименовать активный профиль">
+                    <div id="iig_profile_rename" class="menu_button" title="${t`Rename active profile`}">
                         <i class="fa-solid fa-pen"></i>
                     </div>
-                    <div id="iig_profile_remove" class="menu_button" title="Удалить активный профиль">
+                    <div id="iig_profile_remove" class="menu_button" title="${t`Delete active profile`}">
                         <i class="fa-solid fa-trash"></i>
                     </div>
                 </div>
@@ -117,73 +118,73 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
             ${profilesHtml}
             <label class="checkbox_label">
                 <input type="checkbox" id="iig_enabled" ${settings.enabled ? 'checked' : ''}>
-                <span>Включить генерацию картинок</span>
+                <span>${t`Enable image generation`}</span>
             </label>
             <label class="checkbox_label">
                 <input type="checkbox" id="iig_external_blocks" ${settings.externalBlocks ? 'checked' : ''}>
-                <span>Работа с внешними блоками</span>
+                <span>${t`Process external blocks`}</span>
             </label>
 
             <div class="flex-row">
-                <label for="iig_api_type">Тип API</label>
+                <label for="iig_api_type">${t`API type`}</label>
                 <select id="iig_api_type" class="flex1">
-                    <option value="openai" ${settings.apiType === 'openai' ? 'selected' : ''}>OpenAI-совместимый (/v1/images/generations)</option>
-                    <option value="gemini" ${settings.apiType === 'gemini' ? 'selected' : ''}>Gemini-совместимый (nano-banana)</option>
-                    <option value="openrouter" ${settings.apiType === 'openrouter' ? 'selected' : ''}>OpenRouter (chat/completions)</option>
-                    <option value="electronhub" ${settings.apiType === 'electronhub' ? 'selected' : ''}>Electron Hub (/v1/images/*)</option>
-                    <option value="naistera" ${settings.apiType === 'naistera' ? 'selected' : ''}>Naistera (naistera.org)</option>
+                    <option value="openai" ${settings.apiType === 'openai' ? 'selected' : ''}>${t`OpenAI-compatible (/v1/images/generations)`}</option>
+                    <option value="gemini" ${settings.apiType === 'gemini' ? 'selected' : ''}>${t`Gemini-compatible (nano-banana)`}</option>
+                    <option value="openrouter" ${settings.apiType === 'openrouter' ? 'selected' : ''}>${t`OpenRouter (chat/completions)`}</option>
+                    <option value="electronhub" ${settings.apiType === 'electronhub' ? 'selected' : ''}>${t`Electron Hub (/v1/images/*)`}</option>
+                    <option value="naistera" ${settings.apiType === 'naistera' ? 'selected' : ''}>${t`Naistera (naistera.org)`}</option>
                 </select>
                 <div></div>
             </div>
 
             <div class="flex-row">
-                <label for="iig_endpoint">URL эндпоинта</label>
+                <label for="iig_endpoint">${t`Endpoint URL`}</label>
                 <input type="text" id="iig_endpoint" class="text_pole flex1" value="${settings.endpoint}" placeholder="https://api.example.com">
                 <div></div>
             </div>
 
             <div class="flex-row">
-                <label for="iig_api_key">API ключ</label>
+                <label for="iig_api_key">${t`API key`}</label>
                 <input type="password" id="iig_api_key" class="text_pole flex1" value="${settings.apiKey}">
-                <div id="iig_key_toggle" class="menu_button iig-key-toggle" title="Показать/Скрыть">
+                <div id="iig_key_toggle" class="menu_button iig-key-toggle" title="${t`Show / hide`}">
                     <i class="fa-solid fa-eye"></i>
                 </div>
             </div>
 
-            <p id="iig_naistera_hint" class="hint ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}">Для Naistera: вставьте токен из Telegram бота и выберите модель (grok / grok-pro / nano banana 2 / novelai).</p>
+            <p id="iig_naistera_hint" class="hint ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}">${t`For Naistera: paste the token from the Telegram bot and pick a model (grok / grok-pro / nano banana 2 / novelai).`}</p>
 
             <div class="flex-row ${settings.apiType === 'naistera' ? 'iig-hidden' : ''}" id="iig_model_row">
-                <label for="iig_model">Модель</label>
+                <label for="iig_model">${t`Model`}</label>
                 <select id="iig_model" class="flex1">
-                    ${settings.model ? `<option value="${settings.model}" selected>${settings.model}</option>` : '<option value="">-- Выберите модель --</option>'}
+                    ${settings.model ? `<option value="${settings.model}" selected>${settings.model}</option>` : `<option value="">${t`-- Select a model --`}</option>`}
                 </select>
-                <div id="iig_refresh_models" class="menu_button iig-refresh-btn" title="Обновить список">
+                <div id="iig_refresh_models" class="menu_button iig-refresh-btn" title="${t`Refresh list`}">
                     <i class="fa-solid fa-sync"></i>
                 </div>
             </div>
 
             <div class="flex-row ${settings.apiType !== 'openai' && settings.apiType !== 'electronhub' ? 'iig-hidden' : ''}" id="iig_size_row">
-                <label for="iig_size">Размер</label>
+                <label for="iig_size">${t`Size`}</label>
                 <select id="iig_size" class="flex1">
-                    <option value="1024x1024" ${settings.size === '1024x1024' ? 'selected' : ''}>1024x1024 (Квадрат)</option>
-                    <option value="1792x1024" ${settings.size === '1792x1024' ? 'selected' : ''}>1792x1024 (Альбомная)</option>
-                    <option value="1024x1792" ${settings.size === '1024x1792' ? 'selected' : ''}>1024x1792 (Портретная)</option>
-                    <option value="512x512" ${settings.size === '512x512' ? 'selected' : ''}>512x512 (Маленький)</option>
+                    <option value="1024x1024" ${settings.size === '1024x1024' ? 'selected' : ''}>${t`1024x1024 (Square)`}</option>
+                    <option value="1792x1024" ${settings.size === '1792x1024' ? 'selected' : ''}>${t`1792x1024 (Landscape)`}</option>
+                    <option value="1024x1792" ${settings.size === '1024x1792' ? 'selected' : ''}>${t`1024x1792 (Portrait)`}</option>
+                    <option value="512x512" ${settings.size === '512x512' ? 'selected' : ''}>${t`512x512 (Small)`}</option>
                 </select>
                 <div></div>
             </div>
 
             <div class="flex-row ${settings.apiType !== 'openai' && settings.apiType !== 'electronhub' ? 'iig-hidden' : ''}" id="iig_quality_row">
-                <label for="iig_quality">Качество</label>
+                <label for="iig_quality">${t`Quality`}</label>
                 <select id="iig_quality" class="flex1">
-                    <option value="standard" ${settings.quality === 'standard' ? 'selected' : ''}>Стандартное</option>
-                    <option value="hd" ${settings.quality === 'hd' ? 'selected' : ''}>HD</option>
+                    <option value="standard" ${settings.quality === 'standard' ? 'selected' : ''}>${t`Standard`}</option>
+                    <option value="hd" ${settings.quality === 'hd' ? 'selected' : ''}>${t`HD`}</option>
                 </select>
                 <div></div>
             </div>
 
             <div class="flex-row ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}" id="iig_naistera_model_row">
-                <label for="iig_naistera_model">Модель</label>
+                <label for="iig_naistera_model">${t`Model`}</label>
                 <select id="iig_naistera_model" class="flex1">
                     <option value="grok" ${normalizeNaisteraModel(settings.naisteraModel) === 'grok' ? 'selected' : ''}>grok</option>
                     <option value="grok-pro" ${normalizeNaisteraModel(settings.naisteraModel) === 'grok-pro' ? 'selected' : ''}>grok-pro</option>
@@ -194,7 +195,7 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
             </div>
 
             <div class="flex-row ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}" id="iig_naistera_aspect_row">
-                <label for="iig_naistera_aspect_ratio">Соотношение сторон</label>
+                <label for="iig_naistera_aspect_ratio">${t`Aspect ratio`}</label>
                 <select id="iig_naistera_aspect_ratio" class="flex1">
                     <option value="1:1" ${settings.naisteraAspectRatio === '1:1' ? 'selected' : ''}>1:1</option>
                     <option value="16:9" ${settings.naisteraAspectRatio === '16:9' ? 'selected' : ''}>16:9</option>
@@ -207,25 +208,25 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
 
             <div id="iig_avatar_section" class="iig-settings-card-nested ${settings.apiType !== 'gemini' && settings.apiType !== 'openrouter' ? 'iig-hidden' : ''}">
                 <div class="flex-row">
-                    <label for="iig_aspect_ratio">Соотношение сторон</label>
+                    <label for="iig_aspect_ratio">${t`Aspect ratio`}</label>
                     <select id="iig_aspect_ratio" class="flex1">
-                        <option value="1:1" ${settings.aspectRatio === '1:1' ? 'selected' : ''}>1:1 (Квадрат)</option>
-                        <option value="2:3" ${settings.aspectRatio === '2:3' ? 'selected' : ''}>2:3 (Портрет)</option>
-                        <option value="3:2" ${settings.aspectRatio === '3:2' ? 'selected' : ''}>3:2 (Альбом)</option>
-                        <option value="3:4" ${settings.aspectRatio === '3:4' ? 'selected' : ''}>3:4 (Портрет)</option>
-                        <option value="4:3" ${settings.aspectRatio === '4:3' ? 'selected' : ''}>4:3 (Альбом)</option>
-                        <option value="4:5" ${settings.aspectRatio === '4:5' ? 'selected' : ''}>4:5 (Портрет)</option>
-                        <option value="5:4" ${settings.aspectRatio === '5:4' ? 'selected' : ''}>5:4 (Альбом)</option>
-                        <option value="9:16" ${settings.aspectRatio === '9:16' ? 'selected' : ''}>9:16 (Вертикальный)</option>
-                        <option value="16:9" ${settings.aspectRatio === '16:9' ? 'selected' : ''}>16:9 (Широкий)</option>
-                        <option value="21:9" ${settings.aspectRatio === '21:9' ? 'selected' : ''}>21:9 (Ультраширокий)</option>
+                        <option value="1:1" ${settings.aspectRatio === '1:1' ? 'selected' : ''}>${t`1:1 (Square)`}</option>
+                        <option value="2:3" ${settings.aspectRatio === '2:3' ? 'selected' : ''}>${t`2:3 (Portrait)`}</option>
+                        <option value="3:2" ${settings.aspectRatio === '3:2' ? 'selected' : ''}>${t`3:2 (Landscape)`}</option>
+                        <option value="3:4" ${settings.aspectRatio === '3:4' ? 'selected' : ''}>${t`3:4 (Portrait)`}</option>
+                        <option value="4:3" ${settings.aspectRatio === '4:3' ? 'selected' : ''}>${t`4:3 (Landscape)`}</option>
+                        <option value="4:5" ${settings.aspectRatio === '4:5' ? 'selected' : ''}>${t`4:5 (Portrait)`}</option>
+                        <option value="5:4" ${settings.aspectRatio === '5:4' ? 'selected' : ''}>${t`5:4 (Landscape)`}</option>
+                        <option value="9:16" ${settings.aspectRatio === '9:16' ? 'selected' : ''}>${t`9:16 (Vertical)`}</option>
+                        <option value="16:9" ${settings.aspectRatio === '16:9' ? 'selected' : ''}>${t`16:9 (Wide)`}</option>
+                        <option value="21:9" ${settings.aspectRatio === '21:9' ? 'selected' : ''}>${t`21:9 (Ultra-wide)`}</option>
                     </select>
                     <div></div>
                 </div>
                 <div class="flex-row">
-                    <label for="iig_image_size">Разрешение</label>
+                    <label for="iig_image_size">${t`Resolution`}</label>
                     <select id="iig_image_size" class="flex1">
-                        <option value="1K" ${settings.imageSize === '1K' ? 'selected' : ''}>1K (по умолчанию)</option>
+                        <option value="1K" ${settings.imageSize === '1K' ? 'selected' : ''}>${t`1K (default)`}</option>
                         <option value="2K" ${settings.imageSize === '2K' ? 'selected' : ''}>2K</option>
                         <option value="4K" ${settings.imageSize === '4K' ? 'selected' : ''}>4K</option>
                     </select>
@@ -234,22 +235,22 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
             </div>
 
             <div class="iig-settings-card-nested ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}" id="iig_naistera_video_section">
-                <h4>Видео</h4>
+                <h4>${t`Video`}</h4>
                 <label class="checkbox_label">
                     <input type="checkbox" id="iig_naistera_video_test" ${settings.naisteraVideoTest ? 'checked' : ''}>
-                    <span>Включить генерацию видео</span>
+                    <span>${t`Enable video generation`}</span>
                 </label>
                 <div class="iig-video-frequency-row ${settings.naisteraVideoTest ? '' : 'iig-hidden'}" id="iig_naistera_video_frequency_row">
                     <div class="iig-video-frequency-input">
-                        <span>Каждые</span>
+                        <span>${t`Every`}</span>
                         <input type="number" id="iig_naistera_video_every_n" class="text_pole" min="1" max="999" step="1" value="${normalizeNaisteraVideoFrequency(settings.naisteraVideoEveryN)}">
-                        <span>сообщений.</span>
+                        <span>${t`messages.`}</span>
                     </div>
                 </div>
             </div>
         </div>
     `;
-    return buildSettingsSectionHtml('iig_api_section', 'Настройки API', bodyHtml, true);
+    return buildSettingsSectionHtml('iig_api_section', t`API settings`, bodyHtml, true);
 }
 
 // ----- Styles section -----
@@ -259,7 +260,7 @@ function buildStyleListHtml(settings = getSettings()) {
     const activeId = settings.activeStyleId;
 
     if (styles.length === 0) {
-        return '<p class="hint">Нет стилей. Добавьте стиль и активируйте его.</p>';
+        return `<p class="hint">${t`No styles. Add a style and activate it.`}</p>`;
     }
 
     return styles.map((style) => `
@@ -268,7 +269,7 @@ function buildStyleListHtml(settings = getSettings()) {
                 <i class="fa-solid ${style.id === activeId ? 'fa-check-circle' : 'fa-palette'}"></i>
                 <span>${sanitizeForHtml(style.name)}</span>
             </div>
-            <div class="menu_button iig-style-preset-remove" data-style-remove="${style.id}" title="Удалить стиль">
+            <div class="menu_button iig-style-preset-remove" data-style-remove="${style.id}" title="${t`Delete style`}">
                 <i class="fa-solid fa-trash"></i>
             </div>
         </div>
@@ -278,21 +279,21 @@ function buildStyleListHtml(settings = getSettings()) {
 function buildStyleEditorHtml(settings = getSettings()) {
     const activeStyle = getActiveStyle(settings);
     if (!activeStyle) {
-        return '<p class="hint">Активируйте стиль, чтобы редактировать его значение.</p>';
+        return `<p class="hint">${t`Activate a style to edit its value.`}</p>`;
     }
 
     return `
         <div class="iig-settings-card iig-style-editor-card">
-            <h4>Активный стиль: ${sanitizeForHtml(activeStyle.name)}</h4>
+            <h4>${t`Active style`}: ${sanitizeForHtml(activeStyle.name)}</h4>
             <div class="flex-row">
-                <label for="iig_style_name">Название</label>
+                <label for="iig_style_name">${t`Name`}</label>
                 <input type="text" id="iig_style_name" class="text_pole flex1" value="${sanitizeForHtml(activeStyle.name)}">
-                <div id="iig_style_disable" class="menu_button" title="Выключить стиль">
+                <div id="iig_style_disable" class="menu_button" title="${t`Disable style`}">
                     <i class="fa-solid fa-power-off"></i>
                 </div>
             </div>
             <div class="flex-row">
-                <label for="iig_style_value">Значение</label>
+                <label for="iig_style_value">${t`Value`}</label>
                 <textarea id="iig_style_value" class="text_pole flex1 iig-settings-textarea" rows="3" placeholder="masterpiece, cinematic lighting, painterly">${sanitizeForHtml(activeStyle.value)}</textarea>
                 <div></div>
             </div>
@@ -316,9 +317,9 @@ function buildStylesSettingsSectionHtml() {
     const bodyHtml = `
         <div class="iig-settings-card">
             <div class="flex-row">
-                <label for="iig_new_style_name">Новый стиль</label>
-                <input type="text" id="iig_new_style_name" class="text_pole flex1" placeholder="Название стиля">
-                <div id="iig_style_add" class="menu_button" title="Добавить стиль">
+                <label for="iig_new_style_name">${t`New style`}</label>
+                <input type="text" id="iig_new_style_name" class="text_pole flex1" placeholder="${t`Style name`}">
+                <div id="iig_style_add" class="menu_button" title="${t`Add style`}">
                     <i class="fa-solid fa-plus"></i>
                 </div>
             </div>
@@ -326,7 +327,7 @@ function buildStylesSettingsSectionHtml() {
             <div id="iig_style_editor"></div>
         </div>
     `;
-    return buildSettingsSectionHtml('iig_styles_section', 'Стили', bodyHtml, false);
+    return buildSettingsSectionHtml('iig_styles_section', t`Styles`, bodyHtml, false);
 }
 
 // ----- References section -----
@@ -361,20 +362,20 @@ function buildAvatarReferencesBlockHtml({
             <h4>${title}</h4>
             <label class="checkbox_label">
                 <input type="checkbox" id="${sendCharCheckboxId}" ${sendCharEnabled ? 'checked' : ''}>
-                <span>Отправлять аватар {{char}}</span>
+                <span>${t`Send {{char}} avatar`}</span>
             </label>
             <label class="checkbox_label">
                 <input type="checkbox" id="${sendUserCheckboxId}" ${sendUserEnabled ? 'checked' : ''}>
-                <span>Отправлять аватар {{user}}</span>
+                <span>${t`Send {{user}} avatar`}</span>
             </label>
             <label id="${useActivePersonaRowId}" class="checkbox_label ${useActivePersonaRowHidden ? useActivePersonaHiddenClass : ''}">
                 <input type="checkbox" id="${useActivePersonaCheckboxId}" ${useActivePersonaEnabled ? 'checked' : ''}>
-                <span>Брать аватар из активной персоны {{user}}</span>
+                <span>${t`Use avatar from active {{user}} persona`}</span>
             </label>
             <div id="${userAvatarRowId}" class="flex-row ${userAvatarRowHidden ? userAvatarRowHiddenClass : ''}">
-                <label>Аватар {{user}}</label>
+                <label>${t`{{user}} avatar`}</label>
                 ${userAvatarDropdownHtml}
-                <div id="${refreshButtonId}" class="menu_button iig-refresh-btn" title="Обновить список">
+                <div id="${refreshButtonId}" class="menu_button iig-refresh-btn" title="${t`Refresh list`}">
                     <i class="fa-solid fa-sync"></i>
                 </div>
             </div>
@@ -392,7 +393,8 @@ function buildReferencesSettingsSectionHtml(settings = getSettings()) {
     const commonAvatarRefsVisible = (isGemini || isOpenAI || isOpenRouter || isElectronHub) && refsSupported;
     const naisteraRefsVisible = settings.apiType === 'naistera' && refsSupported;
 
-    // Заголовок секции аватаров — по активному провайдеру.
+    // Заголовок секции аватаров — по активному провайдеру. Provider-brand
+    // имена не локализуются.
     let avatarRefsTitle;
     if (isOpenRouter) avatarRefsTitle = 'OpenRouter';
     else if (isElectronHub) avatarRefsTitle = 'Electron Hub';
@@ -449,28 +451,28 @@ function buildReferencesSettingsSectionHtml(settings = getSettings()) {
             ${naisteraAvatarsBlock}
 
             <div class="iig-settings-card-nested ${refsSectionVisible ? '' : 'iig-hidden'}" id="iig_image_context_section">
-                <h4>Контекст картинок</h4>
+                <h4>${t`Image context`}</h4>
                 <label class="checkbox_label">
                     <input type="checkbox" id="iig_image_context_enabled" ${settings.imageContextEnabled ? 'checked' : ''}>
-                    <span>Включить контекст картинок</span>
+                    <span>${t`Enable image context`}</span>
                 </label>
                 <div class="iig-video-frequency-row ${settings.imageContextEnabled ? '' : 'iig-hidden'}" id="iig_image_context_count_row">
                     <div class="iig-video-frequency-input">
-                        <span>Использовать</span>
+                        <span>${t`Use`}</span>
                         <input type="number" id="iig_image_context_count" class="text_pole" min="1" max="${MAX_CONTEXT_IMAGES}" step="1" value="${normalizeImageContextCount(settings.imageContextCount)}">
-                        <span>предыдущих картинок.</span>
+                        <span>${t`previous images.`}</span>
                     </div>
                 </div>
             </div>
 
             <div class="iig-settings-card-nested ${refsSectionVisible ? '' : 'iig-hidden'}" id="iig_additional_refs_section">
-                <h4>Дополнительные референсы</h4>
+                <h4>${t`Additional references`}</h4>
                 <div class="iig-additional-ref-actions">
                     <div id="iig_additional_refs_add" class="menu_button iig-button-inline">
-                        <i class="fa-solid fa-plus"></i> Добавить референс
+                        <i class="fa-solid fa-plus"></i> ${t`Add reference`}
                     </div>
                     <div id="iig_additional_refs_import" class="menu_button iig-button-inline">
-                        <i class="fa-solid fa-link"></i> Загрузить референс
+                        <i class="fa-solid fa-link"></i> ${t`Import reference`}
                     </div>
                 </div>
                 <div id="iig_additional_refs_status" class="hint" style="margin-bottom: 8px;"></div>
@@ -478,7 +480,7 @@ function buildReferencesSettingsSectionHtml(settings = getSettings()) {
             </div>
         </div>
     `;
-    return buildSettingsSectionHtml('iig_references_section', 'Референсы', bodyHtml, true);
+    return buildSettingsSectionHtml('iig_references_section', t`References`, bodyHtml, true);
 }
 
 // ----- Debug section -----
@@ -488,24 +490,24 @@ function buildDebugSettingsSectionHtml(settings = getSettings()) {
         <div class="iig-settings-card">
             <div class="iig-settings-card-nested">
                 <div class="flex-row">
-                    <label for="iig_max_retries">Макс. повторов</label>
+                    <label for="iig_max_retries">${t`Max retries`}</label>
                     <input type="number" id="iig_max_retries" class="text_pole flex1" value="${settings.maxRetries}" min="0" max="5">
                     <div></div>
                 </div>
                 <div class="flex-row">
-                    <label for="iig_retry_delay">Задержка (мс)</label>
+                    <label for="iig_retry_delay">${t`Retry delay (ms)`}</label>
                     <input type="number" id="iig_retry_delay" class="text_pole flex1" value="${settings.retryDelay}" min="500" max="10000" step="500">
                     <div></div>
                 </div>
             </div>
             <div class="iig-debug-actions">
                 <div id="iig_export_logs" class="menu_button iig-button-inline">
-                    <i class="fa-solid fa-download"></i> Экспорт логов
+                    <i class="fa-solid fa-download"></i> ${t`Export logs`}
                 </div>
             </div>
         </div>
     `;
-    return buildSettingsSectionHtml('iig_debug_section', 'Отладка', bodyHtml, false);
+    return buildSettingsSectionHtml('iig_debug_section', t`Debug`, bodyHtml, false);
 }
 
 // ----- Section toggles -----
@@ -607,29 +609,29 @@ function bindConnectionProfilesEvents(settings, updateVisibility) {
     document.getElementById('iig_profile_save')?.addEventListener('click', () => {
         const profile = saveCurrentIntoProfile(null, settings);
         if (!profile) {
-            toastr.warning('Нет активного профиля', 'Генерация картинок');
+            toastr.warning(t`No active profile`, t`Image Generation`);
             return;
         }
         saveSettings();
-        toastr.success(`Профиль «${profile.name}» сохранён`, 'Генерация картинок', { timeOut: 1500 });
+        toastr.success(t`Profile "${profile.name}" saved`, t`Image Generation`, { timeOut: 1500 });
     });
 
     document.getElementById('iig_profile_save_as')?.addEventListener('click', () => {
-        const name = prompt('Название нового профиля:');
+        const name = prompt(translate('New profile name:'));
         if (name === null) return;
         const profile = createConnectionProfile(name, settings);
         saveSettings();
         refreshProfileSelectOptions(settings);
-        toastr.success(`Создан профиль «${profile.name}»`, 'Генерация картинок', { timeOut: 1500 });
+        toastr.success(t`Created profile "${profile.name}"`, t`Image Generation`, { timeOut: 1500 });
     });
 
     document.getElementById('iig_profile_rename')?.addEventListener('click', () => {
         const profile = getActiveConnectionProfile(settings);
         if (!profile) {
-            toastr.warning('Нет активного профиля', 'Генерация картинок');
+            toastr.warning(t`No active profile`, t`Image Generation`);
             return;
         }
-        const newName = prompt('Новое название профиля:', profile.name);
+        const newName = prompt(translate('New profile name:'), profile.name);
         if (newName === null) return;
         renameConnectionProfile(profile.id, newName, settings);
         saveSettings();
@@ -639,10 +641,10 @@ function bindConnectionProfilesEvents(settings, updateVisibility) {
     document.getElementById('iig_profile_remove')?.addEventListener('click', () => {
         const profile = getActiveConnectionProfile(settings);
         if (!profile) return;
-        if (!confirm(`Удалить профиль «${profile.name}»?`)) return;
+        if (!confirm(t`Delete profile "${profile.name}"?`)) return;
         const ok = removeConnectionProfile(profile.id, settings);
         if (!ok) {
-            toastr.warning('Нельзя удалить последний профиль', 'Генерация картинок');
+            toastr.warning(t`Cannot delete the last profile`, t`Image Generation`);
             return;
         }
         // Загружаем новый активный в settings чтобы синхронизировать DOM.
@@ -760,9 +762,9 @@ function bindApiSectionEvents(settings, updateVisibility) {
                 select.appendChild(option);
             }
 
-            toastr.success(`Найдено моделей: ${models.length}`, 'Генерация картинок');
+            toastr.success(t`Models found: ${models.length}`, t`Image Generation`);
         } catch (error) {
-            toastr.error('Ошибка загрузки моделей', 'Генерация картинок');
+            toastr.error(t`Failed to load models`, t`Image Generation`);
         } finally {
             btn.classList.remove('loading');
         }
@@ -863,10 +865,10 @@ function bindAvatarSectionEvents(settings, updateVisibility, config) {
         try {
             const avatars = await refreshUserAvatarSelects();
 
-            toastr.success(`Найдено аватаров: ${avatars.length}`, 'Генерация картинок');
+            toastr.success(t`Avatars found: ${avatars.length}`, t`Image Generation`);
             document.getElementById(userAvatarDropdownId)?.classList.add('open');
         } catch (error) {
-            toastr.error('Ошибка загрузки аватаров', 'Генерация картинок');
+            toastr.error(t`Failed to load avatars`, t`Image Generation`);
         } finally {
             btn.classList.remove('loading');
         }
@@ -992,7 +994,7 @@ function bindAdditionalReferencesEvents(settings) {
     document.getElementById('iig_additional_refs_add')?.addEventListener('click', () => {
         const refs = ensureAdditionalReferencesArray(settings);
         if (refs.length >= MAX_ADDITIONAL_REFERENCES) {
-            toastr.warning(`Максимум дополнительных референсов: ${MAX_ADDITIONAL_REFERENCES}`, 'Генерация картинок');
+            toastr.warning(t`Maximum additional references: ${MAX_ADDITIONAL_REFERENCES}`, t`Image Generation`);
             return;
         }
 
@@ -1024,12 +1026,10 @@ function bindAdditionalReferencesEvents(settings) {
         try {
             const result = await importAdditionalReferencesFromUrls(input.value);
             closeReferenceImportModal();
-            toastr.success(
-                `Загружено: ${result.importedCount}${result.skippedCount > 0 ? `, пропущено: ${result.skippedCount}` : ''}`,
-                'Генерация картинок'
-            );
+            const tail = result.skippedCount > 0 ? t`, skipped: ${result.skippedCount}` : '';
+            toastr.success(t`Imported: ${result.importedCount}` + tail, t`Image Generation`);
         } catch (error) {
-            toastr.error(`Ошибка импорта: ${error.message || error}`, 'Генерация картинок');
+            toastr.error(t`Import error: ${error.message || error}`, t`Image Generation`);
         } finally {
             button.classList.remove('loading');
         }
@@ -1136,10 +1136,10 @@ function bindAdditionalReferencesEvents(settings) {
             refs[index].imagePath = normalizeStoredImagePath(savedPath);
             saveSettings();
             renderAdditionalReferencesList();
-            toastr.success('Дополнительный референс сохранён', 'Генерация картинок');
+            toastr.success(t`Additional reference saved`, t`Image Generation`);
         } catch (error) {
             console.error('[IIG] Failed to upload additional reference:', error);
-            toastr.error(`Ошибка загрузки референса: ${error.message || error}`, 'Генерация картинок');
+            toastr.error(t`Reference upload failed: ${error.message || error}`, t`Image Generation`);
         } finally {
             target.value = '';
         }
@@ -1349,7 +1349,7 @@ export function createSettingsUI() {
     const html = `
         <div class="inline-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>Генерация картинок</b>
+                <b>${t`Image Generation`}</b>
                 <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content">
