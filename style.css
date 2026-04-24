@@ -141,6 +141,27 @@
     padding: 4px 8px;
 }
 
+.iig-lorebook-bar {
+    margin-bottom: 4px;
+}
+
+.iig-lorebook-buttons {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.iig-lorebook-buttons .menu_button {
+    min-width: 28px;
+    padding: 4px 8px;
+}
+
+.iig-lorebook-buttons .checkbox_label {
+    margin: 0;
+    padding-right: 4px;
+}
+
 .iig-section {
     display: flex;
     flex-direction: column;

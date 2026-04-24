@@ -22,6 +22,13 @@ import {
     updateStyle,
     removeStyle,
     ensureAdditionalReferencesArray,
+    ensureLorebooks,
+    getActiveLorebook,
+    createLorebook,
+    renameLorebook,
+    removeLorebook,
+    setLorebookEnabled,
+    setActiveLorebook,
     DEFAULT_REF_INSTRUCTION,
     getLastRequestSnapshot,
     normalizeNaisteraModel,
@@ -392,6 +399,40 @@ function buildAvatarReferencesBlockHtml({
     `;
 }
 
+function buildLorebookBarHtml(settings = getSettings()) {
+    const lorebooks = ensureLorebooks(settings);
+    const activeId = settings.activeLorebookId;
+    const active = getActiveLorebook(settings);
+    const optionsHtml = lorebooks.map((lb) =>
+        `<option value="${sanitizeForHtml(lb.id)}" ${lb.id === activeId ? 'selected' : ''}>${sanitizeForHtml(lb.name)}${lb.enabled === false ? ' ' + t`(off)` : ''}</option>`,
+    ).join('');
+    return `
+        <div class="iig-lorebook-bar">
+            <div class="flex-row">
+                <label for="iig_lorebook_select">${t`Lorebook`}</label>
+                <select id="iig_lorebook_select" class="flex1">
+                    ${optionsHtml}
+                </select>
+                <div class="iig-lorebook-buttons">
+                    <label class="checkbox_label" title="${t`Include this lorebook in matching`}">
+                        <input type="checkbox" id="iig_lorebook_enabled" ${active?.enabled !== false ? 'checked' : ''}>
+                        <span>${t`On`}</span>
+                    </label>
+                    <div id="iig_lorebook_add" class="menu_button" title="${t`Create new lorebook`}">
+                        <i class="fa-solid fa-plus"></i>
+                    </div>
+                    <div id="iig_lorebook_rename" class="menu_button" title="${t`Rename lorebook`}">
+                        <i class="fa-solid fa-pen"></i>
+                    </div>
+                    <div id="iig_lorebook_remove" class="menu_button" title="${t`Delete lorebook`}">
+                        <i class="fa-solid fa-trash"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
 function buildReferencesSettingsSectionHtml(settings = getSettings()) {
     const provider = resolveActiveProvider(settings);
     const refsSupported = provider ? provider.supportsReferences(settings) : false;
@@ -476,6 +517,9 @@ function buildReferencesSettingsSectionHtml(settings = getSettings()) {
 
             <div class="iig-settings-card-nested ${refsSectionVisible ? '' : 'iig-hidden'}" id="iig_additional_refs_section">
                 <h4>${t`Additional references`}</h4>
+
+                ${buildLorebookBarHtml(settings)}
+
                 <div class="iig-additional-ref-actions">
                     <div id="iig_additional_refs_add" class="menu_button iig-button-inline">
                         <i class="fa-solid fa-plus"></i> ${t`Add reference`}
@@ -1070,6 +1114,74 @@ function bindStylesSectionEvents(settings) {
     });
 }
 
+// ----- Lorebook bar events -----
+
+function refreshLorebookBar(settings) {
+    const bar = document.querySelector('.iig-lorebook-bar');
+    if (!bar) return;
+    bar.outerHTML = buildLorebookBarHtml(settings);
+    // После replace — элемент в DOM заменился, перевешиваем обработчики.
+    bindLorebookBarEvents(settings);
+}
+
+function bindLorebookBarEvents(settings) {
+    document.getElementById('iig_lorebook_select')?.addEventListener('change', (e) => {
+        const id = e.target instanceof HTMLSelectElement ? e.target.value : '';
+        if (!id) return;
+        const lb = setActiveLorebook(id, settings);
+        if (!lb) return;
+        saveSettings();
+        refreshLorebookBar(settings);
+        refreshAdditionalReferencesList();
+    });
+
+    document.getElementById('iig_lorebook_enabled')?.addEventListener('change', (e) => {
+        const active = getActiveLorebook(settings);
+        if (!active || !(e.target instanceof HTMLInputElement)) return;
+        setLorebookEnabled(active.id, e.target.checked, settings);
+        saveSettings();
+        refreshLorebookBar(settings);
+    });
+
+    document.getElementById('iig_lorebook_add')?.addEventListener('click', async () => {
+        const name = await Popup.show.input(t`New lorebook`, t`Enter a name for the new lorebook:`);
+        if (!name) return;
+        const lb = createLorebook(name, settings);
+        saveSettings();
+        refreshLorebookBar(settings);
+        refreshAdditionalReferencesList();
+        toastr.success(t`Lorebook "${lb.name}" created`, t`Image Generation`, { timeOut: 1500 });
+    });
+
+    document.getElementById('iig_lorebook_rename')?.addEventListener('click', async () => {
+        const active = getActiveLorebook(settings);
+        if (!active) return;
+        const newName = await Popup.show.input(t`Rename lorebook`, t`Enter a new name:`, active.name);
+        if (!newName) return;
+        renameLorebook(active.id, newName, settings);
+        saveSettings();
+        refreshLorebookBar(settings);
+    });
+
+    document.getElementById('iig_lorebook_remove')?.addEventListener('click', async () => {
+        const active = getActiveLorebook(settings);
+        if (!active) return;
+        const confirmed = await Popup.show.confirm(
+            t`Delete lorebook`,
+            t`Delete lorebook "${active.name}"? All its references will be lost. This cannot be undone.`,
+        );
+        if (!confirmed) return;
+        const ok = removeLorebook(active.id, settings);
+        if (!ok) {
+            toastr.warning(t`Cannot delete the last lorebook`, t`Image Generation`);
+            return;
+        }
+        saveSettings();
+        refreshLorebookBar(settings);
+        refreshAdditionalReferencesList();
+    });
+}
+
 // ----- Additional references events -----
 
 /**
@@ -1483,6 +1595,7 @@ function bindSettingsEvents() {
 
     bindAvatarDropdownToggles();
     bindStylesSectionEvents(settings);
+    bindLorebookBarEvents(settings);
     bindAdditionalReferencesEvents(settings);
     bindRefInstructionEvents(settings);
     bindDebugSectionEvents(settings);

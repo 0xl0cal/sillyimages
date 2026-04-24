@@ -14,7 +14,7 @@
 import {
     getSettings,
     getActiveStyle,
-    ensureAdditionalReferencesArray,
+    getAllEnabledLorebookReferences,
     normalizeGroupName,
     iigLog,
 } from './settings.js';
@@ -261,7 +261,9 @@ export function buildFinalGenerationPrompt(prompt, style, matchedAdditionalRefs 
 }
 
 export function getMatchedAdditionalReferences(prompt) {
-    const refs = ensureAdditionalReferencesArray()
+    // Итерируем все enabled лорбуки — refs всех enabled лорбуков
+    // объединяются в один пул и матчатся по prompt.
+    const refs = getAllEnabledLorebookReferences()
         .map((ref) => ({
             id: String(ref?.id || '').trim(),
             name: String(ref?.name || '').trim(),

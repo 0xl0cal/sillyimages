@@ -98,7 +98,15 @@ export const defaultSettings = Object.freeze({
     naisteraSendUserAvatar: false,
     naisteraVideoTest: false,
     naisteraVideoEveryN: 1,
+    // Устаревшее поле: хранилось плоским массивом до v2.0-D.1. Сейчас это
+    // refs первого лорбука. При старте `migrateAdditionalReferencesToLorebook`
+    // перекладывает его в `lorebooks[0]` и очищает здесь.
     additionalReferences: [],
+    // Лорбуки — коллекции ref-записей. У каждого свой `enabled` (matcher
+    // собирает refs из всех enabled одновременно). `activeLorebookId` хранит
+    // тот, что открыт для редактирования в UI-секции References.
+    lorebooks: [],
+    activeLorebookId: '',
     // Ref instruction — критический префикс, дописываемый к prompt'у когда
     // хотя бы один reference image отправляется провайдеру. Глобальный
     // (не привязан к connection profile).
@@ -571,7 +579,7 @@ export function getEffectiveRefInstruction(settings = getSettings()) {
     return raw || DEFAULT_REF_INSTRUCTION;
 }
 
-// ----- Additional references array helpers -----
+// ----- Lorebooks & additional references -----
 
 /**
  * Генерирует стабильный id для ref-записи (нужен для drag-reorder и
@@ -579,6 +587,10 @@ export function getEffectiveRefInstruction(settings = getSettings()) {
  */
 function makeReferenceId() {
     return `iig-ref-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function makeLorebookId() {
+    return `iig-lb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 /**
@@ -601,35 +613,147 @@ export function normalizeGroupName(raw) {
     return String(raw || '').trim();
 }
 
-export function ensureAdditionalReferencesArray(settings = getSettings()) {
-    if (!Array.isArray(settings.additionalReferences)) {
-        settings.additionalReferences = [];
-    }
-
-    settings.additionalReferences = settings.additionalReferences
-        .slice(0, MAX_ADDITIONAL_REFERENCES)
-        .map((ref) => {
-            const priorityRaw = Number.parseInt(String(ref?.priority ?? 0), 10);
-            return {
-                id: String(ref?.id || '').trim() || makeReferenceId(),
-                name: String(ref?.name || '').trim(),
-                description: String(ref?.description || '').trim(),
-                imagePath: String(ref?.imagePath || '').trim(),
-                matchMode: ref?.matchMode === 'always' ? 'always' : 'match',
-                enabled: ref?.enabled !== false,
-                // Лорбук-поля. Для старых записей — defaults.
-                group: normalizeGroupName(ref?.group),
-                priority: Number.isFinite(priorityRaw) ? priorityRaw : 0,
-                useRegex: ref?.useRegex === true,
-                secondaryKeys: normalizeSecondaryKeysString(ref?.secondaryKeys),
-            };
-        });
-
-    return settings.additionalReferences;
+/**
+ * Нормализует одну ref-запись: добавляет id, приводит поля к ожидаемым типам,
+ * применяет defaults для новых полей из v2.0 (group / priority / regex / etc).
+ */
+function normalizeReferenceEntry(raw) {
+    const priorityRaw = Number.parseInt(String(raw?.priority ?? 0), 10);
+    return {
+        id: String(raw?.id || '').trim() || makeReferenceId(),
+        name: String(raw?.name || '').trim(),
+        description: String(raw?.description || '').trim(),
+        imagePath: String(raw?.imagePath || '').trim(),
+        matchMode: raw?.matchMode === 'always' ? 'always' : 'match',
+        enabled: raw?.enabled !== false,
+        group: normalizeGroupName(raw?.group),
+        priority: Number.isFinite(priorityRaw) ? priorityRaw : 0,
+        useRegex: raw?.useRegex === true,
+        secondaryKeys: normalizeSecondaryKeysString(raw?.secondaryKeys),
+    };
 }
 
 /**
- * Возвращает массив уникальных имён групп из ref-коллекции в порядке
+ * Нормализует массив refs одного лорбука + применяет hard-cap.
+ */
+function normalizeReferencesArrayInternal(raw) {
+    const arr = Array.isArray(raw) ? raw : [];
+    return arr.slice(0, MAX_ADDITIONAL_REFERENCES).map(normalizeReferenceEntry);
+}
+
+/**
+ * Нормализует структуру `settings.lorebooks`: добавляет id / enabled / meta,
+ * приводит refs к каноничному виду. Гарантирует как минимум один лорбук
+ * («My library») — если массив пустой.
+ *
+ * Валидирует `activeLorebookId`: если он указывает на удалённый/отсутствующий
+ * лорбук — выставляется первый существующий.
+ */
+export function ensureLorebooks(settings = getSettings()) {
+    if (!Array.isArray(settings.lorebooks)) {
+        settings.lorebooks = [];
+    }
+
+    settings.lorebooks = settings.lorebooks.map((raw) => ({
+        id: String(raw?.id || '').trim() || makeLorebookId(),
+        name: String(raw?.name || '').trim() || 'Untitled',
+        enabled: raw?.enabled !== false,
+        refs: normalizeReferencesArrayInternal(raw?.refs),
+        meta: {
+            sourceUrl: String(raw?.meta?.sourceUrl || '').trim(),
+            importedAt: Number.isFinite(raw?.meta?.importedAt) ? raw.meta.importedAt : null,
+            version: Number.isFinite(raw?.meta?.version) ? raw.meta.version : null,
+        },
+    }));
+
+    if (settings.lorebooks.length === 0) {
+        settings.lorebooks.push({
+            id: makeLorebookId(),
+            name: 'My library',
+            enabled: true,
+            refs: [],
+            meta: { sourceUrl: '', importedAt: null, version: null },
+        });
+    }
+
+    if (!settings.lorebooks.some((lb) => lb.id === settings.activeLorebookId)) {
+        settings.activeLorebookId = settings.lorebooks[0].id;
+    }
+
+    return settings.lorebooks;
+}
+
+/**
+ * One-time migration из старого `settings.additionalReferences` (flat array)
+ * в `settings.lorebooks[0]`. Вызывается из init. Идемпотентно.
+ */
+export function migrateAdditionalReferencesToLorebook(settings = getSettings()) {
+    ensureLorebooks(settings);
+
+    const legacyRefs = Array.isArray(settings.additionalReferences) ? settings.additionalReferences : [];
+    if (legacyRefs.length === 0) {
+        settings.additionalReferences = [];
+        return;
+    }
+
+    // Переливаем в refs первого лорбука (обычно «My library»). Существующие
+    // refs в лорбуке сохраняются, legacy добавляются в конец (не перезаписывают).
+    const target = settings.lorebooks[0];
+    const existingIds = new Set(target.refs.map((r) => r.id));
+    const migrated = normalizeReferencesArrayInternal(legacyRefs)
+        .filter((r) => !existingIds.has(r.id));
+    target.refs = target.refs.concat(migrated).slice(0, MAX_ADDITIONAL_REFERENCES);
+
+    // Очищаем legacy-поле после успешной миграции.
+    settings.additionalReferences = [];
+    iigLog('INFO', `Migrated ${migrated.length} additional references to lorebook "${target.name}"`);
+}
+
+/**
+ * Возвращает активный лорбук (тот, что редактируется в UI) или первый, если
+ * `activeLorebookId` битый. Никогда не возвращает null при валидном settings.
+ */
+export function getActiveLorebook(settings = getSettings()) {
+    const lorebooks = ensureLorebooks(settings);
+    return lorebooks.find((lb) => lb.id === settings.activeLorebookId) || lorebooks[0] || null;
+}
+
+/**
+ * Массив refs активного лорбука (read-write: мутация возвращённого массива
+ * изменит state в settings).
+ *
+ * Имя `ensureAdditionalReferencesArray` сохранено ради минимальной diff — до
+ * миграции все consumer-места считали это главным массивом refs. Теперь оно
+ * эквивалентно «refs активного лорбука».
+ */
+export function ensureAdditionalReferencesArray(settings = getSettings()) {
+    const active = getActiveLorebook(settings);
+    if (!active) {
+        return [];
+    }
+    active.refs = normalizeReferencesArrayInternal(active.refs);
+    return active.refs;
+}
+
+/**
+ * Все refs из всех enabled лорбуков в один плоский массив. Matcher использует
+ * это для поиска совпадений по prompt. Порядок сохраняет: refs внутри лорбука
+ * в исходном порядке, лорбуки — в порядке массива `settings.lorebooks`.
+ */
+export function getAllEnabledLorebookReferences(settings = getSettings()) {
+    const lorebooks = ensureLorebooks(settings);
+    const result = [];
+    for (const lb of lorebooks) {
+        if (!lb.enabled) continue;
+        for (const ref of lb.refs) {
+            result.push(ref);
+        }
+    }
+    return result;
+}
+
+/**
+ * Возвращает массив уникальных имён групп из refs активного лорбука в порядке
  * первого появления. Пустая группа ('') не включается.
  */
 export function getAdditionalReferenceGroups(settings = getSettings()) {
@@ -643,4 +767,57 @@ export function getAdditionalReferenceGroups(settings = getSettings()) {
         groups.push(name);
     }
     return groups;
+}
+
+// ----- Lorebook CRUD -----
+
+export function createLorebook(name, settings = getSettings()) {
+    ensureLorebooks(settings);
+    const lorebook = {
+        id: makeLorebookId(),
+        name: String(name || '').trim() || `Lorebook ${settings.lorebooks.length + 1}`,
+        enabled: true,
+        refs: [],
+        meta: { sourceUrl: '', importedAt: Date.now(), version: null },
+    };
+    settings.lorebooks.push(lorebook);
+    settings.activeLorebookId = lorebook.id;
+    return lorebook;
+}
+
+export function renameLorebook(lorebookId, newName, settings = getSettings()) {
+    const lb = ensureLorebooks(settings).find((x) => x.id === lorebookId);
+    if (!lb) return null;
+    lb.name = String(newName || '').trim() || lb.name;
+    return lb;
+}
+
+export function setLorebookEnabled(lorebookId, enabled, settings = getSettings()) {
+    const lb = ensureLorebooks(settings).find((x) => x.id === lorebookId);
+    if (!lb) return null;
+    lb.enabled = Boolean(enabled);
+    return lb;
+}
+
+/**
+ * Удаляет лорбук. Запрещает удаление последнего. Если удалённый был активным —
+ * активным становится первый оставшийся.
+ */
+export function removeLorebook(lorebookId, settings = getSettings()) {
+    const lorebooks = ensureLorebooks(settings);
+    if (lorebooks.length <= 1) return false;
+    const index = lorebooks.findIndex((x) => x.id === lorebookId);
+    if (index === -1) return false;
+    lorebooks.splice(index, 1);
+    if (settings.activeLorebookId === lorebookId) {
+        settings.activeLorebookId = lorebooks[0]?.id || '';
+    }
+    return true;
+}
+
+export function setActiveLorebook(lorebookId, settings = getSettings()) {
+    const lb = ensureLorebooks(settings).find((x) => x.id === lorebookId);
+    if (!lb) return null;
+    settings.activeLorebookId = lb.id;
+    return lb;
 }

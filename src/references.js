@@ -12,6 +12,7 @@ import {
     getSettings,
     saveSettings,
     ensureAdditionalReferencesArray,
+    ensureLorebooks,
     normalizeImageContextCount,
     normalizeGroupName,
     MAX_ADDITIONAL_REFERENCES,
@@ -580,29 +581,16 @@ function getBookDescription(ref) {
 }
 
 /**
- * Рендерит все additional references в формат, удобный для LLM-подсказок:
- *
- * ```
- * [locations]
- * tavern (tavern) — cozy wooden inn in the mountains
- *
- * [characters]
- * alice (alice) — red-haired mage with green eyes
- * bob (bob) — tall knight in silver armor
- * ```
- *
- * Порядок групп — порядок первого появления в массиве. Refs без группы
- * складываются в секцию «[other]». Отключённые refs не включаются.
+ * Форматирует refs одного лорбука в секции по группам.
+ * Возвращает пустую строку если все refs пустые/disabled.
  */
-export function renderIigBookMacro(settings = getSettings()) {
-    const refs = ensureAdditionalReferencesArray(settings)
-        .filter((ref) => ref.enabled !== false && String(ref?.name || '').trim());
-
-    if (refs.length === 0) return '';
+function formatLorebookRefsSections(refs) {
+    const active = refs.filter((ref) => ref.enabled !== false && String(ref?.name || '').trim());
+    if (active.length === 0) return '';
 
     const groupOrder = [];
     const byGroup = new Map();
-    for (const ref of refs) {
+    for (const ref of active) {
         const groupName = normalizeGroupName(ref.group) || 'other';
         if (!byGroup.has(groupName)) {
             byGroup.set(groupName, []);
@@ -611,16 +599,49 @@ export function renderIigBookMacro(settings = getSettings()) {
         byGroup.get(groupName).push(ref);
     }
 
-    const sections = groupOrder.map((group) => {
+    return groupOrder.map((group) => {
         const lines = byGroup.get(group).map((ref) => {
             const trigger = getPrimaryTrigger(ref);
             const desc = getBookDescription(ref);
             return `${ref.name} (${trigger}) — ${desc}`;
         });
         return `[${group}]\n${lines.join('\n')}`;
-    });
+    }).join('\n\n');
+}
 
-    return sections.join('\n\n');
+/**
+ * Рендерит все enabled лорбуки в формат, удобный для LLM-подсказок:
+ *
+ * ```
+ * === My library ===
+ * [locations]
+ * tavern (tavern) — cozy wooden inn in the mountains
+ *
+ * [characters]
+ * alice (alice) — red-haired mage with green eyes
+ *
+ * === Fantasy World ===
+ * [items]
+ * excalibur (excalibur) — legendary sword
+ * ```
+ *
+ * Если enabled только один лорбук — заголовок-разделитель (`=== name ===`)
+ * не выводится, чтобы выхлоп выглядел как до D.1 (один лорбук → плоский
+ * список групп).
+ */
+export function renderIigBookMacro(settings = getSettings()) {
+    const lorebooks = ensureLorebooks(settings).filter((lb) => lb.enabled !== false);
+    if (lorebooks.length === 0) return '';
+
+    const blocks = [];
+    const showHeader = lorebooks.length > 1;
+    for (const lb of lorebooks) {
+        const body = formatLorebookRefsSections(lb.refs);
+        if (!body) continue;
+        blocks.push(showHeader ? `=== ${lb.name} ===\n${body}` : body);
+    }
+
+    return blocks.join('\n\n');
 }
 
 /**
