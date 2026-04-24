@@ -620,7 +620,16 @@ export class OpenAIProvider extends Provider {
 
     async generate({ prompt, style, references = [], options = {} }) {
         const settings = getSettings();
-        const fullPrompt = buildFinalGenerationPrompt(prompt, style, options.matchedAdditionalRefs || [], settings);
+        let fullPrompt = buildFinalGenerationPrompt(prompt, style, options.matchedAdditionalRefs || [], settings);
+
+        // Префикс refInstruction — только когда реально уходит хотя бы один
+        // ref в /v1/images/edits. Без рефов /generations не нуждается в нём.
+        if (references.length > 0) {
+            const refInstruction = getEffectiveRefInstruction(settings);
+            if (refInstruction) {
+                fullPrompt = `${refInstruction}\n\n${fullPrompt}`;
+            }
+        }
 
         const modelKind = classifyOpenAIModel(settings.model);
         const requestedSize = options.aspectRatio

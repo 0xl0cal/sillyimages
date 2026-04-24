@@ -42,14 +42,136 @@ import {
 } from './providers.js';
 import { t } from './i18n.js';
 
+// ----- Friendly error classification -----
+
+/**
+ * Классификация ошибки от провайдера в одну из известных категорий.
+ * Матчинг идёт по `code` и по подстрокам в `message`. Если ничего не
+ * подошло — возвращает `'unknown'`.
+ *
+ * @param {unknown} error
+ * @returns {{ kind: string, raw: string, code: string }}
+ */
+function classifyProviderError(error) {
+    const isProviderError = error instanceof ProviderError;
+    const code = String(isProviderError ? (error.code || '') : '').toLowerCase();
+    const raw = String(error?.message || '');
+    const msg = raw.toLowerCase();
+    const status = isProviderError ? (error.status || 0) : 0;
+
+    const codeIsAny = (...list) => list.some((c) => code === c || code.includes(c));
+    const msgHas = (...list) => list.some((s) => msg.includes(s));
+
+    // Moderation / цензура — OpenAI, Gemini, OpenRouter.
+    if (codeIsAny('moderation_blocked', 'content_policy_violation', 'safety_violation', 'content_filter', 'content_policy')
+        || msgHas('rejected by the safety', 'content policy', 'safety filter', 'safety_violation', 'moderation_blocked', 'safety reasons')) {
+        return { kind: 'moderation', raw, code };
+    }
+
+    // Billing / quota.
+    if (codeIsAny('billing_hard_limit_reached', 'insufficient_quota', 'billing_not_active', 'account_deactivated', 'billing')
+        || msgHas('billing hard limit', 'insufficient_quota', 'quota', 'billing')) {
+        return { kind: 'billing', raw, code };
+    }
+
+    // Rate limit.
+    if (status === 429
+        || codeIsAny('rate_limit_exceeded', 'too_many_requests', 'resource_exhausted')
+        || msgHas('rate limit', 'too many requests')) {
+        return { kind: 'rate_limit', raw, code };
+    }
+
+    // Auth.
+    if (status === 401 || status === 403
+        || codeIsAny('invalid_api_key', 'authentication_error', 'unauthorized', 'permission_denied', 'forbidden')
+        || msgHas('invalid api key', 'unauthorized', 'forbidden')) {
+        return { kind: 'auth', raw, code };
+    }
+
+    // Model not found / unsupported.
+    if (codeIsAny('model_not_found', 'model_not_supported', 'invalid_model')
+        || (status === 404 && msgHas('model'))
+        || msgHas('model not found', 'model does not exist', 'unsupported model')) {
+        return { kind: 'model', raw, code };
+    }
+
+    // Timeout / network.
+    if (codeIsAny('timeout')) return { kind: 'timeout', raw, code };
+    if (codeIsAny('network')) return { kind: 'network', raw, code };
+
+    return { kind: 'unknown', raw, code };
+}
+
+/**
+ * Превращает ошибку в human-friendly пару `{ title, message, detail }`.
+ * `detail` — сырой текст для отладки (first 400 chars), кладётся в tooltip
+ * error-placeholder'а и в логи.
+ */
+function formatProviderError(error) {
+    const { kind, raw, code } = classifyProviderError(error);
+    const detail = String(raw || '').slice(0, 400);
+
+    switch (kind) {
+        case 'moderation':
+            return {
+                title: t`Content moderation`,
+                message: t`Request was blocked by the provider safety filter. Try again or edit the prompt.`,
+                detail,
+            };
+        case 'billing':
+            return {
+                title: t`Billing limit`,
+                message: t`Your account has reached a billing or quota limit. Check your provider dashboard.`,
+                detail,
+            };
+        case 'rate_limit':
+            return {
+                title: t`Rate limit`,
+                message: t`Provider is rate-limiting requests. Wait a moment and try again.`,
+                detail,
+            };
+        case 'auth':
+            return {
+                title: t`Authentication error`,
+                message: t`API key is invalid or unauthorized.`,
+                detail,
+            };
+        case 'model':
+            return {
+                title: t`Model error`,
+                message: t`Selected model is unavailable or not found.`,
+                detail,
+            };
+        case 'network':
+            return {
+                title: t`Network error`,
+                message: t`Could not reach the provider. Check your connection.`,
+                detail,
+            };
+        case 'timeout':
+            return {
+                title: t`Timeout`,
+                message: t`Provider took too long to respond. Try again.`,
+                detail,
+            };
+        default:
+            return {
+                title: t`Generation error`,
+                message: detail || t`Unknown error`,
+                detail: code ? `${code}: ${detail}` : detail,
+            };
+    }
+}
+
 // ----- Last request snapshot builder -----
 
 /**
  * Провайдеры, которые префиксуют final prompt через `refInstruction`
- * когда references.length > 0. OpenAI и ElectronHub работают через
- * /v1/images/edits и не дописывают эту инструкцию.
+ * когда references.length > 0. Покрывает все провайдеры с поддержкой
+ * reference images — OpenAI / ElectronHub (/v1/images/edits), Gemini,
+ * OpenRouter, Naistera.
  */
-const REF_INSTRUCTION_PROVIDERS = new Set(['gemini', 'openrouter', 'naistera']);
+const REF_INSTRUCTION_PROVIDERS = new Set(['openai', 'electronhub', 'gemini', 'openrouter', 'naistera']);
 
 /**
  * Приводит любой представление референса (base64 строка или data URL)
@@ -123,12 +245,16 @@ export function createLoadingPlaceholder(tagId) {
     return placeholder;
 }
 
-export function createErrorPlaceholder(tagId, errorMessage, tagInfo) {
+export function createErrorPlaceholder(tagId, errorMessage, tagInfo, friendlyInfo = null) {
     const img = document.createElement('img');
     img.className = 'iig-error-image';
     img.src = ERROR_IMAGE_PATH;
-    img.alt = t`Generation error`;
-    img.title = t`Error: ${errorMessage}`;
+    img.alt = friendlyInfo?.title || t`Generation error`;
+    // Tooltip: дружелюбный заголовок + сырой текст для отладки.
+    const tooltip = friendlyInfo
+        ? `${friendlyInfo.title}: ${friendlyInfo.message}${friendlyInfo.detail ? `\n\n${friendlyInfo.detail}` : ''}`
+        : t`Error: ${errorMessage}`;
+    img.title = tooltip;
     img.dataset.tagId = tagId;
 
     // Preserve data-iig-instruction for regenerate button functionality
@@ -505,8 +631,9 @@ export async function processMessageTags(messageId) {
             toastr.success(readyMsg, t`Image Generation`, { timeOut: 2000 });
         } catch (error) {
             iigLog('ERROR', `Failed to generate image for tag ${index}:`, error.message);
+            const friendly = formatProviderError(error);
 
-            const errorPlaceholder = createErrorPlaceholder(tagId, error.message, tag);
+            const errorPlaceholder = createErrorPlaceholder(tagId, error.message, tag, friendly);
             loadingPlaceholder.replaceWith(errorPlaceholder);
 
             // IMPORTANT: Mark tag as failed in message.mes so it displays after swipe.
@@ -519,7 +646,7 @@ export async function processMessageTags(messageId) {
             }
             iigLog('INFO', `Marked tag as failed in message.mes`);
 
-            toastr.error(t`Generation error: ${error.message}`, t`Image Generation`);
+            toastr.error(friendly.message, friendly.title);
         }
     };
 
@@ -640,7 +767,8 @@ export async function regenerateMessageImages(messageId) {
             }
         } catch (error) {
             iigLog('ERROR', `Regeneration failed for tag ${index}:`, error.message);
-            toastr.error(t`Error: ${error.message}`, t`Image Generation`);
+            const friendly = formatProviderError(error);
+            toastr.error(friendly.message, friendly.title);
         }
     }
 

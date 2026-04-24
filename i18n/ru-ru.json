@@ -181,5 +181,21 @@
     "Request to ${0} timed out. Check your connection and try regenerating.": "Превышено время ожидания ответа от ${0}. Проверьте подключение и попробуйте перегенерировать.",
     "Connection problem with ${0}. Server is unreachable or blocked. Try regenerating.": "Проблема с подключением к ${0}. Сервер недоступен или заблокирован. Попробуйте перегенерировать.",
 
-    "Regenerate images": "Перегенерировать картинки"
+    "Regenerate images": "Перегенерировать картинки",
+
+    "Content moderation": "Цензура провайдера",
+    "Request was blocked by the provider safety filter. Try again or edit the prompt.": "Запрос заблокирован фильтром безопасности провайдера. Попробуйте ещё раз или отредактируйте промпт.",
+    "Billing limit": "Лимит биллинга",
+    "Your account has reached a billing or quota limit. Check your provider dashboard.": "Достигнут лимит биллинга или квоты аккаунта. Проверьте панель провайдера.",
+    "Rate limit": "Rate limit",
+    "Provider is rate-limiting requests. Wait a moment and try again.": "Провайдер ограничивает частоту запросов. Подождите и попробуйте снова.",
+    "Authentication error": "Ошибка авторизации",
+    "API key is invalid or unauthorized.": "API ключ недействителен или не имеет прав.",
+    "Model error": "Ошибка модели",
+    "Selected model is unavailable or not found.": "Выбранная модель недоступна или не найдена.",
+    "Network error": "Ошибка сети",
+    "Could not reach the provider. Check your connection.": "Не удалось связаться с провайдером. Проверьте подключение.",
+    "Timeout": "Таймаут",
+    "Provider took too long to respond. Try again.": "Провайдер слишком долго отвечал. Попробуйте ещё раз.",
+    "Unknown error": "Неизвестная ошибка"
 }
