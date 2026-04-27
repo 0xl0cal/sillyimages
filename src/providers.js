@@ -561,6 +561,37 @@ function throwAsProviderError(error, endpointLabel, providerId) {
  * Распаковывает результат /generations или /edits.
  * OpenAI: `data[0].b64_json` (для gpt-image-* всегда) или `data[0].url`.
  */
+// Вытаскивает картинку из choices[0].message с поддержкой нескольких форматов:
+//   - real openrouter.ai: images[].image_url.url (data URL или http)
+//   - llmrouter и compat: images[].data_url, images[].b64_json + images[].image_base64
+//   - fallback: message.content[] с type=image_url|image|input_image
+function extractOpenRouterImage(message) {
+    if (!message || typeof message !== 'object') return null;
+    const images = Array.isArray(message.images) ? message.images : [];
+    for (const img of images) {
+        if (!img || typeof img !== 'object') continue;
+        if (typeof img.image_url?.url === 'string') return img.image_url.url;
+        if (typeof img.data_url === 'string') return img.data_url;
+        if (typeof img.b64_json === 'string' && img.b64_json) {
+            const mime = img.image_base64?.media_type || img.media_type || 'image/png';
+            return `data:${mime};base64,${img.b64_json}`;
+        }
+        if (typeof img.image_base64?.data === 'string' && img.image_base64.data) {
+            const mime = img.image_base64.media_type || 'image/png';
+            return `data:${mime};base64,${img.image_base64.data}`;
+        }
+        if (typeof img.url === 'string') return img.url;
+    }
+    const content = Array.isArray(message.content) ? message.content : [];
+    for (const part of content) {
+        if (!part || typeof part !== 'object') continue;
+        if (part.type === 'image_url' && typeof part.image_url?.url === 'string') return part.image_url.url;
+        if (part.type === 'image' && typeof part.image === 'string') return part.image;
+        if (part.type === 'input_image' && typeof part.image_url === 'string') return part.image_url;
+    }
+    return null;
+}
+
 function extractImageFromResult(result) {
     const dataList = Array.isArray(result?.data) ? result.data : [];
     if (dataList.length === 0) {
@@ -1220,12 +1251,9 @@ export class OpenRouterProvider extends Provider {
 
         const result = await response.json();
         const message = result?.choices?.[0]?.message;
-        const images = Array.isArray(message?.images) ? message.images : [];
-        const imageUrl = images[0]?.image_url?.url;
+        const imageUrl = extractOpenRouterImage(message);
 
         if (!imageUrl || typeof imageUrl !== 'string') {
-            // Полный response в лог — иначе не отличить moderation от
-            // нестандартного формата ответа от компат-сервисов.
             iigLog('ERROR', 'OpenRouter no-image response body:', result);
             throw new ProviderError({
                 message: `No image in OpenRouter response. Body keys: ${Object.keys(result || {}).join(',')}; message keys: ${Object.keys(message || {}).join(',')}`,
@@ -1235,8 +1263,6 @@ export class OpenRouterProvider extends Provider {
             });
         }
 
-        // Real openrouter.ai → data URL. llmrouter и др. compat-сервисы могут
-        // отдать обычную ссылку на CDN; тянем её и конвертим в data URL.
         if (imageUrl.startsWith('data:')) {
             return imageUrl;
         }
