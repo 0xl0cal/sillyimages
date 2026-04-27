@@ -277,51 +277,62 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
 
             <div class="iig-settings-card-nested ${settings.apiType === 'a1111' ? '' : 'iig-hidden'}" id="iig_a1111_section">
                 <h4>${t`txt2img parameters`}</h4>
-                <div class="flex-row">
-                    <label for="iig_a1111_width">${t`Width`}</label>
-                    <input type="number" id="iig_a1111_width" class="text_pole flex1" min="64" max="4096" step="8" value="${settings.a1111Width}">
-                    <div></div>
-                </div>
-                <div class="flex-row">
-                    <label for="iig_a1111_height">${t`Height`}</label>
-                    <input type="number" id="iig_a1111_height" class="text_pole flex1" min="64" max="4096" step="8" value="${settings.a1111Height}">
-                    <div></div>
-                </div>
-                <div class="flex-row">
-                    <label for="iig_a1111_steps">${t`Steps`}</label>
-                    <input type="number" id="iig_a1111_steps" class="text_pole flex1" min="1" max="150" step="1" value="${settings.a1111Steps}">
-                    <div></div>
-                </div>
-                <div class="flex-row">
-                    <label for="iig_a1111_cfg">${t`CFG scale`}</label>
-                    <input type="number" id="iig_a1111_cfg" class="text_pole flex1" min="1" max="30" step="0.5" value="${settings.a1111CfgScale}">
-                    <div></div>
-                </div>
-                <div class="flex-row">
-                    <label for="iig_a1111_sampler">${t`Sampler`}</label>
-                    <select id="iig_a1111_sampler" class="flex1">
-                        <option value="${sanitizeForHtml(settings.a1111Sampler || 'Euler a')}" selected>${sanitizeForHtml(settings.a1111Sampler || 'Euler a')}</option>
-                    </select>
-                    <div id="iig_a1111_refresh_samplers" class="menu_button iig-refresh-btn" title="${t`Refresh list`}">
+
+                <div class="flex-container">
+                    <div class="flex1">
+                        <label for="iig_a1111_sampler">${t`Sampler`}</label>
+                        <select id="iig_a1111_sampler" class="text_pole">
+                            <option value="${sanitizeForHtml(settings.a1111Sampler || 'Euler a')}" selected>${sanitizeForHtml(settings.a1111Sampler || 'Euler a')}</option>
+                        </select>
+                    </div>
+                    <div class="flex1">
+                        <label for="iig_a1111_scheduler">${t`Scheduler`}</label>
+                        <select id="iig_a1111_scheduler" class="text_pole">
+                            <option value="${sanitizeForHtml(settings.a1111Scheduler || 'Automatic')}" selected>${sanitizeForHtml(settings.a1111Scheduler || 'Automatic')}</option>
+                        </select>
+                    </div>
+                    <div id="iig_a1111_refresh_samplers" class="menu_button iig-a1111-end-btn" title="${t`Refresh list`}">
                         <i class="fa-solid fa-sync"></i>
                     </div>
                 </div>
-                <div class="flex-row">
-                    <label for="iig_a1111_scheduler">${t`Scheduler`}</label>
-                    <select id="iig_a1111_scheduler" class="flex1">
-                        <option value="${sanitizeForHtml(settings.a1111Scheduler || 'Automatic')}" selected>${sanitizeForHtml(settings.a1111Scheduler || 'Automatic')}</option>
-                    </select>
-                    <div></div>
+
+                <div class="flex-container">
+                    <div class="alignitemscenter flex-container flexFlowColumn flexGrow flexShrink gap0 flexBasis48p">
+                        <small><span>${t`Sampling steps`}</span></small>
+                        <input class="neo-range-slider" type="range" id="iig_a1111_steps" min="1" max="150" step="1" value="${settings.a1111Steps}">
+                        <input class="neo-range-input" type="number" id="iig_a1111_steps_value" data-for="iig_a1111_steps" min="1" max="150" step="1" value="${settings.a1111Steps}">
+                    </div>
+                    <div class="alignitemscenter flex-container flexFlowColumn flexGrow flexShrink gap0 flexBasis48p">
+                        <small><span>${t`CFG scale`}</span></small>
+                        <input class="neo-range-slider" type="range" id="iig_a1111_cfg" min="1" max="30" step="0.5" value="${settings.a1111CfgScale}">
+                        <input class="neo-range-input" type="number" id="iig_a1111_cfg_value" data-for="iig_a1111_cfg" min="1" max="30" step="0.5" value="${settings.a1111CfgScale}">
+                    </div>
                 </div>
-                <div class="flex-row">
+
+                <div class="flex-container">
+                    <div class="alignitemscenter flex-container flexFlowColumn flexGrow flexShrink gap0 flexBasis48p">
+                        <small><span>${t`Width`}</span></small>
+                        <input class="neo-range-slider" type="range" id="iig_a1111_width" min="64" max="2048" step="8" value="${settings.a1111Width}">
+                        <input class="neo-range-input" type="number" id="iig_a1111_width_value" data-for="iig_a1111_width" min="64" max="2048" step="8" value="${settings.a1111Width}">
+                    </div>
+                    <div class="alignitemscenter flex-container flexFlowColumn flexGrow flexShrink gap0 flexBasis48p">
+                        <small><span>${t`Height`}</span></small>
+                        <input class="neo-range-slider" type="range" id="iig_a1111_height" min="64" max="2048" step="8" value="${settings.a1111Height}">
+                        <input class="neo-range-input" type="number" id="iig_a1111_height_value" data-for="iig_a1111_height" min="64" max="2048" step="8" value="${settings.a1111Height}">
+                    </div>
+                    <div id="iig_a1111_swap" class="menu_button iig-a1111-end-btn" title="${t`Swap width and height`}">
+                        <i class="fa-solid fa-arrow-right-arrow-left"></i>
+                    </div>
+                </div>
+
+                <div>
                     <label for="iig_a1111_seed">${t`Seed (-1 = random)`}</label>
-                    <input type="number" id="iig_a1111_seed" class="text_pole flex1" min="-1" step="1" value="${settings.a1111Seed}">
-                    <div></div>
+                    <input id="iig_a1111_seed" type="number" class="text_pole" min="-1" step="1" value="${settings.a1111Seed}">
                 </div>
-                <div class="flex-row">
+
+                <div>
                     <label for="iig_a1111_negative">${t`Negative prompt`}</label>
-                    <textarea id="iig_a1111_negative" class="text_pole flex1 iig-settings-textarea" rows="2" placeholder="${t`(empty)`}">${sanitizeForHtml(settings.a1111NegativePrompt || '')}</textarea>
-                    <div></div>
+                    <textarea id="iig_a1111_negative" class="text_pole textarea_compact" rows="2" placeholder="${t`(empty)`}">${sanitizeForHtml(settings.a1111NegativePrompt || '')}</textarea>
                 </div>
             </div>
         </div>
@@ -1136,19 +1147,47 @@ function bindApiSectionEvents(settings, updateVisibility) {
         saveSettings();
     });
 
-    // A1111 params
-    const bindNumeric = (id, key, parser) => {
-        document.getElementById(id)?.addEventListener('input', (e) => {
-            const v = parser(e.target.value);
+    // A1111 params: range + number pairs (synced both ways)
+    const bindRangePair = (rangeId, numberId, key, parser) => {
+        const range = document.getElementById(rangeId);
+        const number = document.getElementById(numberId);
+        if (!range || !number) return;
+        const sync = (raw) => {
+            const v = parser(raw);
+            const s = String(v);
+            if (range.value !== s) range.value = s;
+            if (number.value !== s) number.value = s;
             settings[key] = v;
             saveSettings();
-        });
+        };
+        range.addEventListener('input', (e) => sync(e.target.value));
+        number.addEventListener('input', (e) => sync(e.target.value));
     };
-    bindNumeric('iig_a1111_width', 'a1111Width', (v) => parseInt(v, 10) || 512);
-    bindNumeric('iig_a1111_height', 'a1111Height', (v) => parseInt(v, 10) || 512);
-    bindNumeric('iig_a1111_steps', 'a1111Steps', (v) => parseInt(v, 10) || 20);
-    bindNumeric('iig_a1111_cfg', 'a1111CfgScale', (v) => parseFloat(v) || 7);
-    bindNumeric('iig_a1111_seed', 'a1111Seed', (v) => parseInt(v, 10) || -1);
+    bindRangePair('iig_a1111_width', 'iig_a1111_width_value', 'a1111Width', (v) => parseInt(v, 10) || 512);
+    bindRangePair('iig_a1111_height', 'iig_a1111_height_value', 'a1111Height', (v) => parseInt(v, 10) || 512);
+    bindRangePair('iig_a1111_steps', 'iig_a1111_steps_value', 'a1111Steps', (v) => parseInt(v, 10) || 20);
+    bindRangePair('iig_a1111_cfg', 'iig_a1111_cfg_value', 'a1111CfgScale', (v) => parseFloat(v) || 7);
+    document.getElementById('iig_a1111_seed')?.addEventListener('input', (e) => {
+        settings.a1111Seed = parseInt(e.target.value, 10) || -1;
+        saveSettings();
+    });
+
+    // Swap width <-> height
+    document.getElementById('iig_a1111_swap')?.addEventListener('click', () => {
+        const w = settings.a1111Width;
+        const h = settings.a1111Height;
+        settings.a1111Width = h;
+        settings.a1111Height = w;
+        saveSettings();
+        const setPair = (rangeId, numberId, val) => {
+            const r = document.getElementById(rangeId);
+            const n = document.getElementById(numberId);
+            if (r) r.value = String(val);
+            if (n) n.value = String(val);
+        };
+        setPair('iig_a1111_width', 'iig_a1111_width_value', settings.a1111Width);
+        setPair('iig_a1111_height', 'iig_a1111_height_value', settings.a1111Height);
+    });
     document.getElementById('iig_a1111_sampler')?.addEventListener('change', (e) => {
         settings.a1111Sampler = e.target.value;
         saveSettings();

@@ -1043,6 +1043,13 @@
     cursor: pointer;
 }
 
+/* ==================== A1111 section helpers ==================== */
+
+.iig-a1111-end-btn {
+    align-self: flex-end;
+    margin-bottom: 2px;
+}
+
 /* ==================== Image Action Buttons (inline) ==================== */
 
 .iig-img-host {
