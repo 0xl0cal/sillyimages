@@ -18,6 +18,7 @@ import {
     NAISTERA_MODELS,
     ENDPOINT_PLACEHOLDERS,
     MAX_GENERATION_REFERENCE_IMAGES,
+    MAX_ADDITIONAL_REFERENCES,
     normalizeNaisteraModel,
     naisteraModelSupportsReferences,
     normalizeImageContextCount,
@@ -66,7 +67,9 @@ export function getActiveProviderMaxReferences(settings = getSettings()) {
         return getOpenRouterCapabilities(settings.model).maxReferences || 0;
     }
     if (apiType === 'naistera') {
-        return MAX_GENERATION_REFERENCE_IMAGES;
+        // Naistera не ограничивает число рефов — отдаём верхний потолок,
+        // совпадающий с лимитом самого хранилища лорбука.
+        return MAX_ADDITIONAL_REFERENCES;
     }
     return 0;
 }
@@ -1428,7 +1431,6 @@ export class NaisteraProvider extends Provider {
         }
 
         for (const ref of matchedAdditionalRefs) {
-            if (refs.length >= MAX_GENERATION_REFERENCE_IMAGES) break;
             const imagePath = normalizeStoredImagePath(ref.imagePath);
             if (!imagePath) continue;
             const d = await imageUrlToDataUrl(imagePath);
@@ -1441,9 +1443,6 @@ export class NaisteraProvider extends Provider {
             refs.push(...contextRefs);
         }
 
-        if (refs.length > MAX_GENERATION_REFERENCE_IMAGES) {
-            refs.length = MAX_GENERATION_REFERENCE_IMAGES;
-        }
         return refs;
     }
 
@@ -1473,7 +1472,7 @@ export class NaisteraProvider extends Provider {
         };
         if (preset) body.preset = preset;
         if (references.length > 0) {
-            body.reference_images = references.slice(0, MAX_GENERATION_REFERENCE_IMAGES);
+            body.reference_images = references;
         }
         if (wantsVideoTest) {
             body.video_test_mode = true;

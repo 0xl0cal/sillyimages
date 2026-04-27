@@ -130,28 +130,43 @@
     margin-bottom: 4px;
 }
 
-.iig-profile-buttons {
-    display: flex;
-    gap: 4px;
-    flex-shrink: 0;
-}
-
-.iig-profile-buttons .menu_button {
-    min-width: 28px;
-    padding: 4px 8px;
-}
-
 .iig-lorebook-bar {
     margin-bottom: 4px;
 }
 
-.iig-lorebook-buttons {
+/* Override grid layout from .iig-settings .flex-row: profile/lorebook bars
+   have many buttons that don't fit on a narrow chat panel — use flex-wrap
+   so the buttons wrap to the next line below the select. */
+.iig-profile-bar > .flex-row,
+.iig-lorebook-bar > .flex-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 4px;
-    flex-shrink: 0;
+    column-gap: 8px;
+    row-gap: 6px;
 }
 
+.iig-profile-bar > .flex-row > label,
+.iig-lorebook-bar > .flex-row > label {
+    flex: 0 0 auto;
+    min-width: 0;
+}
+
+.iig-profile-bar > .flex-row > select,
+.iig-lorebook-bar > .flex-row > select {
+    flex: 1 1 120px;
+    min-width: 80px;
+}
+
+.iig-profile-buttons,
+.iig-lorebook-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+}
+
+.iig-profile-buttons .menu_button,
 .iig-lorebook-buttons .menu_button {
     min-width: 28px;
     padding: 4px 8px;
