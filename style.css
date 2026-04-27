@@ -412,7 +412,8 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    white-space: nowrap;
+    /* !important нужен — выше стоит .iig-settings * { white-space: normal !important } */
+    white-space: nowrap !important;
 }
 
 .iig-naistera-refs h4 {
