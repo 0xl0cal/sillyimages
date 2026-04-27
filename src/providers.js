@@ -90,6 +90,14 @@ export function buildGenerationUrl(settings, pathSuffix) {
     return `${base}${pathSuffix}`;
 }
 
+function isOpenRouterAiHost(url) {
+    try {
+        return new URL(url).hostname.endsWith('openrouter.ai');
+    } catch {
+        return false;
+    }
+}
+
 // ----- Model detection helpers -----
 
 export function isImageModel(modelId) {
@@ -1167,17 +1175,24 @@ export class OpenRouterProvider extends Provider {
             `OpenRouter request: model=${model} kind=${classifyOpenRouterModel(model)} refs=${references.length} aspect=${aspectRatio} size=${imageSize || '(default)'} modalities=${modalities.join(',')}`
         );
 
+        const headers = {
+            'Authorization': `Bearer ${settings.apiKey}`,
+            'Content-Type': 'application/json',
+        };
+        // X-Title / HTTP-Referer нужны только настоящему openrouter.ai
+        // (для аттрибуции в их leaderboard'е). 3rd-party OpenRouter-совместимые
+        // сервисы часто не разрешают X-Title в CORS — добавим только если
+        // endpoint реально на openrouter.ai.
+        if (isOpenRouterAiHost(url)) {
+            headers['HTTP-Referer'] = window.location.origin;
+            headers['X-Title'] = 'SillyTavern Inline Image Generation';
+        }
+
         let response;
         try {
             response = await fetchWithTimeout(url, {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${settings.apiKey}`,
-                    'Content-Type': 'application/json',
-                    // OpenRouter приветствует эти два, но не требует.
-                    'HTTP-Referer': window.location.origin,
-                    'X-Title': 'SillyTavern Inline Image Generation',
-                },
+                headers,
                 body: JSON.stringify(body),
             }, OPENROUTER_REQUEST_TIMEOUT_MS);
         } catch (error) {
