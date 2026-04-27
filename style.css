@@ -1030,28 +1030,49 @@
     cursor: pointer;
 }
 
-/* ==================== Image Action Buttons ==================== */
+/* ==================== Image Action Buttons (inline) ==================== */
 
-.iig-image-actions {
-    position: fixed;
-    top: 0;
-    left: 0;
-    z-index: 9999;
-    display: none;
+.iig-img-host {
+    position: relative;
+    display: inline-block;
+    max-width: 100%;
+    line-height: 0;
+}
+
+/* Disable iOS Safari long-press context menu on our generated images
+   so it doesn't hijack pointer events for our overlay buttons. */
+#chat img[data-iig-instruction] {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.iig-img-actions {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: flex;
     gap: 4px;
     padding: 4px;
     background: rgba(0, 0, 0, 0.55);
     border-radius: 8px;
     backdrop-filter: blur(6px);
     -webkit-backdrop-filter: blur(6px);
-    pointer-events: auto;
+    z-index: 2;
+    opacity: 0.65;
     transition: opacity 0.15s ease;
-    opacity: 0;
+    line-height: normal;
 }
 
-.iig-image-actions.open {
-    display: flex;
+.iig-img-host:hover .iig-img-actions,
+.iig-img-actions:hover,
+.iig-img-actions:focus-within {
     opacity: 1;
+}
+
+/* Touch devices: full opacity always (no hover state). */
+@media (hover: none) {
+    .iig-img-actions { opacity: 1; }
 }
 
 .iig-img-action {
@@ -1074,12 +1095,6 @@
 .iig-img-action:hover {
     background: rgba(255, 255, 255, 0.22);
 }
-
-/* In success-mode (default), only show download + regen, hide retry. */
-.iig-image-actions:not(.iig-error-mode) .iig-img-retry { display: none; }
-/* In error-mode show only retry. */
-.iig-image-actions.iig-error-mode .iig-img-download,
-.iig-image-actions.iig-error-mode .iig-img-regen { display: none; }
 
 /* ==================== Lightbox ==================== */
 
