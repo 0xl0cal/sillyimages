@@ -1036,11 +1036,21 @@
     position: relative;
     display: inline-block;
     max-width: 100%;
-    line-height: 0;
 }
 
-/* Disable iOS Safari long-press context menu on our generated images
-   so it doesn't hijack pointer events for our overlay buttons. */
+/* Block-level avoids the inline-block baseline gap without affecting
+   descendants' line-height (loading placeholder text would otherwise collapse). */
+.iig-img-host > img,
+.iig-img-host > video {
+    display: block;
+}
+
+/* Hide action buttons while the wrap contains a loading placeholder
+   (regeneration in progress — download/regen on a spinner makes no sense). */
+.iig-img-host:has(.iig-loading-placeholder) .iig-img-actions {
+    display: none;
+}
+
 #chat img[data-iig-instruction] {
     -webkit-touch-callout: none;
     -webkit-user-select: none;
@@ -1061,7 +1071,6 @@
     z-index: 2;
     opacity: 0.65;
     transition: opacity 0.15s ease;
-    line-height: normal;
 }
 
 .iig-img-host:hover .iig-img-actions,
