@@ -910,6 +910,14 @@
     color: var(--SmartThemeQuoteColor);
 }
 
+.iig-loading-placeholder .iig-timer {
+    margin-top: 4px;
+    font-size: 0.85em;
+    font-variant-numeric: tabular-nums;
+    color: var(--SmartThemeQuoteColor);
+    opacity: 0.75;
+}
+
 @keyframes iig-spin {
     to { transform: rotate(360deg); }
 }

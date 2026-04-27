@@ -243,14 +243,48 @@ export const processingMessages = new Set();
 
 // ----- Placeholder DOM helpers -----
 
+let timerIntervalId = null;
+
+function formatElapsed(ms) {
+    const sec = Math.max(0, Math.floor(ms / 1000));
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function tickTimers() {
+    const placeholders = document.querySelectorAll('.iig-loading-placeholder[data-iig-start]');
+    if (placeholders.length === 0) {
+        clearInterval(timerIntervalId);
+        timerIntervalId = null;
+        return;
+    }
+    const now = Date.now();
+    for (const ph of placeholders) {
+        const start = Number(ph.dataset.iigStart);
+        if (!start) continue;
+        const timerEl = ph.querySelector('.iig-timer');
+        if (timerEl) timerEl.textContent = formatElapsed(now - start);
+    }
+}
+
+function ensureTimerInterval() {
+    if (timerIntervalId === null) {
+        timerIntervalId = setInterval(tickTimers, 1000);
+    }
+}
+
 export function createLoadingPlaceholder(tagId) {
     const placeholder = document.createElement('div');
     placeholder.className = 'iig-loading-placeholder';
     placeholder.dataset.tagId = tagId;
+    placeholder.dataset.iigStart = String(Date.now());
     placeholder.innerHTML = `
         <div class="iig-spinner"></div>
         <div class="iig-status">${t`Generating image...`}</div>
+        <div class="iig-timer">0:00</div>
     `;
+    ensureTimerInterval();
     return placeholder;
 }
 
