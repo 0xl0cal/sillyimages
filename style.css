@@ -1030,6 +1030,57 @@
     cursor: pointer;
 }
 
+/* ==================== Image Action Buttons ==================== */
+
+.iig-image-actions {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 9999;
+    display: none;
+    gap: 4px;
+    padding: 4px;
+    background: rgba(0, 0, 0, 0.55);
+    border-radius: 8px;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    pointer-events: auto;
+    transition: opacity 0.15s ease;
+    opacity: 0;
+}
+
+.iig-image-actions.open {
+    display: flex;
+    opacity: 1;
+}
+
+.iig-img-action {
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #fff;
+    width: 28px;
+    height: 28px;
+    min-height: 28px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 0.85em;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.iig-img-action:hover {
+    background: rgba(255, 255, 255, 0.22);
+}
+
+/* In success-mode (default), only show download + regen, hide retry. */
+.iig-image-actions:not(.iig-error-mode) .iig-img-retry { display: none; }
+/* In error-mode show only retry. */
+.iig-image-actions.iig-error-mode .iig-img-download,
+.iig-image-actions.iig-error-mode .iig-img-regen { display: none; }
+
 /* ==================== Lightbox ==================== */
 
 .iig-lightbox {

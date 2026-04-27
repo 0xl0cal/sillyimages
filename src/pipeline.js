@@ -716,6 +716,104 @@ export async function processMessageTags(messageId) {
 
 // ----- Regenerate (user-triggered) -----
 
+/**
+ * Regenerate a single image identified by (messageId, tagIndex).
+ * tagIndex matches the order of tags returned by parseMessageImageTags.
+ */
+export async function regenerateSingleTag(messageId, tagIndex) {
+    const context = SillyTavern.getContext();
+    const settings = getSettings();
+    const message = context.chat[messageId];
+
+    if (!message) {
+        toastr.error(t`Message not found`, t`Image Generation`);
+        return;
+    }
+
+    const tags = await parseMessageImageTags(message, { forceAll: true });
+    if (tagIndex < 0 || tagIndex >= tags.length) {
+        toastr.warning(t`Tag not found`, t`Image Generation`);
+        return;
+    }
+
+    if (processingMessages.has(messageId)) {
+        toastr.info(t`Message is already being processed`, t`Image Generation`);
+        return;
+    }
+    processingMessages.add(messageId);
+
+    const messageElement = document.querySelector(`#chat .mes[mesid="${messageId}"]`);
+    const mesTextEl = messageElement?.querySelector('.mes_text');
+    if (!mesTextEl) {
+        processingMessages.delete(messageId);
+        return;
+    }
+
+    const convertedLegacyTags = convertLegacyTagsToInstructionFormat(message, tags);
+    if (convertedLegacyTags > 0) {
+        rerenderMessageHtml(context, message, settings, messageId, mesTextEl);
+    }
+
+    const tag = tags[tagIndex];
+    const tagId = `iig-regen-${messageId}-${tagIndex}`;
+    applyConfiguredStyleToTag(tag, settings);
+
+    try {
+        const existingMediaList = Array.from(
+            mesTextEl.querySelectorAll('img[data-iig-instruction], video[data-iig-instruction]')
+        );
+        const existingMedia = existingMediaList[tagIndex] || null;
+        if (!existingMedia) {
+            throw new Error(`Media element at index ${tagIndex} not found in DOM`);
+        }
+        const instruction = existingMedia.getAttribute('data-iig-instruction');
+
+        const loadingPlaceholder = createLoadingPlaceholder(tagId);
+        existingMedia.replaceWith(loadingPlaceholder);
+        const statusEl = loadingPlaceholder.querySelector('.iig-status');
+
+        const generated = await generateImageWithRetry(
+            tag.prompt,
+            tag.style,
+            (status) => { statusEl.textContent = status; },
+            { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset, messageId }
+        );
+
+        const { persistedSrc, persistedPosterSrc } = await persistGeneratedMedia(
+            generated,
+            statusEl,
+            { messageId, tagIndex, mode: 'regenerate' }
+        );
+
+        const mediaElement = createGeneratedMediaElement(
+            isGeneratedVideoResult(generated)
+                ? { ...generated, dataUrl: persistedSrc, posterDataUrl: persistedPosterSrc || generated.posterDataUrl || '' }
+                : persistedSrc,
+            tag,
+        );
+        if (instruction) {
+            mediaElement.setAttribute('data-iig-instruction', instruction);
+        }
+        loadingPlaceholder.replaceWith(mediaElement);
+
+        const updatedTag = buildPersistedMediaTag(tag, generated, persistedSrc, persistedPosterSrc);
+        replaceTagInMessageSource(message, tag, updatedTag);
+
+        const readyMsg = isGeneratedVideoResult(generated)
+            ? t`Video ready`
+            : t`Image ready`;
+        toastr.success(readyMsg, t`Image Generation`, { timeOut: 2000 });
+    } catch (error) {
+        iigLog('ERROR', `Single-tag regeneration failed for tag ${tagIndex}:`, error);
+        const friendly = formatProviderError(error);
+        toastr.error(friendly.message, friendly.title);
+    } finally {
+        processingMessages.delete(messageId);
+        await context.saveChat();
+        rerenderMessageHtml(context, message, settings, messageId, mesTextEl);
+    }
+}
+
 export async function regenerateMessageImages(messageId) {
     const context = SillyTavern.getContext();
     const settings = getSettings();

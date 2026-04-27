@@ -17,6 +17,7 @@ import { createSettingsUI } from './src/ui.js';
 import { addButtonsToExistingMessages, subscribeEvents } from './src/events.js';
 import { registerIigBookMacro } from './src/references.js';
 import { initLightbox } from './src/lightbox.js';
+import { initImageActions } from './src/imageActions.js';
 
 (function init() {
     const context = SillyTavern.getContext();
@@ -41,6 +42,8 @@ import { initLightbox } from './src/lightbox.js';
         addButtonsToExistingMessages();
         // Lightbox: делегированный click-handler на #chat, оверлей один на страницу.
         initLightbox();
+        // Floating corner-кнопки на сгенерированных картинках.
+        initImageActions();
         console.log('[IIG] Inline Image Generation extension loaded');
     });
 
