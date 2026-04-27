@@ -152,6 +152,7 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                     <option value="openrouter" ${settings.apiType === 'openrouter' ? 'selected' : ''}>${t`OpenRouter (chat/completions)`}</option>
                     <option value="electronhub" ${settings.apiType === 'electronhub' ? 'selected' : ''}>${t`Electron Hub (/v1/images/*)`}</option>
                     <option value="naistera" ${settings.apiType === 'naistera' ? 'selected' : ''}>${t`Naistera (naistera.org)`}</option>
+                    <option value="a1111" ${settings.apiType === 'a1111' ? 'selected' : ''}>${t`AUTOMATIC1111 / Forge (local)`}</option>
                 </select>
                 <div></div>
             </div>
@@ -271,6 +272,56 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                         <input type="number" id="iig_naistera_video_every_n" class="text_pole" min="1" max="999" step="1" value="${normalizeNaisteraVideoFrequency(settings.naisteraVideoEveryN)}">
                         <span>${t`messages.`}</span>
                     </div>
+                </div>
+            </div>
+
+            <div class="iig-settings-card-nested ${settings.apiType === 'a1111' ? '' : 'iig-hidden'}" id="iig_a1111_section">
+                <h4>${t`txt2img parameters`}</h4>
+                <div class="flex-row">
+                    <label for="iig_a1111_width">${t`Width`}</label>
+                    <input type="number" id="iig_a1111_width" class="text_pole flex1" min="64" max="4096" step="8" value="${settings.a1111Width}">
+                    <div></div>
+                </div>
+                <div class="flex-row">
+                    <label for="iig_a1111_height">${t`Height`}</label>
+                    <input type="number" id="iig_a1111_height" class="text_pole flex1" min="64" max="4096" step="8" value="${settings.a1111Height}">
+                    <div></div>
+                </div>
+                <div class="flex-row">
+                    <label for="iig_a1111_steps">${t`Steps`}</label>
+                    <input type="number" id="iig_a1111_steps" class="text_pole flex1" min="1" max="150" step="1" value="${settings.a1111Steps}">
+                    <div></div>
+                </div>
+                <div class="flex-row">
+                    <label for="iig_a1111_cfg">${t`CFG scale`}</label>
+                    <input type="number" id="iig_a1111_cfg" class="text_pole flex1" min="1" max="30" step="0.5" value="${settings.a1111CfgScale}">
+                    <div></div>
+                </div>
+                <div class="flex-row">
+                    <label for="iig_a1111_sampler">${t`Sampler`}</label>
+                    <select id="iig_a1111_sampler" class="flex1">
+                        <option value="${sanitizeForHtml(settings.a1111Sampler || 'Euler a')}" selected>${sanitizeForHtml(settings.a1111Sampler || 'Euler a')}</option>
+                    </select>
+                    <div id="iig_a1111_refresh_samplers" class="menu_button iig-refresh-btn" title="${t`Refresh list`}">
+                        <i class="fa-solid fa-sync"></i>
+                    </div>
+                </div>
+                <div class="flex-row">
+                    <label for="iig_a1111_scheduler">${t`Scheduler`}</label>
+                    <select id="iig_a1111_scheduler" class="flex1">
+                        <option value="${sanitizeForHtml(settings.a1111Scheduler || 'Automatic')}" selected>${sanitizeForHtml(settings.a1111Scheduler || 'Automatic')}</option>
+                    </select>
+                    <div></div>
+                </div>
+                <div class="flex-row">
+                    <label for="iig_a1111_seed">${t`Seed (-1 = random)`}</label>
+                    <input type="number" id="iig_a1111_seed" class="text_pole flex1" min="-1" step="1" value="${settings.a1111Seed}">
+                    <div></div>
+                </div>
+                <div class="flex-row">
+                    <label for="iig_a1111_negative">${t`Negative prompt`}</label>
+                    <textarea id="iig_a1111_negative" class="text_pole flex1 iig-settings-textarea" rows="2" placeholder="${t`(empty)`}">${sanitizeForHtml(settings.a1111NegativePrompt || '')}</textarea>
+                    <div></div>
                 </div>
             </div>
         </div>
@@ -1085,6 +1136,72 @@ function bindApiSectionEvents(settings, updateVisibility) {
         saveSettings();
     });
 
+    // A1111 params
+    const bindNumeric = (id, key, parser) => {
+        document.getElementById(id)?.addEventListener('input', (e) => {
+            const v = parser(e.target.value);
+            settings[key] = v;
+            saveSettings();
+        });
+    };
+    bindNumeric('iig_a1111_width', 'a1111Width', (v) => parseInt(v, 10) || 512);
+    bindNumeric('iig_a1111_height', 'a1111Height', (v) => parseInt(v, 10) || 512);
+    bindNumeric('iig_a1111_steps', 'a1111Steps', (v) => parseInt(v, 10) || 20);
+    bindNumeric('iig_a1111_cfg', 'a1111CfgScale', (v) => parseFloat(v) || 7);
+    bindNumeric('iig_a1111_seed', 'a1111Seed', (v) => parseInt(v, 10) || -1);
+    document.getElementById('iig_a1111_sampler')?.addEventListener('change', (e) => {
+        settings.a1111Sampler = e.target.value;
+        saveSettings();
+    });
+    document.getElementById('iig_a1111_scheduler')?.addEventListener('change', (e) => {
+        settings.a1111Scheduler = e.target.value;
+        saveSettings();
+    });
+    document.getElementById('iig_a1111_negative')?.addEventListener('input', (e) => {
+        settings.a1111NegativePrompt = e.target.value;
+        saveSettings();
+    });
+
+    // Refresh A1111 samplers + schedulers from /sdapi/v1/samplers and /sdapi/v1/schedulers
+    document.getElementById('iig_a1111_refresh_samplers')?.addEventListener('click', async () => {
+        const btn = document.getElementById('iig_a1111_refresh_samplers');
+        btn?.classList.add('loading');
+        try {
+            const provider = resolveActiveProvider(getSettings());
+            if (provider?.id !== 'a1111') return;
+            const [samplers, schedulers] = await Promise.all([
+                provider.fetchSamplers(),
+                provider.fetchSchedulers(),
+            ]);
+            const samplerSelect = document.getElementById('iig_a1111_sampler');
+            const schedulerSelect = document.getElementById('iig_a1111_scheduler');
+            if (samplerSelect instanceof HTMLSelectElement) {
+                const cur = settings.a1111Sampler || 'Euler a';
+                samplerSelect.innerHTML = samplers
+                    .map((s) => `<option value="${sanitizeForHtml(s)}" ${s === cur ? 'selected' : ''}>${sanitizeForHtml(s)}</option>`)
+                    .join('');
+                if (!samplers.includes(cur) && cur) {
+                    samplerSelect.innerHTML += `<option value="${sanitizeForHtml(cur)}" selected>${sanitizeForHtml(cur)} ${t`(custom)`}</option>`;
+                }
+            }
+            if (schedulerSelect instanceof HTMLSelectElement) {
+                const cur = settings.a1111Scheduler || 'Automatic';
+                schedulerSelect.innerHTML = schedulers
+                    .map((s) => `<option value="${sanitizeForHtml(s)}" ${s === cur ? 'selected' : ''}>${sanitizeForHtml(s)}</option>`)
+                    .join('');
+                if (!schedulers.includes(cur) && cur) {
+                    schedulerSelect.innerHTML += `<option value="${sanitizeForHtml(cur)}" selected>${sanitizeForHtml(cur)} ${t`(custom)`}</option>`;
+                }
+            }
+            toastr.success(t`Samplers/schedulers updated`, t`Image Generation`);
+        } catch (err) {
+            iigLog('ERROR', 'A1111 refresh samplers failed:', err);
+            toastr.error(t`Failed to fetch samplers`, t`Image Generation`);
+        } finally {
+            btn?.classList.remove('loading');
+        }
+    });
+
     // Auto-populate model list on init so the <select> isn't empty when the
     // user first opens settings. In raw mode the select is hidden anyway,
     // and for Naistera the whole row is hidden — fetchModels still tolerates
@@ -1092,6 +1209,7 @@ function bindApiSectionEvents(settings, updateVisibility) {
     if (!settings.rawEndpoint && settings.apiType !== 'naistera') {
         reloadModelList({ announce: false }).catch(() => { /* silent on init */ });
     }
+
 }
 
 // ----- Avatar section events (общая фабрика для Gemini и Naistera) -----
@@ -1729,6 +1847,7 @@ function buildUpdateVisibility(settings) {
         const isOpenAI = apiType === 'openai';
         const isOpenRouter = apiType === 'openrouter';
         const isElectronHub = apiType === 'electronhub';
+        const isA1111 = apiType === 'a1111';
 
         // Поддерживает ли активный провайдер референсы (учитывая модель).
         const provider = resolveActiveProvider(settings);
@@ -1770,6 +1889,9 @@ function buildUpdateVisibility(settings) {
         );
 
         document.getElementById('iig_naistera_hint')?.classList.toggle('iig-hidden', !isNaistera);
+
+        // A1111-only block
+        document.getElementById('iig_a1111_section')?.classList.toggle('iig-hidden', !isA1111);
 
         const endpointInput = document.getElementById('iig_endpoint');
         if (endpointInput) {

@@ -71,6 +71,10 @@ export function getActiveProviderMaxReferences(settings = getSettings()) {
         // совпадающий с лимитом самого хранилища лорбука.
         return MAX_ADDITIONAL_REFERENCES;
     }
+    if (apiType === 'a1111') {
+        // txt2img — референсы не поддерживаются.
+        return 0;
+    }
     return 0;
 }
 
@@ -1541,6 +1545,177 @@ export class NaisteraProvider extends Provider {
     }
 }
 
+// ----- A1111 / Forge (txt2img only, no references) -----
+
+const A1111_DEFAULT_ENDPOINT = 'http://127.0.0.1:7860';
+const A1111_REQUEST_TIMEOUT_MS = 600_000;
+export const A1111_DEFAULT_SAMPLERS = Object.freeze([
+    'Euler a', 'Euler', 'LMS', 'Heun', 'DPM2', 'DPM2 a',
+    'DPM++ 2S a', 'DPM++ 2M', 'DPM++ SDE', 'DPM++ 2M SDE',
+    'DDIM', 'PLMS', 'UniPC', 'LCM', 'Restart',
+]);
+export const A1111_DEFAULT_SCHEDULERS = Object.freeze([
+    'Automatic', 'Karras', 'Exponential', 'SGM Uniform', 'Simple', 'Normal', 'DDIM', 'Beta',
+]);
+
+function clampInt(v, min, max, fallback) {
+    const n = parseInt(v, 10);
+    if (Number.isNaN(n)) return fallback;
+    return Math.max(min, Math.min(max, n));
+}
+function clampFloat(v, min, max, fallback) {
+    const n = parseFloat(v);
+    if (Number.isNaN(n)) return fallback;
+    return Math.max(min, Math.min(max, n));
+}
+
+export class A1111Provider extends Provider {
+    get id() { return 'a1111'; }
+    get displayName() { return 'AUTOMATIC1111 / Forge / reForge'; }
+
+    get capabilities() {
+        return {
+            ...super.capabilities,
+            requiresApiKey: false,
+            referencesFormat: null,
+        };
+    }
+
+    supportsReferences(_settings) {
+        return false;
+    }
+
+    validate(settings) {
+        const errors = [];
+        const ep = String(settings.endpoint || '').trim();
+        if (!ep && !A1111_DEFAULT_ENDPOINT) {
+            errors.push(t`Endpoint URL is not configured`);
+        }
+        return errors;
+    }
+
+    async collectReferences(_ctx) {
+        return [];
+    }
+
+    async generate({ prompt, style, options = {} }) {
+        const settings = getSettings();
+        const url = buildGenerationUrl(settings, '/sdapi/v1/txt2img');
+
+        const fullPrompt = buildFinalGenerationPrompt(prompt, style, options.matchedAdditionalRefs || [], settings);
+
+        const body = {
+            prompt: fullPrompt,
+            negative_prompt: String(settings.a1111NegativePrompt || ''),
+            steps: clampInt(settings.a1111Steps, 1, 150, 20),
+            cfg_scale: clampFloat(settings.a1111CfgScale, 1, 30, 7),
+            width: clampInt(settings.a1111Width, 64, 4096, 512),
+            height: clampInt(settings.a1111Height, 64, 4096, 512),
+            sampler_name: String(settings.a1111Sampler || 'Euler a'),
+            scheduler: String(settings.a1111Scheduler || 'Automatic'),
+            seed: clampInt(settings.a1111Seed, -1, 2 ** 31 - 1, -1),
+            n_iter: 1,
+            batch_size: 1,
+        };
+        if (settings.model) {
+            body.override_settings = { sd_model_checkpoint: settings.model };
+            body.override_settings_restore_afterwards = false;
+        }
+
+        const headers = { 'Content-Type': 'application/json' };
+        if (settings.apiKey) {
+            headers.Authorization = `Basic ${btoa(settings.apiKey)}`;
+        }
+
+        iigLog('INFO', `A1111 request: model=${settings.model || '(default)'} steps=${body.steps} cfg=${body.cfg_scale} ${body.width}x${body.height} sampler=${body.sampler_name}`);
+
+        let response;
+        try {
+            response = await fetchWithTimeout(url, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(body),
+            }, A1111_REQUEST_TIMEOUT_MS);
+        } catch (error) {
+            throwAsProviderError(error, 'A1111', 'a1111');
+        }
+
+        if (!response.ok) {
+            const text = await response.text().catch(() => '');
+            throw new ProviderError({
+                message: `A1111 ${response.status}: ${String(text).slice(0, 800)}`,
+                code: String(response.status),
+                status: response.status,
+                retryable: isRetryableHttpStatus(response.status),
+                providerId: 'a1111',
+            });
+        }
+
+        const result = await response.json();
+        const b64 = Array.isArray(result?.images) ? result.images[0] : null;
+        if (!b64 || typeof b64 !== 'string') {
+            iigLog('ERROR', 'A1111 no-image response:', result);
+            throw new ProviderError({
+                message: `No image in A1111 response. Top-level keys: ${Object.keys(result || {}).join(',')}`,
+                code: 'no_image',
+                retryable: false,
+                providerId: 'a1111',
+            });
+        }
+        return `data:image/png;base64,${b64}`;
+    }
+
+    async fetchModels() {
+        const settings = getSettings();
+        const endpoint = (String(settings.endpoint || '').trim() || A1111_DEFAULT_ENDPOINT).replace(/\/$/, '');
+        const url = `${endpoint}/sdapi/v1/sd-models`;
+        const headers = {};
+        if (settings.apiKey) headers.Authorization = `Basic ${btoa(settings.apiKey)}`;
+
+        const response = await fetch(url, { method: 'GET', headers });
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        if (!Array.isArray(data)) return [];
+        return data.map((m) => m?.title || m?.model_name).filter(Boolean);
+    }
+
+    async fetchSamplers() {
+        const settings = getSettings();
+        const endpoint = (String(settings.endpoint || '').trim() || A1111_DEFAULT_ENDPOINT).replace(/\/$/, '');
+        const headers = {};
+        if (settings.apiKey) headers.Authorization = `Basic ${btoa(settings.apiKey)}`;
+        try {
+            const response = await fetch(`${endpoint}/sdapi/v1/samplers`, { headers });
+            if (!response.ok) return Array.from(A1111_DEFAULT_SAMPLERS);
+            const data = await response.json();
+            if (!Array.isArray(data)) return Array.from(A1111_DEFAULT_SAMPLERS);
+            const list = data.map((s) => s?.name).filter(Boolean);
+            return list.length ? list : Array.from(A1111_DEFAULT_SAMPLERS);
+        } catch {
+            return Array.from(A1111_DEFAULT_SAMPLERS);
+        }
+    }
+
+    async fetchSchedulers() {
+        const settings = getSettings();
+        const endpoint = (String(settings.endpoint || '').trim() || A1111_DEFAULT_ENDPOINT).replace(/\/$/, '');
+        const headers = {};
+        if (settings.apiKey) headers.Authorization = `Basic ${btoa(settings.apiKey)}`;
+        try {
+            const response = await fetch(`${endpoint}/sdapi/v1/schedulers`, { headers });
+            if (!response.ok) return Array.from(A1111_DEFAULT_SCHEDULERS);
+            const data = await response.json();
+            if (!Array.isArray(data)) return Array.from(A1111_DEFAULT_SCHEDULERS);
+            const list = data.map((s) => s?.label || s?.name).filter(Boolean);
+            return list.length ? list : Array.from(A1111_DEFAULT_SCHEDULERS);
+        } catch {
+            return Array.from(A1111_DEFAULT_SCHEDULERS);
+        }
+    }
+}
+
 // ----- Registry -----
 
 const providers = new Map();
@@ -1569,6 +1744,7 @@ registerProvider(new GeminiProvider());
 registerProvider(new OpenRouterProvider());
 registerProvider(new ElectronHubProvider());
 registerProvider(new NaisteraProvider());
+registerProvider(new A1111Provider());
 
 // ----- Models fetcher (делегируется провайдеру) -----
 

@@ -91,7 +91,7 @@ export const defaultSettings = Object.freeze({
     imageContextCount: 1,
     styles: [],
     activeStyleId: '',
-    apiType: 'openai', // 'openai' | 'gemini' | 'openrouter' | 'electronhub' | 'naistera'
+    apiType: 'openai', // 'openai' | 'gemini' | 'openrouter' | 'electronhub' | 'naistera' | 'a1111'
     endpoint: '',
     /**
      * Если true — endpoint используется «как есть» для генерации (никаких
@@ -120,6 +120,15 @@ export const defaultSettings = Object.freeze({
     naisteraSendUserAvatar: false,
     naisteraVideoTest: false,
     naisteraVideoEveryN: 1,
+    // A1111 / Forge specific (txt2img only — references not supported)
+    a1111Width: 512,
+    a1111Height: 512,
+    a1111Steps: 20,
+    a1111CfgScale: 7,
+    a1111Sampler: 'Euler a',
+    a1111Scheduler: 'Automatic',
+    a1111NegativePrompt: '',
+    a1111Seed: -1,
     // Устаревшее поле: хранилось плоским массивом до v2.0-D.1. Сейчас это
     // refs первого лорбука. При старте `migrateAdditionalReferencesToLorebook`
     // перекладывает его в `lorebooks[0]` и очищает здесь.
@@ -168,6 +177,14 @@ export const CONNECTION_FIELDS = Object.freeze([
     'naisteraSendUserAvatar',
     'naisteraVideoTest',
     'naisteraVideoEveryN',
+    'a1111Width',
+    'a1111Height',
+    'a1111Steps',
+    'a1111CfgScale',
+    'a1111Sampler',
+    'a1111Scheduler',
+    'a1111NegativePrompt',
+    'a1111Seed',
 ]);
 
 function makeProfileId() {
@@ -319,6 +336,7 @@ export const DEFAULT_ENDPOINTS = Object.freeze({
     naistera: 'https://naistera.org',
     openrouter: 'https://openrouter.ai/api/v1',
     electronhub: 'https://api.electronhub.ai',
+    a1111: 'http://127.0.0.1:7860',
 });
 
 export const ENDPOINT_PLACEHOLDERS = Object.freeze({
@@ -327,6 +345,7 @@ export const ENDPOINT_PLACEHOLDERS = Object.freeze({
     openrouter: 'https://openrouter.ai/api/v1',
     electronhub: 'https://api.electronhub.ai',
     naistera: 'https://naistera.org',
+    a1111: 'http://127.0.0.1:7860',
 });
 
 // ----- Settings accessors -----
@@ -437,6 +456,7 @@ export function normalizeConfiguredEndpoint(apiType, endpoint) {
         if (apiType === 'naistera') return DEFAULT_ENDPOINTS.naistera;
         if (apiType === 'openrouter') return DEFAULT_ENDPOINTS.openrouter;
         if (apiType === 'electronhub') return DEFAULT_ENDPOINTS.electronhub;
+        if (apiType === 'a1111') return DEFAULT_ENDPOINTS.a1111;
         return '';
     }
     if (apiType === 'naistera') {
