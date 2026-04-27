@@ -1164,6 +1164,10 @@ export class OpenRouterProvider extends Provider {
             model,
             messages: [{ role: 'user', content }],
             modalities,
+            // llmrouter и часть совместимых сервисов отдают картинку CDN-ссылкой
+            // по умолчанию; этот флаг просит base64. Real openrouter.ai и так
+            // base64 шлёт, флаг ему ничего не ломает.
+            enable_base64_output: true,
         };
 
         const imageConfig = { aspect_ratio: aspectRatio };
@@ -1224,8 +1228,21 @@ export class OpenRouterProvider extends Provider {
             });
         }
 
-        // OpenRouter возвращает полный data URL с base64 — отдаём как есть.
-        return imageUrl;
+        // Real openrouter.ai → data URL. llmrouter и др. compat-сервисы могут
+        // отдать обычную ссылку на CDN; тянем её и конвертим в data URL.
+        if (imageUrl.startsWith('data:')) {
+            return imageUrl;
+        }
+        const dataUrl = await imageUrlToDataUrl(imageUrl);
+        if (!dataUrl) {
+            throw new ProviderError({
+                message: `Failed to fetch image from URL: ${imageUrl}`,
+                code: 'image_fetch_failed',
+                retryable: true,
+                providerId: 'openrouter',
+            });
+        }
+        return dataUrl;
     }
 
     /**
