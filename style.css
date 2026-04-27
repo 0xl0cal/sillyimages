@@ -624,15 +624,27 @@
         padding: 9px;
     }
 
+    /* Switch to flex-wrap so action buttons (eye toggle, refresh, save, etc.)
+       stay inline with their input. Only the label is forced onto its own
+       line at the top — input + button(s) flow on the next line. */
     .iig-settings .flex-row {
-        grid-template-columns: 1fr;
-        row-gap: 8px;
-        column-gap: 0;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        column-gap: 8px;
+        row-gap: 6px;
     }
 
     .iig-settings .flex-row > label {
-        grid-column: 1;
+        flex: 1 1 100%;
         margin-bottom: 0;
+    }
+
+    .iig-settings .flex-row > input,
+    .iig-settings .flex-row > select,
+    .iig-settings .flex-row > textarea {
+        flex: 1 1 0;
+        min-width: 0;
     }
 
     .iig-settings .flex-row > div:empty {
@@ -640,7 +652,7 @@
     }
 
     .iig-settings .flex-row > .iig-avatar-dropdown {
-        width: 100%;
+        flex: 1 1 100%;
     }
 
     .iig-button-inline {
