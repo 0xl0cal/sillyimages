@@ -29,9 +29,31 @@ export const DEFAULT_REF_INSTRUCTION = '[CRITICAL: The reference image(s) above 
 const MAX_LOG_ENTRIES = 200;
 const logBuffer = [];
 
+function formatLogArg(a) {
+    if (a instanceof Error) {
+        const parts = [`${a.name || 'Error'}: ${a.message}`];
+        // Useful custom fields on ProviderError / fetch errors / etc.
+        for (const key of ['code', 'status', 'providerId', 'cause']) {
+            if (a[key] !== undefined && a[key] !== null) {
+                parts.push(`${key}=${typeof a[key] === 'object' ? JSON.stringify(a[key]) : a[key]}`);
+            }
+        }
+        if (a.stack) parts.push(a.stack);
+        return parts.join('\n');
+    }
+    if (typeof a === 'object' && a !== null) {
+        try {
+            return JSON.stringify(a);
+        } catch {
+            return String(a);
+        }
+    }
+    return String(a);
+}
+
 export function iigLog(level, ...args) {
     const timestamp = new Date().toISOString();
-    const message = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+    const message = args.map(formatLogArg).join(' ');
     const entry = `[${timestamp}] [${level}] ${message}`;
 
     logBuffer.push(entry);

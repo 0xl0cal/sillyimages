@@ -415,7 +415,7 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
             return generated;
         } catch (error) {
             lastError = error;
-            console.error(`[IIG] Generation attempt ${attempt + 1} failed:`, error);
+            iigLog('ERROR', `Generation attempt ${attempt + 1} failed:`, error);
 
             // ProviderError даёт `retryable` явно. Для прочих ошибок (напр.
             // всплывших из saveImageToFile / внутренностей JS) — fallback на
@@ -639,7 +639,7 @@ export async function processMessageTags(messageId) {
                 : t`Image ${index + 1}/${tags.length} ready`;
             toastr.success(readyMsg, t`Image Generation`, { timeOut: 2000 });
         } catch (error) {
-            iigLog('ERROR', `Failed to generate image for tag ${index}:`, error.message);
+            iigLog('ERROR', `Failed to generate image for tag ${index}:`, error);
             const friendly = formatProviderError(error);
 
             const errorPlaceholder = createErrorPlaceholder(tagId, error.message, tag, friendly);
@@ -775,7 +775,7 @@ export async function regenerateMessageImages(messageId) {
                 toastr.success(readyMsg, t`Image Generation`, { timeOut: 2000 });
             }
         } catch (error) {
-            iigLog('ERROR', `Regeneration failed for tag ${index}:`, error.message);
+            iigLog('ERROR', `Regeneration failed for tag ${index}:`, error);
             const friendly = formatProviderError(error);
             toastr.error(friendly.message, friendly.title);
         }

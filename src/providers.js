@@ -565,7 +565,8 @@ function extractImageFromResult(result) {
     const dataList = Array.isArray(result?.data) ? result.data : [];
     if (dataList.length === 0) {
         if (result?.url) return result.url;
-        throw new Error('No image data in response');
+        iigLog('ERROR', 'OpenAI no-image response body:', result);
+        throw new Error(`No image data in response. Top-level keys: ${Object.keys(result || {}).join(',')}`);
     }
     const imageObj = dataList[0];
     if (imageObj?.b64_json) {
@@ -574,7 +575,8 @@ function extractImageFromResult(result) {
     if (imageObj?.url) {
         return imageObj.url;
     }
-    throw new Error('Response data[0] has no b64_json or url');
+    iigLog('ERROR', 'OpenAI data[0] has no b64_json/url:', result);
+    throw new Error(`Response data[0] has no b64_json or url. data[0] keys: ${Object.keys(imageObj || {}).join(',')}`);
 }
 
 export class OpenAIProvider extends Provider {
@@ -938,8 +940,9 @@ export class GeminiProvider extends Provider {
 
         const candidates = result.candidates || [];
         if (candidates.length === 0) {
+            iigLog('ERROR', 'Gemini empty-candidates response body:', result);
             throw new ProviderError({
-                message: 'No candidates in Gemini response',
+                message: `No candidates in Gemini response. Body keys: ${Object.keys(result || {}).join(',')}`,
                 code: 'empty_response',
                 retryable: false,
                 providerId: 'gemini',
@@ -958,8 +961,9 @@ export class GeminiProvider extends Provider {
             }
         }
 
+        iigLog('ERROR', 'Gemini no-image response body:', result);
         throw new ProviderError({
-            message: 'No image found in Gemini response',
+            message: `No image found in Gemini response. Parts: ${responseParts.length}, types: [${responseParts.map(p => Object.keys(p).join('+')).join(' | ')}]`,
             code: 'no_image',
             retryable: false,
             providerId: 'gemini',
@@ -1220,8 +1224,11 @@ export class OpenRouterProvider extends Provider {
         const imageUrl = images[0]?.image_url?.url;
 
         if (!imageUrl || typeof imageUrl !== 'string') {
+            // Полный response в лог — иначе не отличить moderation от
+            // нестандартного формата ответа от компат-сервисов.
+            iigLog('ERROR', 'OpenRouter no-image response body:', result);
             throw new ProviderError({
-                message: 'No image in OpenRouter response (message.images empty)',
+                message: `No image in OpenRouter response. Body keys: ${Object.keys(result || {}).join(',')}; message keys: ${Object.keys(message || {}).join(',')}`,
                 code: 'no_image',
                 retryable: false,
                 providerId: 'openrouter',
