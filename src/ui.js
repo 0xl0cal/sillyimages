@@ -75,7 +75,7 @@ import {
     importLorebookFromFile,
     renderIigBookMacro,
 } from './references.js';
-import { isGeminiModel, fetchModels, resolveActiveProvider, getActiveProviderMaxReferences } from './providers.js';
+import { fetchModels, resolveActiveProvider, getActiveProviderMaxReferences } from './providers.js';
 import { t } from './i18n.js';
 // Относительный путь: /scripts/extensions/third-party/sillyimages/src/ui.js → /scripts/popup.js
 import { Popup } from '../../../../popup.js';
@@ -965,17 +965,6 @@ function bindApiSectionEvents(settings, updateVisibility) {
         settings.model = value;
         saveSettings();
         syncModelInputs(value);
-
-        // Auto-switch API type на 'gemini' применим только если сейчас
-        // выбран OpenAI (legacy — когда юзер через OpenAI endpoint выбрал
-        // nano-banana). Для openrouter/gemini/naistera не трогаем.
-        if (settings.apiType === 'openai' && isGeminiModel(value)) {
-            document.getElementById('iig_api_type').value = 'gemini';
-            settings.apiType = 'gemini';
-        }
-
-        // Модель влияет на поддержку референсов (gpt-image-* vs dall-e-*),
-        // поэтому перестраиваем видимость секций при любой смене.
         updateVisibility();
     };
     document.getElementById('iig_model_select')?.addEventListener('change', (e) => {

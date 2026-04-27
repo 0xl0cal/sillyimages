@@ -1495,14 +1495,7 @@ export function getAllProviders() {
     return Array.from(providers.values());
 }
 
-/**
- * Резолвит активного провайдера с учётом model-detection для nano-banana моделей
- * поверх apiType='openai'.
- */
 export function resolveActiveProvider(settings = getSettings()) {
-    if (settings.apiType === 'openai' && isGeminiModel(settings.model)) {
-        return providers.get('gemini');
-    }
     return providers.get(settings.apiType);
 }
 
