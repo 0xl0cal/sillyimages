@@ -155,6 +155,11 @@ export const defaultSettings = Object.freeze({
     // (не привязан к connection profile).
     refInstructionEnabled: true,
     refInstruction: DEFAULT_REF_INSTRUCTION,
+    // Контролирует отправку текстовых описаний матчнутых лорбук-референсов в
+    // image-prompt. По дефолту ON: описания помогают модели понять кого/что
+    // именно изображать, особенно когда сами картинки референсов слабо
+    // соответствуют запросу.
+    sendRefDescriptions: true,
     // Connection profiles — именованные snapshot'ы настроек подключения
     // (apiType / endpoint / apiKey / model / provider-specific). Переключение
     // профиля копирует все поля из профиля в settings. См. CONNECTION_FIELDS.

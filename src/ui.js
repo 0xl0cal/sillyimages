@@ -706,6 +706,10 @@ function buildReferencesSettingsSectionHtml(settings = getSettings()) {
                     <input type="checkbox" id="iig_ref_instruction_enabled" ${settings.refInstructionEnabled !== false ? 'checked' : ''}>
                     <span>${t`Send reference instruction`}</span>
                 </label>
+                <label class="checkbox_label">
+                    <input type="checkbox" id="iig_send_ref_descriptions" ${settings.sendRefDescriptions !== false ? 'checked' : ''}>
+                    <span>${t`Send reference descriptions from lorebook`}</span>
+                </label>
                 <textarea
                     id="iig_ref_instruction"
                     class="text_pole flex1 iig-settings-textarea"
@@ -2022,6 +2026,12 @@ function bindRefInstructionEvents(settings) {
         if (textarea instanceof HTMLTextAreaElement) {
             textarea.disabled = !e.target.checked;
         }
+        saveSettings();
+    });
+
+    document.getElementById('iig_send_ref_descriptions')?.addEventListener('change', (e) => {
+        if (!(e.target instanceof HTMLInputElement)) return;
+        settings.sendRefDescriptions = e.target.checked;
         saveSettings();
     });
 

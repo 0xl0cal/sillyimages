@@ -251,23 +251,30 @@ export function resolveEffectiveStyle(tagStyle = '', settings = getSettings()) {
 
 export function buildAdditionalReferencesPromptBlock(matchedRefs = []) {
     const items = matchedRefs
-        .map((ref) => String(ref?.description || ref?.name || '').trim())
+        .map((ref) => {
+            const name = String(ref?.name || '').trim();
+            const desc = String(ref?.description || '').trim();
+            if (name && desc) return `${name}: ${desc}`;
+            return desc || name;
+        })
         .filter(Boolean);
 
     if (items.length === 0) {
         return '';
     }
 
-    return `Additional References:\n${items.map((item) => `- ${item}`).join('\n')}`;
+    return `Reference descriptions (use these to keep characters and items visually consistent):\n${items.map((item) => `- ${item}`).join('\n')}`;
 }
 
 export function buildFinalGenerationPrompt(prompt, style, matchedAdditionalRefs = [], settings = getSettings()) {
     const effectiveStyle = resolveEffectiveStyle(style, settings);
     let fullPrompt = injectStyleBlock(prompt, effectiveStyle);
 
-    const additionalReferencesBlock = buildAdditionalReferencesPromptBlock(matchedAdditionalRefs);
-    if (additionalReferencesBlock) {
-        fullPrompt = `${fullPrompt}\n\n${additionalReferencesBlock}`.trim();
+    if (settings.sendRefDescriptions !== false) {
+        const additionalReferencesBlock = buildAdditionalReferencesPromptBlock(matchedAdditionalRefs);
+        if (additionalReferencesBlock) {
+            fullPrompt = `${fullPrompt}\n\n${additionalReferencesBlock}`.trim();
+        }
     }
 
     return fullPrompt;

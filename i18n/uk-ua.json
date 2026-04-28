@@ -229,6 +229,7 @@
     "Reference instruction": "Інструкція щодо референсів",
     "Prepended to the prompt whenever at least one reference image is sent to the provider. Helps the model copy appearance from refs.": "Дописується на початок промпта щоразу, коли провайдеру надсилається хоча б один референс. Допомагає моделі копіювати зовнішність з референсів.",
     "Send reference instruction": "Надсилати інструкцію щодо референсів",
+    "Send reference descriptions from lorebook": "Надсилати описи референсів із лорбука",
     "Restore default text": "Відновити текст за замовчуванням",
     "Reset to default": "Скинути до дефолту",
     "Reference instruction reset to default": "Інструкцію щодо референсів скинуто до дефолту",
