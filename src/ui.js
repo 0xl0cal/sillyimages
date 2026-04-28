@@ -84,7 +84,6 @@ import {
     setUserReferenceDescriptionForKey,
     characterAvatarUrl,
     userAvatarUrl,
-    fetchUserAvatars,
     loadPersonasModule,
 } from './references.js';
 import { fetchModels, resolveActiveProvider, getActiveProviderMaxReferences, A1111_RESOLUTION_PRESETS } from './providers.js';
@@ -521,6 +520,16 @@ let characterReferenceEventsBound = false;
 let characterReferenceRefreshTimer = null;
 let characterReferencePollTimer = null;
 let characterReferenceLastSignature = '';
+let optimisticUserReferenceKey = '';
+let optimisticCharacterReferenceKey = '';
+
+function cssEscape(value) {
+    const raw = String(value || '');
+    if (typeof globalThis.CSS?.escape === 'function') {
+        return globalThis.CSS.escape(raw);
+    }
+    return raw.replace(/["\\]/g, '\\$&');
+}
 
 function getCharacterDisplayNameBucket(kind, settings = getSettings()) {
     const store = getCharacterReferenceDescriptionStore(settings);
@@ -2222,9 +2231,36 @@ function buildSavedCharacterTileHtml(entry) {
     `;
 }
 
+function markSavedTileActive(kind, key) {
+    const section = document.getElementById('iig_characters_section');
+    if (!section) return;
+    const selector = `.iig-character-saved-tile[data-iig-character-kind="${cssEscape(kind)}"]`;
+    for (const tile of section.querySelectorAll(selector)) {
+        tile.classList.toggle('iig-character-saved-tile-active', tile.getAttribute('data-iig-character-key') === key);
+    }
+}
+
+function setOptimisticSavedTile(kind, key, settings = getSettings()) {
+    if (kind === 'user') {
+        optimisticUserReferenceKey = key;
+    } else if (kind === 'char') {
+        optimisticCharacterReferenceKey = key;
+    }
+    markSavedTileActive(kind, key);
+    setTimeout(() => {
+        if (kind === 'user' && optimisticUserReferenceKey === key) {
+            optimisticUserReferenceKey = '';
+            scheduleCharactersSettingsRefresh(settings, { force: true });
+        } else if (kind === 'char' && optimisticCharacterReferenceKey === key) {
+            optimisticCharacterReferenceKey = '';
+            scheduleCharactersSettingsRefresh(settings, { force: true });
+        }
+    }, 3000);
+}
+
 function getSavedCharacterEntries(settings = getSettings()) {
     const store = getCharacterReferenceDescriptionStore(settings);
-    const currentKey = getCurrentCharacterRefMeta().key;
+    const currentKey = optimisticCharacterReferenceKey || getCurrentCharacterRefMeta().key;
     const context = SillyTavern.getContext();
     const characters = Array.isArray(context?.characters) ? context.characters : [];
     const byKey = new Map();
@@ -2253,14 +2289,7 @@ function getSavedCharacterEntries(settings = getSettings()) {
 
 async function getSavedUserEntries(settings = getSettings()) {
     const store = getCharacterReferenceDescriptionStore(settings);
-    const currentKey = await getCurrentUserReferenceKey(settings);
-    let avatars = [];
-    try {
-        avatars = await fetchUserAvatars();
-    } catch (_error) {
-        avatars = [];
-    }
-    const avatarSet = new Set(avatars.map((avatar) => String(avatar || '').trim()).filter(Boolean));
+    const currentKey = optimisticUserReferenceKey || await getCurrentUserReferenceKey(settings);
     return Object.entries(store.users || {})
         .map(([key, description]) => {
             const trimmed = String(description || '').trim();
@@ -2275,7 +2304,7 @@ async function getSavedUserEntries(settings = getSettings()) {
                 title: getCharacterDisplayName('user', key, fallbackTitle, settings),
                 avatarUrl: userAvatarUrl(avatarFile),
                 description: trimmed,
-                active: key === currentKey || (avatarFile && avatarSet.has(avatarFile) && avatarFile === settings.userAvatarFile),
+                active: key === currentKey,
             };
         })
         .filter(Boolean);
@@ -2414,26 +2443,109 @@ function bindCharacterContextChangeEvents(settings = getSettings()) {
     }
 }
 
+function findCharacterListElement(index, character = {}) {
+    const avatar = String(character?.avatar || '').trim();
+    const name = String(character?.name || '').trim();
+    const selectors = [
+        `.character_select[chid="${index}"]`,
+        `.character_select[data-chid="${index}"]`,
+        `.character_select[data-character-id="${index}"]`,
+        `[chid="${index}"].character_select`,
+        `[data-chid="${index}"].character_select`,
+        `[data-character-id="${index}"].character_select`,
+    ];
+    if (avatar) {
+        selectors.push(`.character_select[avatar="${cssEscape(avatar)}"]`);
+        selectors.push(`.character_select[data-avatar="${cssEscape(avatar)}"]`);
+    }
+    if (name) {
+        selectors.push(`.character_select[title="${cssEscape(name)}"]`);
+        selectors.push(`.character_select[data-name="${cssEscape(name)}"]`);
+    }
+    for (const selector of selectors) {
+        const el = document.querySelector(selector);
+        if (el instanceof HTMLElement) return el;
+    }
+    return null;
+}
+
+async function runWithShortTimeout(fn, timeoutMs = 800) {
+    return await Promise.race([
+        Promise.resolve().then(fn),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs)),
+    ]);
+}
+
+function openCharacterByIndex(index, character = {}) {
+    const context = SillyTavern.getContext();
+    const listElement = findCharacterListElement(index, character);
+
+    if (listElement) {
+        try {
+            listElement.click();
+            listElement.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+        } catch (_error) {
+            // Fall through to function-based variants.
+        }
+    }
+
+    const attempts = [];
+    if (listElement) {
+        attempts.push([globalThis.selectCharacterById, listElement]);
+        attempts.push([context?.selectCharacterById, listElement]);
+    }
+    attempts.push(
+        [context?.selectCharacter, index],
+        [context?.openCharacterChat, index],
+        [globalThis.selectCharacter, index],
+        [globalThis.openCharacterChat, index],
+    );
+
+    (async () => {
+        for (const [fn, arg] of attempts) {
+            if (typeof fn !== 'function') continue;
+            try {
+                await runWithShortTimeout(() => fn.call(globalThis, arg));
+                return;
+            } catch (_error) {
+                // Try the next known SillyTavern variant.
+            }
+        }
+    })();
+}
+
 async function openCharacterTile(kind, key, settings = getSettings()) {
     if (kind === 'user') {
+        setOptimisticSavedTile(kind, key, settings);
+
+        const keyKind = String(key || '').split(':')[0];
         const avatarFile = String(key || '').replace(/^(avatar|persona):/, '').trim();
         if (avatarFile) {
             settings.userAvatarFile = avatarFile;
+            settings.useActiveUserPersonaAvatar = keyKind === 'persona';
+            syncActivePersonaAvatarMode(settings.useActiveUserPersonaAvatar);
             syncUserAvatarSelection(avatarFile);
-            try {
-                const personasModule = await loadPersonasModule();
-                if (typeof personasModule?.setUserAvatar === 'function') {
-                    await personasModule.setUserAvatar(avatarFile);
-                } else if (typeof personasModule?.changeUserAvatar === 'function') {
-                    await personasModule.changeUserAvatar(avatarFile);
-                }
-            } catch (_error) {
-                // Selecting the extension avatar is enough for generation refs.
-            }
             saveSettings();
+
+            if (keyKind === 'persona') {
+                loadPersonasModule()
+                    .then(async (personasModule) => {
+                        if (typeof personasModule?.setUserAvatar === 'function') {
+                            await runWithShortTimeout(() => personasModule.setUserAvatar(avatarFile), 1200);
+                        } else if (typeof personasModule?.changeUserAvatar === 'function') {
+                            await runWithShortTimeout(() => personasModule.changeUserAvatar(avatarFile), 1200);
+                        }
+                    })
+                    .catch(() => {
+                        // Selecting the extension avatar is enough for generation refs.
+                    })
+                    .finally(() => {
+                        scheduleCharactersSettingsRefresh(settings, { force: true });
+                    });
+            }
         }
-        await renderCharactersSettings(settings);
-        setTimeout(() => scheduleCharactersSettingsRefresh(settings, { force: true }), 200);
+        renderSavedCharacterTiles(settings).catch(() => {});
+        setTimeout(() => scheduleCharactersSettingsRefresh(settings, { force: true }), 250);
         return;
     }
 
@@ -2441,29 +2553,11 @@ async function openCharacterTile(kind, key, settings = getSettings()) {
     const characters = Array.isArray(context?.characters) ? context.characters : [];
     const index = characters.findIndex((character, idx) => getCharacterReferenceKeyForCharacter(character, idx) === key);
     if (index >= 0) {
-        const candidates = [
-            context?.selectCharacter,
-            context?.openCharacterChat,
-            globalThis.selectCharacterById,
-            globalThis.selectCharacter,
-            globalThis.openCharacterChat,
-        ].filter((fn) => typeof fn === 'function');
-        for (const fn of candidates) {
-            try {
-                await fn(index);
-                break;
-            } catch (_error) {
-                // Try the next known SillyTavern variant.
-            }
-        }
-        try {
-            context.characterId = index;
-        } catch (_error) {
-            // read-only in some ST versions
-        }
+        setOptimisticSavedTile(kind, key, settings);
+        openCharacterByIndex(index, characters[index]);
     }
-    await renderCharactersSettings(settings);
-    setTimeout(() => scheduleCharactersSettingsRefresh(settings, { force: true }), 200);
+    renderSavedCharacterTiles(settings).catch(() => {});
+    setTimeout(() => scheduleCharactersSettingsRefresh(settings, { force: true }), 250);
 }
 
 function bindCharacterReferenceDescriptionEvents(settings) {
@@ -2492,6 +2586,8 @@ function bindCharacterReferenceDescriptionEvents(settings) {
         const target = e.target instanceof Element ? e.target : null;
         const tile = target?.closest('.iig-character-saved-tile');
         if (!tile) return;
+        e.preventDefault();
+        e.stopPropagation();
         const kind = String(tile.getAttribute('data-iig-character-kind') || '');
         const key = String(tile.getAttribute('data-iig-character-key') || '');
         await openCharacterTile(kind, key, settings);
