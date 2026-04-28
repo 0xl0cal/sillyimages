@@ -143,6 +143,10 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                 <input type="checkbox" id="iig_external_blocks" ${settings.externalBlocks ? 'checked' : ''}>
                 <span>${t`Process external blocks`}</span>
             </label>
+            <label class="checkbox_label">
+                <input type="checkbox" id="iig_process_user_messages" ${settings.processUserMessages ? 'checked' : ''}>
+                <span>${t`Also process user messages`}</span>
+            </label>
 
             <div class="flex-row">
                 <label for="iig_api_type">${t`API type`}</label>
@@ -1016,6 +1020,11 @@ function bindConnectionProfilesEvents(settings, updateVisibility) {
 function bindApiSectionEvents(settings, updateVisibility) {
     document.getElementById('iig_enabled')?.addEventListener('change', (e) => {
         settings.enabled = e.target.checked;
+        saveSettings();
+    });
+
+    document.getElementById('iig_process_user_messages')?.addEventListener('change', (e) => {
+        settings.processUserMessages = e.target.checked;
         saveSettings();
     });
 

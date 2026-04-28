@@ -87,6 +87,7 @@ export function exportLogs() {
 export const defaultSettings = Object.freeze({
     enabled: true,
     externalBlocks: false,
+    processUserMessages: false,
     imageContextEnabled: false,
     imageContextCount: 1,
     styles: [],

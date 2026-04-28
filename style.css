@@ -432,16 +432,23 @@
 }
 
 .iig-video-frequency-input {
-    display: inline-flex;
+    display: flex;
+    flex-direction: row;
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
 }
 
 .iig-video-frequency-input input {
-    width: 88px;
+    flex: 0 0 88px;
+    width: 88px !important;
     min-width: 88px;
+    max-width: 88px;
     text-align: center;
+}
+
+.iig-video-frequency-input span {
+    flex: 0 0 auto;
 }
 
 /* Avatar options section - shown only for nano-banana */

@@ -3,6 +3,7 @@
     "API settings": "Налаштування API",
     "Enable image generation": "Увімкнути генерацію зображень",
     "Process external blocks": "Обробляти зовнішні блоки",
+    "Also process user messages": "Також обробляти повідомлення користувача",
     "API type": "Тип API",
     "OpenAI-compatible (/v1/images/generations)": "OpenAI-сумісний (/v1/images/generations)",
     "Gemini-compatible (nano-banana)": "Gemini-сумісний (nano-banana)",
