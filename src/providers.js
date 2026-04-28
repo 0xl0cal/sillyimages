@@ -1617,15 +1617,19 @@ export class A1111Provider extends Provider {
         return [];
     }
 
-    async generate({ prompt, style, options = {} }) {
+    async generate({ prompt, options = {} }) {
         const settings = getSettings();
         const url = buildGenerationUrl(settings, '/sdapi/v1/txt2img');
 
-        const built = buildFinalGenerationPrompt(prompt, style, options.matchedAdditionalRefs || [], settings);
-        // Prefix-промпт дописывается ПЕРЕД итоговым промптом (так у official extension).
+        // SDXL/A1111 ждёт comma-separated tag-style промпт, не natural language.
+        // Поэтому пропускаем `[STYLE: ...]` injection и `Additional References:`
+        // блок из buildFinalGenerationPrompt — тег-промпт идёт чистым,
+        // юзер задаёт свой tag-style префикс через a1111PromptPrefix.
+        // (style-параметр игнорируем: наша styles-секция заточена под LLM.)
+        const rawPrompt = String(prompt || '').trim();
         const positive = settings.a1111PromptPrefix
-            ? `${String(settings.a1111PromptPrefix).trim()}, ${built}`.replace(/^,\s*/, '').trim()
-            : built;
+            ? `${String(settings.a1111PromptPrefix).trim()}, ${rawPrompt}`.replace(/^,\s*|,\s*$/g, '').trim()
+            : rawPrompt;
 
         const overrideSettings = {
             CLIP_stop_at_last_layers: clampInt(settings.a1111ClipSkip, 1, 12, 1),
