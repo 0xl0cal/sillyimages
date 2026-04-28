@@ -26,6 +26,14 @@ export function addRegenerateButton(messageElement, messageId) {
     });
 
     extraMesButtons.appendChild(btn);
+
+    // ST hides the "..." hint button on user messages by default. Once we
+    // attach our button, force the hint visible so user can actually open it.
+    const hint = messageElement.querySelector('.extraMesButtonsHint');
+    if (hint instanceof HTMLElement) {
+        hint.style.display = '';
+        hint.style.opacity = '';
+    }
 }
 
 export function addButtonsToExistingMessages() {

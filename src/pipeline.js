@@ -493,7 +493,9 @@ export async function processMessageTags(messageId) {
     }
 
     const message = context.chat[messageId];
-    if (!message || message.is_user) return;
+    if (!message) return;
+    // User messages are processed only when the toggle is on.
+    if (message.is_user && !settings.processUserMessages) return;
 
     const tags = await parseMessageImageTags(message, { checkExistence: true });
     iigLog('INFO', `parseImageTags returned: ${tags.length} tags`);
