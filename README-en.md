@@ -129,7 +129,7 @@ Line format: `full-name (primary-trigger) — description`. If only one lorebook
 - Endpoint: `https://api.openai.com` (or any OpenAI-compatible proxy).
 - Without references → `POST /v1/images/generations` (JSON).
 - With references → `POST /v1/images/edits` (multipart). For gpt-image-* several references are sent as `image[]`.
-- Supported models: gpt-image-1, gpt-image-1.5, gpt-image-2, flux-1-kontext-*, dall-e-2, dall-e-3.
+- Supported models: gpt-image-1, gpt-image-1.5, flux-1-kontext-*, dall-e-2, dall-e-3.
 
 ### Gemini
 

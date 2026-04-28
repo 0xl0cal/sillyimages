@@ -43,6 +43,11 @@ import {
     getUserAvatarBase64,
     getUserAvatarDataUrl,
     collectPreviousContextReferences,
+    getCharacterReferenceDescription,
+    getUserReferenceDescription,
+    makeReferenceObject,
+    getReferenceImage,
+    getReferenceDescription,
 } from './references.js';
 
 // ----- Max references helper -----
@@ -76,6 +81,23 @@ export function getActiveProviderMaxReferences(settings = getSettings()) {
         return 0;
     }
     return 0;
+}
+
+function referenceTextLabel(index, description) {
+    const text = String(description || '').replace(/\s+/g, ' ').trim();
+    return text ? `Reference ${index}: ${text}` : '';
+}
+
+function geminiImageLabel(index, description) {
+    const text = String(description || '').replace(/\s+/g, ' ').trim();
+    return text ? `IMAGE_${index}: ${text}` : '';
+}
+
+function additionalReferenceDescription(ref, settings = getSettings()) {
+    if (settings.sendRefDescriptions === false) {
+        return '';
+    }
+    return String(ref?.description || ref?.name || '').trim();
 }
 
 // ----- Endpoint URL builder (raw mode support) -----
@@ -382,7 +404,6 @@ const OPENAI_REQUEST_TIMEOUT_MS = 600_000;
 function classifyOpenAIModel(modelId) {
     const id = String(modelId || '').toLowerCase().trim();
     // Сначала специфичные подстроки, потом общие.
-    if (id.includes('gpt-image-2')) return 'gpt-image-2';
     if (id.includes('gpt-image-1.5') || id.includes('gpt-image-1-5')) return 'gpt-image-1.5';
     if (id.includes('gpt-image-1-mini')) return 'gpt-image-1-mini';
     if (id.includes('gpt-image-1')) return 'gpt-image-1';
@@ -398,7 +419,7 @@ function classifyOpenAIModel(modelId) {
  * множественные референсы через `image[]`.
  */
 function isGptImageFamily(kind) {
-    return kind === 'gpt-image-2' || kind === 'gpt-image-1.5' || kind === 'gpt-image-1-mini'
+    return kind === 'gpt-image-1.5' || kind === 'gpt-image-1-mini'
         || kind === 'gpt-image-1' || kind === 'gpt-image';
 }
 
@@ -423,20 +444,6 @@ function getOpenAIModelMaxReferences(kind) {
  */
 function aspectRatioToSize(aspect, modelKind) {
     if (!aspect) return null;
-
-    // gpt-image-2: можно любые WxH, но для готовых пресетов из тега — таблица PLAN.
-    if (modelKind === 'gpt-image-2') {
-        const map = {
-            '1:1': '1024x1024',
-            '16:9': '2048x1152',
-            '9:16': '1152x2048',
-            '3:2': '1536x1024',
-            '2:3': '1024x1536',
-            '4:3': '1536x1152',
-            '3:4': '1152x1536',
-        };
-        return map[aspect] || null;
-    }
 
     // gpt-image-1.5 и gpt-image-1-mini и gpt-image-1: фиксированный список.
     if (modelKind === 'gpt-image-1.5' || modelKind === 'gpt-image-1-mini' || modelKind === 'gpt-image-1' || modelKind === 'gpt-image') {
@@ -849,13 +856,13 @@ export class GeminiProvider extends Provider {
         const maxRefs = caps.maxReferences;
         const refs = [];
 
-        if (settings.sendCharAvatar) {
-            const charAvatar = await getCharacterAvatarBase64();
-            if (charAvatar) refs.push(charAvatar);
-        }
         if (settings.sendUserAvatar) {
             const userAvatar = await getUserAvatarBase64();
-            if (userAvatar) refs.push(userAvatar);
+            if (userAvatar) refs.push(makeReferenceObject(userAvatar, await getUserReferenceDescription(settings), 'user'));
+        }
+        if (settings.sendCharAvatar) {
+            const charAvatar = await getCharacterAvatarBase64();
+            if (charAvatar) refs.push(makeReferenceObject(charAvatar, getCharacterReferenceDescription(settings), 'char'));
         }
 
         for (const ref of matchedAdditionalRefs) {
@@ -863,13 +870,13 @@ export class GeminiProvider extends Provider {
             const imagePath = normalizeStoredImagePath(ref.imagePath);
             if (!imagePath) continue;
             const b64 = await imageUrlToBase64(imagePath);
-            if (b64) refs.push(b64);
+            if (b64) refs.push(makeReferenceObject(b64, additionalReferenceDescription(ref, settings), 'additional'));
         }
 
         if (settings.imageContextEnabled) {
             const contextCount = normalizeImageContextCount(settings.imageContextCount);
             const contextRefs = await collectPreviousContextReferences(messageId, 'base64', contextCount);
-            refs.push(...contextRefs);
+            refs.push(...contextRefs.map((ref) => makeReferenceObject(ref, '', 'context')));
         }
 
         if (refs.length > maxRefs) {
@@ -909,11 +916,15 @@ export class GeminiProvider extends Provider {
         const parts = [];
 
         // Лимит референсов — по модели, а не по глобальной константе.
-        for (const imgB64 of references.slice(0, caps.maxReferences)) {
+        for (const [idx, ref] of references.slice(0, caps.maxReferences).entries()) {
+            const label = geminiImageLabel(idx + 1, getReferenceDescription(ref));
+            if (label) {
+                parts.push({ text: label });
+            }
             parts.push({
                 inlineData: {
                     mimeType: 'image/png',
-                    data: imgB64,
+                    data: getReferenceImage(ref),
                 },
             });
         }
@@ -1120,13 +1131,13 @@ export class OpenRouterProvider extends Provider {
         const refs = [];
 
         // Референсы в формате dataUrl (OpenRouter принимает base64 data URL в image_url.url).
-        if (settings.sendCharAvatar) {
-            const d = await getCharacterAvatarDataUrl();
-            if (d) refs.push(d);
-        }
         if (settings.sendUserAvatar) {
             const d = await getUserAvatarDataUrl();
-            if (d) refs.push(d);
+            if (d) refs.push(makeReferenceObject(d, await getUserReferenceDescription(settings), 'user'));
+        }
+        if (settings.sendCharAvatar) {
+            const d = await getCharacterAvatarDataUrl();
+            if (d) refs.push(makeReferenceObject(d, getCharacterReferenceDescription(settings), 'char'));
         }
 
         for (const ref of matchedAdditionalRefs) {
@@ -1134,13 +1145,13 @@ export class OpenRouterProvider extends Provider {
             const imagePath = normalizeStoredImagePath(ref.imagePath);
             if (!imagePath) continue;
             const d = await imageUrlToDataUrl(imagePath);
-            if (d) refs.push(d);
+            if (d) refs.push(makeReferenceObject(d, additionalReferenceDescription(ref, settings), 'additional'));
         }
 
         if (settings.imageContextEnabled) {
             const contextCount = normalizeImageContextCount(settings.imageContextCount);
             const contextRefs = await collectPreviousContextReferences(messageId, 'dataUrl', contextCount);
-            refs.push(...contextRefs);
+            refs.push(...contextRefs.map((ref) => makeReferenceObject(ref, '', 'context')));
         }
 
         if (refs.length > maxRefs) {
@@ -1184,16 +1195,22 @@ export class OpenRouterProvider extends Provider {
         }
 
         // messages.content: строка если нет refs, массив частей — если есть.
-        // По докам OpenRouter text должен идти первым, далее картинки.
+        // Для image-conditioned chat providers отправляем пары description → image,
+        // затем основной prompt последним chunk'ом.
         let content;
         if (references.length > 0) {
-            const parts = [{ type: 'text', text: fullPrompt }];
-            for (const dataUrl of references.slice(0, caps.maxReferences)) {
+            const parts = [];
+            for (const [idx, ref] of references.slice(0, caps.maxReferences).entries()) {
+                const label = referenceTextLabel(idx + 1, getReferenceDescription(ref));
+                if (label) {
+                    parts.push({ type: 'text', text: label });
+                }
                 parts.push({
                     type: 'image_url',
-                    image_url: { url: dataUrl },
+                    image_url: { url: getReferenceImage(ref) },
                 });
             }
+            parts.push({ type: 'text', text: fullPrompt });
             content = parts;
         } else {
             content = fullPrompt;
@@ -1407,7 +1424,7 @@ export class NaisteraProvider extends Provider {
         }
         const m = normalizeNaisteraModel(settings.naisteraModel);
         if (!NAISTERA_MODELS.includes(m)) {
-            errors.push(t`For Naistera, select a model: grok / grok-pro / nano banana`);
+            errors.push(t`For Naistera, select a model: grok / grok-pro / nano banana 2 / novelai`);
         }
         return errors;
     }
@@ -1422,29 +1439,29 @@ export class NaisteraProvider extends Provider {
         if (!naisteraModelSupportsReferences(normalizedModel)) {
             return [];
         }
-
         const refs = [];
 
-        if (settings.naisteraSendCharAvatar) {
-            const d = await getCharacterAvatarDataUrl();
-            if (d) refs.push(d);
-        }
         if (settings.naisteraSendUserAvatar) {
             const d = await getUserAvatarDataUrl();
-            if (d) refs.push(d);
+            if (d) refs.push(makeReferenceObject(d, await getUserReferenceDescription(settings), 'user'));
+        }
+        if (settings.naisteraSendCharAvatar) {
+            const d = await getCharacterAvatarDataUrl();
+            if (d) refs.push(makeReferenceObject(d, getCharacterReferenceDescription(settings), 'char'));
         }
 
         for (const ref of matchedAdditionalRefs) {
             const imagePath = normalizeStoredImagePath(ref.imagePath);
             if (!imagePath) continue;
             const d = await imageUrlToDataUrl(imagePath);
-            if (d) refs.push(d);
+            if (!d) continue;
+            refs.push(makeReferenceObject(d, additionalReferenceDescription(ref, settings), 'additional'));
         }
 
         if (settings.imageContextEnabled) {
             const contextCount = normalizeImageContextCount(settings.imageContextCount);
             const contextRefs = await collectPreviousContextReferences(messageId, 'dataUrl', contextCount);
-            refs.push(...contextRefs);
+            refs.push(...contextRefs.map((ref) => makeReferenceObject(ref, '', 'context')));
         }
 
         return refs;
@@ -1476,7 +1493,12 @@ export class NaisteraProvider extends Provider {
         };
         if (preset) body.preset = preset;
         if (references.length > 0) {
-            body.reference_images = references;
+            body.reference_objects = references
+                .map((ref) => ({
+                    image: getReferenceImage(ref),
+                    description: getReferenceDescription(ref),
+                }))
+                .filter((ref) => ref.image);
         }
         if (wantsVideoTest) {
             body.video_test_mode = true;

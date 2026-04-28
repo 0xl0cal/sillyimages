@@ -74,6 +74,18 @@ import {
     importLorebookFromUrl,
     importLorebookFromFile,
     renderIigBookMacro,
+    getCharacterReferenceDescription,
+    getUserReferenceDescription,
+    getCharacterReferenceDescriptionStore,
+    getCurrentUserReferenceKey,
+    getCharacterReferenceKeyForCharacter,
+    getUserReferenceKeyForAvatar,
+    setCharacterReferenceDescriptionForKey,
+    setUserReferenceDescriptionForKey,
+    characterAvatarUrl,
+    userAvatarUrl,
+    fetchUserAvatars,
+    loadPersonasModule,
 } from './references.js';
 import { fetchModels, resolveActiveProvider, getActiveProviderMaxReferences, A1111_RESOLUTION_PRESETS } from './providers.js';
 import { t } from './i18n.js';
@@ -501,6 +513,188 @@ function buildStylesSettingsSectionHtml() {
         </div>
     `;
     return buildSettingsSectionHtml('iig_styles_section', t`Styles`, bodyHtml, false);
+}
+
+// ----- Characters section -----
+
+let characterReferenceEventsBound = false;
+let characterReferenceRefreshTimer = null;
+let characterReferencePollTimer = null;
+let characterReferenceLastSignature = '';
+
+function getCharacterDisplayNameBucket(kind, settings = getSettings()) {
+    const store = getCharacterReferenceDescriptionStore(settings);
+    if (!store.displayNames || typeof store.displayNames !== 'object') {
+        store.displayNames = {};
+    }
+    const bucketName = kind === 'char' ? 'characters' : 'users';
+    if (!store.displayNames[bucketName] || typeof store.displayNames[bucketName] !== 'object') {
+        store.displayNames[bucketName] = {};
+    }
+    return store.displayNames[bucketName];
+}
+
+function getCharacterDisplayName(kind, key, fallbackTitle, settings = getSettings()) {
+    const bucket = getCharacterDisplayNameBucket(kind, settings);
+    const custom = String(bucket[String(key || '')] || '').trim();
+    return custom || String(fallbackTitle || '').trim() || String(key || '').replace(/^(avatar|persona|name|id):/, '');
+}
+
+function setCharacterDisplayName(kind, key, value, settings = getSettings()) {
+    const normalizedKey = String(key || '').trim();
+    if (!normalizedKey) return;
+    const bucket = getCharacterDisplayNameBucket(kind, settings);
+    const normalizedValue = String(value || '').trim();
+    if (normalizedValue) {
+        bucket[normalizedKey] = normalizedValue;
+    } else {
+        delete bucket[normalizedKey];
+    }
+    saveSettings();
+}
+
+function getCurrentCharacterRefMeta() {
+    try {
+        const context = SillyTavern.getContext();
+        const id = context?.characterId;
+        if (id === undefined || id === null) {
+            return {
+                key: 'no-character',
+                title: t`No character selected`,
+                avatarUrl: '',
+                description: '',
+            };
+        }
+        const character = context.characters?.[id] || {};
+        const key = getCharacterReferenceKeyForCharacter(character, id);
+        const fallbackTitle = String(character.name || t`Current character`);
+        return {
+            key,
+            fallbackTitle,
+            title: getCharacterDisplayName('char', key, fallbackTitle),
+            avatarUrl: characterAvatarUrl(character),
+            description: getCharacterReferenceDescription(),
+        };
+    } catch (_error) {
+        return {
+            key: 'no-character',
+            title: t`No character selected`,
+            avatarUrl: '',
+            description: '',
+        };
+    }
+}
+
+function getCurrentUserRefMeta(settings = getSettings()) {
+    const avatarFile = String(settings.userAvatarFile || '').trim();
+    const key = getUserReferenceKeyForAvatar(avatarFile);
+    const fallbackTitle = avatarFile || t`Selected user persona`;
+    return {
+        key,
+        fallbackTitle,
+        title: getCharacterDisplayName('user', key, fallbackTitle, settings),
+        avatarUrl: userAvatarUrl(avatarFile),
+        description: '',
+    };
+}
+
+async function getCurrentUserRefMetaAsync(settings = getSettings()) {
+    const key = await getCurrentUserReferenceKey(settings);
+    const avatarFile = key.startsWith('avatar:') || key.startsWith('persona:')
+        ? key.split(':').slice(1).join(':')
+        : String(settings.userAvatarFile || '').trim();
+    const fallbackTitle = avatarFile || t`Selected user persona`;
+    return {
+        key,
+        fallbackTitle,
+        title: getCharacterDisplayName('user', key, fallbackTitle, settings),
+        avatarUrl: userAvatarUrl(avatarFile),
+        description: '',
+    };
+}
+
+function buildAvatarPreviewHtml(src, iconClass = 'fa-user') {
+    const safeSrc = String(src || '').trim();
+    if (safeSrc) {
+        return `<img src="${sanitizeForHtml(safeSrc)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'iig-character-tile-avatar-placeholder'}))">`;
+    }
+    return `<div class="iig-character-tile-avatar-placeholder"><i class="fa-solid ${iconClass}"></i></div>`;
+}
+
+function buildActiveCharacterEditorsHtml(settings = getSettings(), userMeta = null) {
+    const char = getCurrentCharacterRefMeta();
+    const user = userMeta || getCurrentUserRefMeta(settings);
+    return `
+        <div class="iig-character-active-grid">
+            <div class="iig-character-editor-tile" data-iig-character-kind="user" data-iig-character-key="${sanitizeForHtml(user.key)}">
+                <div class="iig-character-tile-head">
+                    <div class="iig-character-tile-avatar">${buildAvatarPreviewHtml(user.avatarUrl, 'fa-user')}</div>
+                    <div class="iig-character-tile-meta">
+                        <b>{{user}}</b>
+                        <span>${sanitizeForHtml(user.title)}</span>
+                    </div>
+                </div>
+                <label class="iig-character-field-label" for="iig_user_ref_display_name">${t`Display name`}</label>
+                <input
+                    id="iig_user_ref_display_name"
+                    class="text_pole iig-character-display-name-input"
+                    type="text"
+                    value="${sanitizeForHtml(user.title)}"
+                    placeholder="${sanitizeForHtml(user.fallbackTitle || '')}"
+                >
+                <label class="iig-character-field-label" for="iig_user_ref_description">${t`Reference description`}</label>
+                <textarea
+                    id="iig_user_ref_description"
+                    class="text_pole flex1 iig-settings-textarea"
+                    rows="3"
+                    placeholder="${t`Appearance details for the user avatar reference`}"
+                ></textarea>
+            </div>
+            <div class="iig-character-editor-tile" data-iig-character-kind="char" data-iig-character-key="${sanitizeForHtml(char.key)}">
+                <div class="iig-character-tile-head">
+                    <div class="iig-character-tile-avatar">${buildAvatarPreviewHtml(char.avatarUrl, 'fa-user-pen')}</div>
+                    <div class="iig-character-tile-meta">
+                        <b>{{char}}</b>
+                        <span>${sanitizeForHtml(char.title)}</span>
+                    </div>
+                </div>
+                <label class="iig-character-field-label" for="iig_char_ref_display_name">${t`Display name`}</label>
+                <input
+                    id="iig_char_ref_display_name"
+                    class="text_pole iig-character-display-name-input"
+                    type="text"
+                    value="${sanitizeForHtml(char.title)}"
+                    placeholder="${sanitizeForHtml(char.fallbackTitle || '')}"
+                >
+                <label class="iig-character-field-label" for="iig_char_ref_description">${t`Reference description`}</label>
+                <textarea
+                    id="iig_char_ref_description"
+                    class="text_pole flex1 iig-settings-textarea"
+                    rows="3"
+                    placeholder="${t`Appearance details for the character avatar reference`}"
+                >${sanitizeForHtml(char.description)}</textarea>
+            </div>
+        </div>
+    `;
+}
+
+function buildCharactersSettingsSectionHtml(settings = getSettings()) {
+    const bodyHtml = `
+        <div class="iig-settings-card">
+            <div id="iig_character_active_editors">
+                ${buildActiveCharacterEditorsHtml(settings)}
+            </div>
+            <div class="iig-character-saved-block">
+                <h4>${t`Saved character cards`}</h4>
+                <div id="iig_saved_character_tiles" class="iig-character-tile-grid"></div>
+            </div>
+            <div class="iig-character-saved-block">
+                <h4>${t`Saved user personas`}</h4>
+                <div id="iig_saved_user_tiles" class="iig-character-tile-grid"></div>
+            </div>
+        </div>
+    `;
+    return buildSettingsSectionHtml('iig_characters_section', t`Characters`, bodyHtml, false);
 }
 
 // ----- References section -----
@@ -1479,12 +1673,14 @@ function bindAvatarSectionEvents(settings, updateVisibility, config) {
         syncActivePersonaAvatarMode(settings.useActiveUserPersonaAvatar);
         saveSettings();
         updateVisibility();
+        renderCharactersSettings(settings).catch(() => {});
     });
 
     document.getElementById(userAvatarSelectId)?.addEventListener('change', (e) => {
         settings.userAvatarFile = e.target.value;
         syncUserAvatarSelection(settings.userAvatarFile);
         saveSettings();
+        renderCharactersSettings(settings).catch(() => {});
     });
 
     document.getElementById(refreshButtonId)?.addEventListener('click', async (e) => {
@@ -2013,6 +2209,299 @@ function bindAdditionalReferencesEvents(settings) {
     });
 }
 
+// ----- Character reference description events -----
+
+function buildSavedCharacterTileHtml(entry) {
+    return `
+        <button type="button" class="menu_button iig-character-saved-tile ${entry.active ? 'iig-character-saved-tile-active' : ''}" data-iig-character-kind="${sanitizeForHtml(entry.kind)}" data-iig-character-key="${sanitizeForHtml(entry.key)}">
+            <div class="iig-character-tile-avatar">${buildAvatarPreviewHtml(entry.avatarUrl, entry.kind === 'char' ? 'fa-user-pen' : 'fa-user')}</div>
+            <div class="iig-character-tile-meta">
+                <b>${sanitizeForHtml(entry.title)}</b>
+            </div>
+        </button>
+    `;
+}
+
+function getSavedCharacterEntries(settings = getSettings()) {
+    const store = getCharacterReferenceDescriptionStore(settings);
+    const currentKey = getCurrentCharacterRefMeta().key;
+    const context = SillyTavern.getContext();
+    const characters = Array.isArray(context?.characters) ? context.characters : [];
+    const byKey = new Map();
+    characters.forEach((character, index) => {
+        const key = getCharacterReferenceKeyForCharacter(character, index);
+        byKey.set(key, { character, index });
+    });
+    return Object.entries(store.characters || {})
+        .map(([key, description]) => {
+            const trimmed = String(description || '').trim();
+            if (!trimmed) return null;
+            const found = byKey.get(key);
+            const character = found?.character || {};
+            const fallbackTitle = String(character.name || key.replace(/^(avatar|name|id):/, '') || t`Unknown character`);
+            return {
+                kind: 'char',
+                key,
+                title: getCharacterDisplayName('char', key, fallbackTitle, settings),
+                avatarUrl: characterAvatarUrl(character),
+                description: trimmed,
+                active: key === currentKey,
+            };
+        })
+        .filter(Boolean);
+}
+
+async function getSavedUserEntries(settings = getSettings()) {
+    const store = getCharacterReferenceDescriptionStore(settings);
+    const currentKey = await getCurrentUserReferenceKey(settings);
+    let avatars = [];
+    try {
+        avatars = await fetchUserAvatars();
+    } catch (_error) {
+        avatars = [];
+    }
+    const avatarSet = new Set(avatars.map((avatar) => String(avatar || '').trim()).filter(Boolean));
+    return Object.entries(store.users || {})
+        .map(([key, description]) => {
+            const trimmed = String(description || '').trim();
+            if (!trimmed) return null;
+            const avatarFile = key.startsWith('avatar:') || key.startsWith('persona:')
+                ? key.split(':').slice(1).join(':')
+                : '';
+            const fallbackTitle = avatarFile || key;
+            return {
+                kind: 'user',
+                key,
+                title: getCharacterDisplayName('user', key, fallbackTitle, settings),
+                avatarUrl: userAvatarUrl(avatarFile),
+                description: trimmed,
+                active: key === currentKey || (avatarFile && avatarSet.has(avatarFile) && avatarFile === settings.userAvatarFile),
+            };
+        })
+        .filter(Boolean);
+}
+
+async function renderCharactersSettings(settings = getSettings()) {
+    const active = document.getElementById('iig_character_active_editors');
+    if (active) {
+        active.innerHTML = buildActiveCharacterEditorsHtml(settings, await getCurrentUserRefMetaAsync(settings));
+    }
+    await refreshCharacterReferenceDescriptionFields(settings);
+    await renderSavedCharacterTiles(settings);
+    characterReferenceLastSignature = await getCharacterReferenceUiSignature(settings);
+}
+
+async function renderSavedCharacterTiles(settings = getSettings()) {
+    const charTiles = document.getElementById('iig_saved_character_tiles');
+    if (charTiles) {
+        const entries = getSavedCharacterEntries(settings);
+        charTiles.innerHTML = entries.length
+            ? entries.map(buildSavedCharacterTileHtml).join('')
+            : `<p class="hint">${t`No saved character descriptions yet.`}</p>`;
+    }
+
+    const userTiles = document.getElementById('iig_saved_user_tiles');
+    if (userTiles) {
+        const entries = await getSavedUserEntries(settings);
+        userTiles.innerHTML = entries.length
+            ? entries.map(buildSavedCharacterTileHtml).join('')
+            : `<p class="hint">${t`No saved user persona descriptions yet.`}</p>`;
+    }
+}
+
+async function refreshCharacterReferenceDescriptionFields(settings) {
+    const charTextarea = document.getElementById('iig_char_ref_description');
+    if (charTextarea instanceof HTMLTextAreaElement) {
+        charTextarea.value = getCharacterReferenceDescription(settings);
+    }
+    const charNameInput = document.getElementById('iig_char_ref_display_name');
+    if (charNameInput instanceof HTMLInputElement) {
+        const char = getCurrentCharacterRefMeta();
+        charNameInput.value = char.title;
+        charNameInput.placeholder = char.fallbackTitle || '';
+    }
+    const userTextarea = document.getElementById('iig_user_ref_description');
+    if (userTextarea instanceof HTMLTextAreaElement) {
+        userTextarea.value = await getUserReferenceDescription(settings);
+    }
+    const userNameInput = document.getElementById('iig_user_ref_display_name');
+    if (userNameInput instanceof HTMLInputElement) {
+        const user = await getCurrentUserRefMetaAsync(settings);
+        userNameInput.value = user.title;
+        userNameInput.placeholder = user.fallbackTitle || '';
+    }
+}
+
+async function getCharacterReferenceUiSignature(settings = getSettings()) {
+    let characterId = '';
+    try {
+        const context = SillyTavern.getContext();
+        characterId = String(context?.characterId ?? '');
+    } catch (_error) {
+        characterId = '';
+    }
+    const char = getCurrentCharacterRefMeta();
+    const userKey = await getCurrentUserReferenceKey(settings);
+    return [
+        characterId,
+        char.key,
+        userKey,
+        String(settings.userAvatarFile || ''),
+        settings.useActiveUserPersonaAvatar ? 'active-persona' : 'manual-avatar',
+    ].join('|');
+}
+
+async function refreshCharactersSettingsIfContextChanged(settings = getSettings(), { force = false } = {}) {
+    const signature = await getCharacterReferenceUiSignature(settings);
+    if (!force && signature === characterReferenceLastSignature) {
+        await renderSavedCharacterTiles(settings);
+        return;
+    }
+    characterReferenceLastSignature = signature;
+    await renderCharactersSettings(settings);
+}
+
+function scheduleCharactersSettingsRefresh(settings = getSettings(), { force = false } = {}) {
+    if (characterReferenceRefreshTimer) {
+        clearTimeout(characterReferenceRefreshTimer);
+    }
+    characterReferenceRefreshTimer = setTimeout(() => {
+        characterReferenceRefreshTimer = null;
+        refreshCharactersSettingsIfContextChanged(settings, { force }).catch((error) => {
+            console.warn('[IIG] Failed to refresh character reference descriptions:', error);
+        });
+    }, 120);
+}
+
+function bindCharacterContextChangeEvents(settings = getSettings()) {
+    if (characterReferenceEventsBound) return;
+    characterReferenceEventsBound = true;
+
+    try {
+        const context = SillyTavern.getContext();
+        const eventSource = context?.eventSource;
+        const eventTypes = context?.event_types || {};
+        const eventNames = [
+            'CHAT_CHANGED',
+            'CHARACTER_SELECTED',
+            'CHARACTER_EDITED',
+            'CHARACTER_DELETED',
+            'CHARACTER_ADDED',
+            'USER_AVATAR_CHANGED',
+            'USER_AVATAR_RENDERED',
+            'PERSONA_CHANGED',
+            'PERSONA_SELECTED',
+            'SETTINGS_UPDATED',
+            'APP_READY',
+        ];
+
+        if (typeof eventSource?.on === 'function') {
+            for (const name of eventNames) {
+                const eventName = eventTypes[name];
+                if (eventName) {
+                    eventSource.on(eventName, () => scheduleCharactersSettingsRefresh(settings, { force: true }));
+                }
+            }
+        }
+    } catch (_error) {
+        // Polling below covers ST builds with different event names.
+    }
+
+    if (!characterReferencePollTimer) {
+        characterReferencePollTimer = setInterval(() => {
+            scheduleCharactersSettingsRefresh(settings);
+        }, 1000);
+    }
+}
+
+async function openCharacterTile(kind, key, settings = getSettings()) {
+    if (kind === 'user') {
+        const avatarFile = String(key || '').replace(/^(avatar|persona):/, '').trim();
+        if (avatarFile) {
+            settings.userAvatarFile = avatarFile;
+            syncUserAvatarSelection(avatarFile);
+            try {
+                const personasModule = await loadPersonasModule();
+                if (typeof personasModule?.setUserAvatar === 'function') {
+                    await personasModule.setUserAvatar(avatarFile);
+                } else if (typeof personasModule?.changeUserAvatar === 'function') {
+                    await personasModule.changeUserAvatar(avatarFile);
+                }
+            } catch (_error) {
+                // Selecting the extension avatar is enough for generation refs.
+            }
+            saveSettings();
+        }
+        await renderCharactersSettings(settings);
+        setTimeout(() => scheduleCharactersSettingsRefresh(settings, { force: true }), 200);
+        return;
+    }
+
+    const context = SillyTavern.getContext();
+    const characters = Array.isArray(context?.characters) ? context.characters : [];
+    const index = characters.findIndex((character, idx) => getCharacterReferenceKeyForCharacter(character, idx) === key);
+    if (index >= 0) {
+        const candidates = [
+            context?.selectCharacter,
+            context?.openCharacterChat,
+            globalThis.selectCharacterById,
+            globalThis.selectCharacter,
+            globalThis.openCharacterChat,
+        ].filter((fn) => typeof fn === 'function');
+        for (const fn of candidates) {
+            try {
+                await fn(index);
+                break;
+            } catch (_error) {
+                // Try the next known SillyTavern variant.
+            }
+        }
+        try {
+            context.characterId = index;
+        } catch (_error) {
+            // read-only in some ST versions
+        }
+    }
+    await renderCharactersSettings(settings);
+    setTimeout(() => scheduleCharactersSettingsRefresh(settings, { force: true }), 200);
+}
+
+function bindCharacterReferenceDescriptionEvents(settings) {
+    bindCharacterContextChangeEvents(settings);
+
+    document.getElementById('iig_characters_section')?.addEventListener('input', async (e) => {
+        const target = e.target;
+        if (!(target instanceof HTMLTextAreaElement) && !(target instanceof HTMLInputElement)) return;
+        const tile = target.closest('.iig-character-editor-tile');
+        const kind = String(tile?.getAttribute('data-iig-character-kind') || '');
+        const key = String(tile?.getAttribute('data-iig-character-key') || '');
+        if (target.classList.contains('iig-character-display-name-input')) {
+            setCharacterDisplayName(kind, key || (kind === 'char' ? getCurrentCharacterRefMeta().key : await getCurrentUserReferenceKey(settings)), target.value, settings);
+            renderSavedCharacterTiles(settings).catch(() => {});
+            return;
+        }
+        if (kind === 'char') {
+            setCharacterReferenceDescriptionForKey(key || getCurrentCharacterRefMeta().key, target.value, settings);
+        } else if (kind === 'user') {
+            setUserReferenceDescriptionForKey(key || await getCurrentUserReferenceKey(settings), target.value, settings);
+        }
+        renderSavedCharacterTiles(settings).catch(() => {});
+    });
+
+    document.getElementById('iig_characters_section')?.addEventListener('click', async (e) => {
+        const target = e.target instanceof Element ? e.target : null;
+        const tile = target?.closest('.iig-character-saved-tile');
+        if (!tile) return;
+        const kind = String(tile.getAttribute('data-iig-character-kind') || '');
+        const key = String(tile.getAttribute('data-iig-character-key') || '');
+        await openCharacterTile(kind, key, settings);
+    });
+
+    refreshCharactersSettingsIfContextChanged(settings, { force: true }).catch((error) => {
+        console.warn('[IIG] Failed to refresh character reference descriptions:', error);
+    });
+}
+
 // ----- Reference instruction events -----
 
 function bindRefInstructionEvents(settings) {
@@ -2209,6 +2698,7 @@ function bindSettingsEvents() {
     bindStylesSectionEvents(settings);
     bindLorebookBarEvents(settings);
     bindAdditionalReferencesEvents(settings);
+    bindCharacterReferenceDescriptionEvents(settings);
     bindRefInstructionEvents(settings);
     bindDebugSectionEvents(settings);
 
@@ -2240,6 +2730,7 @@ export function createSettingsUI() {
                 <div class="iig-settings">
                     ${buildApiSettingsSectionHtml(settings)}
                     ${buildStylesSettingsSectionHtml(settings)}
+                    ${buildCharactersSettingsSectionHtml(settings)}
                     ${buildReferencesSettingsSectionHtml(settings)}
                     ${buildDebugSettingsSectionHtml(settings)}
                 </div>

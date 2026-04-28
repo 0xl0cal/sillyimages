@@ -313,7 +313,9 @@ export function escapeRegex(text) {
 export function sanitizeForHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
-    return div.innerHTML;
+    return div.innerHTML
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 export function sanitizeForSingleQuotedAttribute(text) {
@@ -354,7 +356,7 @@ export function dataUrlToBlob(dataUrl) {
  * @param {string | URL} url
  * @param {RequestInit} init
  * @param {number} timeoutMs — по умолчанию 600 000 (10 минут). Некоторые
- *   image-модели (gpt-image-2 HQ, flux-kontext на бесплатных прокси,
+ *   image-модели (HQ image providers, flux-kontext на бесплатных прокси,
  *   медленные Gemini инстансы) спокойно работают 3-5 минут. Меньший
  *   таймаут давал ложные fail'ы.
  */
