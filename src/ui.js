@@ -75,7 +75,7 @@ import {
     importLorebookFromFile,
     renderIigBookMacro,
 } from './references.js';
-import { fetchModels, resolveActiveProvider, getActiveProviderMaxReferences } from './providers.js';
+import { fetchModels, resolveActiveProvider, getActiveProviderMaxReferences, A1111_RESOLUTION_PRESETS } from './providers.js';
 import { t } from './i18n.js';
 // Относительный путь: /scripts/extensions/third-party/sillyimages/src/ui.js → /scripts/popup.js
 import { Popup } from '../../../../popup.js';
@@ -276,11 +276,17 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
             </div>
 
             <div class="iig-settings-card-nested ${settings.apiType === 'a1111' ? '' : 'iig-hidden'}" id="iig_a1111_section">
-                <h4>${t`txt2img parameters`}</h4>
+                <p class="hint"><b>${t`Important:`}</b> ${t`run Stable Diffusion with the`} <tt>--api</tt> ${t`flag. The server must be reachable from the SillyTavern host.`}</p>
+
+                <div>
+                    <button id="iig_a1111_validate" class="menu_button iig-button-inline" type="button">
+                        <i class="fa-solid fa-check"></i> ${t`Validate connection`}
+                    </button>
+                </div>
 
                 <div class="flex-container">
                     <div class="flex1">
-                        <label for="iig_a1111_sampler">${t`Sampler`}</label>
+                        <label for="iig_a1111_sampler">${t`Sampling method`}</label>
                         <select id="iig_a1111_sampler" class="text_pole">
                             <option value="${sanitizeForHtml(settings.a1111Sampler || 'Euler a')}" selected>${sanitizeForHtml(settings.a1111Sampler || 'Euler a')}</option>
                         </select>
@@ -294,6 +300,34 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                     <div id="iig_a1111_refresh_samplers" class="menu_button iig-a1111-end-btn" title="${t`Refresh list`}">
                         <i class="fa-solid fa-sync"></i>
                     </div>
+                </div>
+
+                <div class="flex-container">
+                    <div class="flex1">
+                        <label for="iig_a1111_vae">VAE</label>
+                        <select id="iig_a1111_vae" class="text_pole">
+                            <option value="${sanitizeForHtml(settings.a1111Vae || '')}" selected>${sanitizeForHtml(settings.a1111Vae || 'N/A')}</option>
+                        </select>
+                    </div>
+                    <div class="flex1">
+                        <label for="iig_a1111_hr_upscaler">${t`Upscaler`}</label>
+                        <select id="iig_a1111_hr_upscaler" class="text_pole">
+                            <option value="${sanitizeForHtml(settings.a1111HrUpscaler || '')}" selected>${sanitizeForHtml(settings.a1111HrUpscaler || '—')}</option>
+                        </select>
+                    </div>
+                    <div id="iig_a1111_refresh_vae_upscalers" class="menu_button iig-a1111-end-btn" title="${t`Refresh list`}">
+                        <i class="fa-solid fa-sync"></i>
+                    </div>
+                </div>
+
+                <div>
+                    <label for="iig_a1111_resolution">${t`Resolution preset`}</label>
+                    <select id="iig_a1111_resolution" class="text_pole">
+                        <option value="" ${!settings.a1111Resolution ? 'selected' : ''}>${t`(custom — set width/height below)`}</option>
+                        ${A1111_RESOLUTION_PRESETS.map((p) =>
+                            `<option value="${sanitizeForHtml(p.id)}" ${settings.a1111Resolution === p.id ? 'selected' : ''}>${sanitizeForHtml(p.name)}</option>`,
+                        ).join('')}
+                    </select>
                 </div>
 
                 <div class="flex-container">
@@ -325,13 +359,61 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                     </div>
                 </div>
 
+                <div class="flex-container">
+                    <div class="alignitemscenter flex-container flexFlowColumn flexGrow flexShrink gap0 flexBasis48p">
+                        <small><span>${t`Upscale by`}</span></small>
+                        <input class="neo-range-slider" type="range" id="iig_a1111_hr_scale" min="1" max="4" step="0.05" value="${settings.a1111HrScale}">
+                        <input class="neo-range-input" type="number" id="iig_a1111_hr_scale_value" data-for="iig_a1111_hr_scale" min="1" max="4" step="0.05" value="${settings.a1111HrScale}">
+                    </div>
+                    <div class="alignitemscenter flex-container flexFlowColumn flexGrow flexShrink gap0 flexBasis48p">
+                        <small><span>${t`Denoising strength`}</span></small>
+                        <input class="neo-range-slider" type="range" id="iig_a1111_denoising" min="0" max="1" step="0.01" value="${settings.a1111DenoisingStrength}">
+                        <input class="neo-range-input" type="number" id="iig_a1111_denoising_value" data-for="iig_a1111_denoising" min="0" max="1" step="0.01" value="${settings.a1111DenoisingStrength}">
+                    </div>
+                </div>
+
+                <div class="flex-container">
+                    <div class="alignitemscenter flex-container flexFlowColumn flexGrow flexShrink gap0 flexBasis48p">
+                        <small><span>${t`Hires steps (2nd pass, 0 = same as steps)`}</span></small>
+                        <input class="neo-range-slider" type="range" id="iig_a1111_hr_steps" min="0" max="150" step="1" value="${settings.a1111HrSecondPassSteps}">
+                        <input class="neo-range-input" type="number" id="iig_a1111_hr_steps_value" data-for="iig_a1111_hr_steps" min="0" max="150" step="1" value="${settings.a1111HrSecondPassSteps}">
+                    </div>
+                    <div class="alignitemscenter flex-container flexFlowColumn flexGrow flexShrink gap0 flexBasis48p">
+                        <small><span>CLIP Skip</span></small>
+                        <input class="neo-range-slider" type="range" id="iig_a1111_clip_skip" min="1" max="12" step="1" value="${settings.a1111ClipSkip}">
+                        <input class="neo-range-input" type="number" id="iig_a1111_clip_skip_value" data-for="iig_a1111_clip_skip" min="1" max="12" step="1" value="${settings.a1111ClipSkip}">
+                    </div>
+                </div>
+
+                <div class="flex-container">
+                    <label class="flex1 checkbox_label">
+                        <input id="iig_a1111_restore_faces" type="checkbox" ${settings.a1111RestoreFaces ? 'checked' : ''}>
+                        <span>${t`Restore Faces`}</span>
+                    </label>
+                    <label class="flex1 checkbox_label">
+                        <input id="iig_a1111_enable_hr" type="checkbox" ${settings.a1111EnableHr ? 'checked' : ''}>
+                        <span>Hires. Fix</span>
+                    </label>
+                </div>
+                <div>
+                    <label class="checkbox_label">
+                        <input id="iig_a1111_adetailer_face" type="checkbox" ${settings.a1111AdetailerFace ? 'checked' : ''}>
+                        <span>${t`Use ADetailer (face)`}</span>
+                    </label>
+                </div>
+
                 <div>
                     <label for="iig_a1111_seed">${t`Seed (-1 = random)`}</label>
                     <input id="iig_a1111_seed" type="number" class="text_pole" min="-1" step="1" value="${settings.a1111Seed}">
                 </div>
 
                 <div>
-                    <label for="iig_a1111_negative">${t`Negative prompt`}</label>
+                    <label for="iig_a1111_prompt_prefix">${t`Fixed prompt prefix`}</label>
+                    <textarea id="iig_a1111_prompt_prefix" class="text_pole textarea_compact" rows="2" placeholder="${t`(empty)`}">${sanitizeForHtml(settings.a1111PromptPrefix || '')}</textarea>
+                </div>
+
+                <div>
+                    <label for="iig_a1111_negative">${t`Fixed negative prompt prefix`}</label>
                     <textarea id="iig_a1111_negative" class="text_pole textarea_compact" rows="2" placeholder="${t`(empty)`}">${sanitizeForHtml(settings.a1111NegativePrompt || '')}</textarea>
                 </div>
             </div>
@@ -1167,9 +1249,108 @@ function bindApiSectionEvents(settings, updateVisibility) {
     bindRangePair('iig_a1111_height', 'iig_a1111_height_value', 'a1111Height', (v) => parseInt(v, 10) || 512);
     bindRangePair('iig_a1111_steps', 'iig_a1111_steps_value', 'a1111Steps', (v) => parseInt(v, 10) || 20);
     bindRangePair('iig_a1111_cfg', 'iig_a1111_cfg_value', 'a1111CfgScale', (v) => parseFloat(v) || 7);
+    bindRangePair('iig_a1111_hr_scale', 'iig_a1111_hr_scale_value', 'a1111HrScale', (v) => parseFloat(v) || 2);
+    bindRangePair('iig_a1111_denoising', 'iig_a1111_denoising_value', 'a1111DenoisingStrength', (v) => parseFloat(v) || 0.7);
+    bindRangePair('iig_a1111_hr_steps', 'iig_a1111_hr_steps_value', 'a1111HrSecondPassSteps', (v) => parseInt(v, 10) || 0);
+    bindRangePair('iig_a1111_clip_skip', 'iig_a1111_clip_skip_value', 'a1111ClipSkip', (v) => parseInt(v, 10) || 1);
+
     document.getElementById('iig_a1111_seed')?.addEventListener('input', (e) => {
         settings.a1111Seed = parseInt(e.target.value, 10) || -1;
         saveSettings();
+    });
+    document.getElementById('iig_a1111_prompt_prefix')?.addEventListener('input', (e) => {
+        settings.a1111PromptPrefix = e.target.value;
+        saveSettings();
+    });
+    document.getElementById('iig_a1111_vae')?.addEventListener('change', (e) => {
+        settings.a1111Vae = e.target.value;
+        saveSettings();
+    });
+    document.getElementById('iig_a1111_hr_upscaler')?.addEventListener('change', (e) => {
+        settings.a1111HrUpscaler = e.target.value;
+        saveSettings();
+    });
+    document.getElementById('iig_a1111_restore_faces')?.addEventListener('change', (e) => {
+        settings.a1111RestoreFaces = !!e.target.checked;
+        saveSettings();
+    });
+    document.getElementById('iig_a1111_enable_hr')?.addEventListener('change', (e) => {
+        settings.a1111EnableHr = !!e.target.checked;
+        saveSettings();
+    });
+    document.getElementById('iig_a1111_adetailer_face')?.addEventListener('change', (e) => {
+        settings.a1111AdetailerFace = !!e.target.checked;
+        saveSettings();
+    });
+
+    // Resolution preset → fills width/height
+    document.getElementById('iig_a1111_resolution')?.addEventListener('change', (e) => {
+        const id = e.target.value;
+        settings.a1111Resolution = id;
+        const preset = A1111_RESOLUTION_PRESETS.find((p) => p.id === id);
+        if (preset) {
+            settings.a1111Width = preset.width;
+            settings.a1111Height = preset.height;
+            const setPair = (rangeId, numberId, val) => {
+                const r = document.getElementById(rangeId);
+                const n = document.getElementById(numberId);
+                if (r) r.value = String(val);
+                if (n) n.value = String(val);
+            };
+            setPair('iig_a1111_width', 'iig_a1111_width_value', settings.a1111Width);
+            setPair('iig_a1111_height', 'iig_a1111_height_value', settings.a1111Height);
+        }
+        saveSettings();
+    });
+
+    // Validate connection (ping)
+    document.getElementById('iig_a1111_validate')?.addEventListener('click', async () => {
+        const btn = document.getElementById('iig_a1111_validate');
+        btn?.classList.add('loading');
+        try {
+            const provider = resolveActiveProvider(getSettings());
+            if (provider?.id !== 'a1111') return;
+            await provider.ping();
+            toastr.success(t`A1111 server is reachable`, t`Image Generation`);
+        } catch (err) {
+            iigLog('ERROR', 'A1111 validate failed:', err);
+            toastr.error(t`Cannot reach A1111: ${err.message || err}`, t`Image Generation`);
+        } finally {
+            btn?.classList.remove('loading');
+        }
+    });
+
+    // Refresh VAE + Upscalers list
+    document.getElementById('iig_a1111_refresh_vae_upscalers')?.addEventListener('click', async () => {
+        const btn = document.getElementById('iig_a1111_refresh_vae_upscalers');
+        btn?.classList.add('loading');
+        try {
+            const provider = resolveActiveProvider(getSettings());
+            if (provider?.id !== 'a1111') return;
+            const [vaes, upscalers] = await Promise.all([provider.fetchVaes(), provider.fetchUpscalers()]);
+            const vaeSelect = document.getElementById('iig_a1111_vae');
+            const upSelect = document.getElementById('iig_a1111_hr_upscaler');
+            if (vaeSelect instanceof HTMLSelectElement) {
+                const cur = settings.a1111Vae || '';
+                const opts = ['', ...vaes];
+                vaeSelect.innerHTML = opts
+                    .map((v) => `<option value="${sanitizeForHtml(v)}" ${v === cur ? 'selected' : ''}>${sanitizeForHtml(v || 'N/A')}</option>`)
+                    .join('');
+            }
+            if (upSelect instanceof HTMLSelectElement) {
+                const cur = settings.a1111HrUpscaler || '';
+                const opts = ['', ...upscalers];
+                upSelect.innerHTML = opts
+                    .map((u) => `<option value="${sanitizeForHtml(u)}" ${u === cur ? 'selected' : ''}>${sanitizeForHtml(u || '—')}</option>`)
+                    .join('');
+            }
+            toastr.success(t`VAEs/upscalers updated`, t`Image Generation`);
+        } catch (err) {
+            iigLog('ERROR', 'A1111 refresh VAE/upscalers failed:', err);
+            toastr.error(t`Failed to fetch VAEs/upscalers`, t`Image Generation`);
+        } finally {
+            btn?.classList.remove('loading');
+        }
     });
 
     // Swap width <-> height
