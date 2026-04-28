@@ -41,6 +41,147 @@ const PERSONAS_MODULE_PATHS = Object.freeze([
 let personasModulePromise = null;
 let cachedUserAvatars = [];
 
+function ensureCharacterReferenceDescriptionStore(settings = getSettings()) {
+    if (!settings.characterReferenceDescriptions || typeof settings.characterReferenceDescriptions !== 'object') {
+        settings.characterReferenceDescriptions = {};
+    }
+    if (!settings.characterReferenceDescriptions.characters || typeof settings.characterReferenceDescriptions.characters !== 'object') {
+        settings.characterReferenceDescriptions.characters = {};
+    }
+    if (!settings.characterReferenceDescriptions.users || typeof settings.characterReferenceDescriptions.users !== 'object') {
+        settings.characterReferenceDescriptions.users = {};
+    }
+    if (!settings.characterReferenceDescriptions.displayNames || typeof settings.characterReferenceDescriptions.displayNames !== 'object') {
+        settings.characterReferenceDescriptions.displayNames = {};
+    }
+    if (!settings.characterReferenceDescriptions.displayNames.characters || typeof settings.characterReferenceDescriptions.displayNames.characters !== 'object') {
+        settings.characterReferenceDescriptions.displayNames.characters = {};
+    }
+    if (!settings.characterReferenceDescriptions.displayNames.users || typeof settings.characterReferenceDescriptions.displayNames.users !== 'object') {
+        settings.characterReferenceDescriptions.displayNames.users = {};
+    }
+    return settings.characterReferenceDescriptions;
+}
+
+function normalizeReferenceDescription(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+export function getCharacterReferenceDescriptionStore(settings = getSettings()) {
+    return ensureCharacterReferenceDescriptionStore(settings);
+}
+
+export function getCharacterReferenceKeyForCharacter(character, fallbackIndex = 0) {
+    const avatar = String(character?.avatar || '').trim();
+    if (avatar) return `avatar:${avatar}`;
+    const name = String(character?.name || '').trim();
+    if (name) return `name:${name}`;
+    return `id:${fallbackIndex}`;
+}
+
+export function getUserReferenceKeyForAvatar(avatarFile) {
+    const value = String(avatarFile || '').trim();
+    return value ? `avatar:${value}` : 'no-user-avatar';
+}
+
+export function characterAvatarUrl(character) {
+    const avatar = String(character?.avatar || '').trim();
+    return avatar ? `/characters/${encodeURIComponent(avatar)}` : '';
+}
+
+export function userAvatarUrl(avatarFile) {
+    const value = String(avatarFile || '').trim();
+    return value ? `/User Avatars/${encodeURIComponent(value)}` : '';
+}
+
+export function makeReferenceObject(image, description = '', source = '') {
+    return {
+        image,
+        description: normalizeReferenceDescription(description),
+        source: String(source || '').trim(),
+    };
+}
+
+export function getReferenceImage(ref) {
+    if (ref && typeof ref === 'object' && !Array.isArray(ref)) {
+        return String(ref.image || '').trim();
+    }
+    return String(ref || '').trim();
+}
+
+export function getReferenceDescription(ref) {
+    if (ref && typeof ref === 'object' && !Array.isArray(ref)) {
+        return normalizeReferenceDescription(ref.description);
+    }
+    return '';
+}
+
+export function getReferenceSource(ref) {
+    if (ref && typeof ref === 'object' && !Array.isArray(ref)) {
+        return String(ref.source || '').trim();
+    }
+    return '';
+}
+
+export function getCurrentCharacterReferenceKey() {
+    try {
+        const context = SillyTavern.getContext();
+        const characterId = context?.characterId;
+        if (characterId === undefined || characterId === null) {
+            return 'no-character';
+        }
+        return getCharacterReferenceKeyForCharacter(context?.characters?.[characterId] || {}, characterId);
+    } catch (_error) {
+        return 'no-character';
+    }
+}
+
+export async function getCurrentUserReferenceKey(settings = getSettings()) {
+    if (settings.useActiveUserPersonaAvatar) {
+        try {
+            const personasModule = await loadPersonasModule();
+            const activeAvatarId = String(personasModule?.user_avatar || '').trim();
+            if (activeAvatarId) return `persona:${activeAvatarId}`;
+        } catch (_error) {
+            // Fall back to selected avatar below.
+        }
+    }
+    const avatarFile = String(settings.userAvatarFile || '').trim();
+    return getUserReferenceKeyForAvatar(avatarFile);
+}
+
+export function getCharacterReferenceDescription(settings = getSettings()) {
+    const store = ensureCharacterReferenceDescriptionStore(settings);
+    return String(store.characters[getCurrentCharacterReferenceKey()] || '');
+}
+
+export function setCharacterReferenceDescription(value, settings = getSettings()) {
+    setCharacterReferenceDescriptionForKey(getCurrentCharacterReferenceKey(), value, settings);
+}
+
+export function setCharacterReferenceDescriptionForKey(key, value, settings = getSettings()) {
+    const store = ensureCharacterReferenceDescriptionStore(settings);
+    store.characters[String(key || 'no-character')] = String(value || '');
+    saveSettings();
+}
+
+export async function getUserReferenceDescription(settings = getSettings()) {
+    const store = ensureCharacterReferenceDescriptionStore(settings);
+    const key = await getCurrentUserReferenceKey(settings);
+    return String(store.users[key] || '');
+}
+
+export async function setUserReferenceDescription(value, settings = getSettings()) {
+    const key = await getCurrentUserReferenceKey(settings);
+    setUserReferenceDescriptionForKey(key, value, settings);
+}
+
+export function setUserReferenceDescriptionForKey(key, value, settings = getSettings()) {
+    const store = ensureCharacterReferenceDescriptionStore(settings);
+    store.users[String(key || 'no-user-avatar')] = String(value || '');
+    saveSettings();
+}
+
 // ----- Загрузка модуля personas (для активного user persona avatar) -----
 
 export async function loadPersonasModule() {

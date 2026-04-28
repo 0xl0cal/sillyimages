@@ -479,14 +479,19 @@ export function createGeneratedMediaElement(result, tag) {
 }
 
 export function buildPersistedVideoTag(templateHtml, persistedSrc, posterSrc = '') {
+    const safeSrc = sanitizeForHtml(persistedSrc);
     let html = String(templateHtml || '').trim()
         .replace(/^<(?:img|video)\b/i, '<video controls autoplay loop muted playsinline')
         .replace(/<\/video>\s*$/i, '')
         .replace(/\/?>\s*$/i, '')
-        .replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${persistedSrc}"`);
+        .replace(/src\s*=\s*(['"])[^'"]*\1/i, () => `src="${safeSrc}"`);
+    if (!/\s+src\s*=/i.test(html)) {
+        html = html.replace(/^<video\b/i, `<video src="${safeSrc}"`);
+    }
     html = html.replace(/\s+poster\s*=\s*(['"])[\s\S]*?\1/i, '');
     if (posterSrc) {
-        html = html.replace(/^<video\b/i, `<video poster="${sanitizeForHtml(posterSrc)}"`);
+        const safePosterSrc = sanitizeForHtml(posterSrc);
+        html = html.replace(/^<video\b/i, `<video poster="${safePosterSrc}"`);
     }
     return `${html}></video>`;
 }
@@ -498,7 +503,12 @@ export function buildPendingLegacyTag(tag) {
 
 export function buildPersistedImageTag(tag, persistedSrc) {
     const templateHtml = tag?.isNewFormat ? tag.fullMatch : buildPendingLegacyTag(tag);
-    return String(templateHtml || '').replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${persistedSrc}"`);
+    const safeSrc = sanitizeForHtml(persistedSrc);
+    let html = String(templateHtml || '');
+    if (/\s+src\s*=/i.test(html)) {
+        return html.replace(/src\s*=\s*(['"])[^'"]*\1/i, () => `src="${safeSrc}"`);
+    }
+    return html.replace(/(<(?:img|video)\b[^>]*?)(\/?>)/i, (_match, openTag, close) => `${openTag} src="${safeSrc}"${close}`);
 }
 
 export function buildPersistedMediaTag(tag, generated, persistedSrc, posterSrc = '') {

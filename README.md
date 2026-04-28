@@ -129,7 +129,7 @@ tavern (tavern) — cozy wooden inn
 - Endpoint: `https://api.openai.com` (любой OpenAI-совместимый прокси).
 - Без референсов → `POST /v1/images/generations` (JSON).
 - С референсами → `POST /v1/images/edits` (multipart). Для gpt-image-* несколько референсов отправляются как `image[]`.
-- Поддерживаемые модели: gpt-image-1, gpt-image-1.5, gpt-image-2, flux-1-kontext-*, dall-e-2, dall-e-3.
+- Поддерживаемые модели: gpt-image-1, gpt-image-1.5, flux-1-kontext-*, dall-e-2, dall-e-3.
 
 ### Gemini
 

@@ -160,6 +160,16 @@ export const defaultSettings = Object.freeze({
     // именно изображать, особенно когда сами картинки референсов слабо
     // соответствуют запросу.
     sendRefDescriptions: true,
+    // Local-only character/user reference descriptions. Keys are derived from
+    // current SillyTavern character and active/selected user persona avatar.
+    characterReferenceDescriptions: {
+        characters: {},
+        users: {},
+        displayNames: {
+            characters: {},
+            users: {},
+        },
+    },
     // Connection profiles — именованные snapshot'ы настроек подключения
     // (apiType / endpoint / apiKey / model / provider-specific). Переключение
     // профиля копирует все поля из профиля в settings. См. CONNECTION_FIELDS.
