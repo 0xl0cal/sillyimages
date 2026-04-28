@@ -1549,12 +1549,12 @@ export class NaisteraProvider extends Provider {
 
 const A1111_DEFAULT_ENDPOINT = 'http://127.0.0.1:7860';
 const A1111_REQUEST_TIMEOUT_MS = 600_000;
-export const A1111_DEFAULT_SAMPLERS = Object.freeze([
+const A1111_DEFAULT_SAMPLERS = Object.freeze([
     'Euler a', 'Euler', 'LMS', 'Heun', 'DPM2', 'DPM2 a',
     'DPM++ 2S a', 'DPM++ 2M', 'DPM++ SDE', 'DPM++ 2M SDE',
     'DDIM', 'PLMS', 'UniPC', 'LCM', 'Restart',
 ]);
-export const A1111_DEFAULT_SCHEDULERS = Object.freeze([
+const A1111_DEFAULT_SCHEDULERS = Object.freeze([
     'Automatic', 'Karras', 'Exponential', 'SGM Uniform', 'Simple', 'Normal', 'DDIM', 'Beta',
 ]);
 
@@ -1604,13 +1604,10 @@ export class A1111Provider extends Provider {
         return false;
     }
 
-    validate(settings) {
-        const errors = [];
-        const ep = String(settings.endpoint || '').trim();
-        if (!ep && !A1111_DEFAULT_ENDPOINT) {
-            errors.push(t`Endpoint URL is not configured`);
-        }
-        return errors;
+    validate(_settings) {
+        // No validation needed: endpoint falls back to A1111_DEFAULT_ENDPOINT;
+        // API key optional (only for --api-auth setups).
+        return [];
     }
 
     async collectReferences(_ctx) {
@@ -1879,7 +1876,9 @@ export function validateSettings() {
     const errors = provider.validate(settings);
 
     // Общий чек: для openai/gemini требуется model.
-    if (provider.id !== 'naistera' && !settings.model) {
+    // Naistera selects model via its own dropdown; A1111 falls back to whatever
+    // checkpoint is currently loaded on the server when model field is empty.
+    if (provider.id !== 'naistera' && provider.id !== 'a1111' && !settings.model) {
         errors.push(t`Model is not selected`);
     }
 

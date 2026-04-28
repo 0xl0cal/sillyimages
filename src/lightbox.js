@@ -128,9 +128,11 @@ export function initLightbox() {
     const collectImagesFromChat = () => {
         const chat = document.getElementById('chat');
         if (!chat) return [];
-        return Array.from(chat.querySelectorAll(IMG_SELECTOR)).filter(
-            (img) => img.src && !img.src.endsWith('[IMG:GEN]'),
-        );
+        return Array.from(chat.querySelectorAll(IMG_SELECTOR)).filter((img) => {
+            // Use raw attribute, not resolved .src — empty src resolves to page URL.
+            const raw = img.getAttribute('src') || '';
+            return raw && !raw.endsWith('[IMG:GEN]');
+        });
     };
 
     const updateNavVisibility = () => {
@@ -366,7 +368,8 @@ export function initLightbox() {
         if (!img) return;
         if (!img.closest('#chat')) return;
         if (img.classList.contains('iig-error-image')) return;
-        if (!img.src || img.src.endsWith('[IMG:GEN]')) return;
+        const rawSrc = img.getAttribute('src') || '';
+        if (!rawSrc || rawSrc.endsWith('[IMG:GEN]')) return;
         e.preventDefault();
         e.stopPropagation();
         openAt(img);

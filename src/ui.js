@@ -2054,12 +2054,14 @@ function bindRefInstructionEvents(settings) {
 
 function bindDebugSectionEvents(settings) {
     document.getElementById('iig_max_retries')?.addEventListener('input', (e) => {
-        settings.maxRetries = parseInt(e.target.value) || 3;
+        const n = parseInt(e.target.value, 10);
+        settings.maxRetries = Number.isFinite(n) && n >= 0 ? n : 3;
         saveSettings();
     });
 
     document.getElementById('iig_retry_delay')?.addEventListener('input', (e) => {
-        settings.retryDelay = parseInt(e.target.value) || 1000;
+        const n = parseInt(e.target.value, 10);
+        settings.retryDelay = Number.isFinite(n) && n >= 0 ? n : 1000;
         saveSettings();
     });
 

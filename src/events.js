@@ -98,32 +98,23 @@ export async function onUserMessageRendered(messageId) {
 export function subscribeEvents() {
     const context = SillyTavern.getContext();
 
-    // Debug: log available event types
     console.log('[IIG] Available event_types:', context.event_types);
     console.log('[IIG] CHARACTER_MESSAGE_RENDERED:', context.event_types.CHARACTER_MESSAGE_RENDERED);
     console.log('[IIG] MESSAGE_SWIPED:', context.event_types.MESSAGE_SWIPED);
 
-    // When chat is loaded/changed, add buttons to all existing messages.
     context.eventSource.on(context.event_types.CHAT_CHANGED, () => {
         iigLog('INFO', 'CHAT_CHANGED event - adding buttons to existing messages');
-        setTimeout(() => {
-            addButtonsToExistingMessages();
-        }, 100);
+        setTimeout(() => addButtonsToExistingMessages(), 100);
     });
 
-    // Wrapper to add debug logging
     const handleMessage = async (messageId) => {
         console.log('[IIG] Event triggered for message:', messageId);
         await onMessageReceived(messageId);
     };
 
-    // Listen for new messages AFTER they're rendered in DOM.
-    // CHARACTER_MESSAGE_RENDERED fires after addOneMessage() completes.
-    // This is the ONLY event we handle — no auto-retry on swipe/update.
     context.eventSource.makeLast(context.event_types.CHARACTER_MESSAGE_RENDERED, handleMessage);
 
-    // User-message processing is opt-in via processUserMessages. Subscribe always
-    // (the handler itself early-exits if the toggle is off).
+    // User-message processing is opt-in via processUserMessages — handler early-exits when off.
     if (context.event_types.USER_MESSAGE_RENDERED) {
         context.eventSource.makeLast(context.event_types.USER_MESSAGE_RENDERED, async (messageId) => {
             console.log('[IIG] USER_MESSAGE_RENDERED:', messageId);

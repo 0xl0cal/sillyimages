@@ -147,9 +147,10 @@ async function regenerateOne(img) {
     const messageId = parseInt(messageEl.getAttribute('mesid') || '', 10);
     if (Number.isNaN(messageId)) return;
 
-    // tagIndex = position among raw IMG_SELECTOR (DOM order, ignoring our wrappers)
-    const allImgs = Array.from(messageEl.querySelectorAll(IMG_SELECTOR));
-    const tagIndex = allImgs.indexOf(img);
+    // tagIndex must match regenerateSingleTag's selector (img + video) so we
+    // don't regenerate the wrong tag when a Naistera video precedes the image.
+    const allMedia = Array.from(messageEl.querySelectorAll('img[data-iig-instruction], video[data-iig-instruction]'));
+    const tagIndex = allMedia.indexOf(img);
     if (tagIndex < 0) return;
 
     await regenerateSingleTag(messageId, tagIndex);
