@@ -742,6 +742,12 @@ export class OpenAIProvider extends Provider {
             body.response_format = 'b64_json';
         }
 
+        // moderation: 'low' поддерживает gpt-image-1 family. dall-e-* не знает
+        // этот параметр — строгие прокси отдают 400.
+        if (isGptImageFamily(modelKind)) {
+            body.moderation = 'low';
+        }
+
         let response;
         try {
             response = await fetchWithTimeout(url, {
@@ -779,6 +785,8 @@ export class OpenAIProvider extends Provider {
         form.append('n', '1');
         if (size) form.append('size', size);
         if (quality) form.append('quality', quality);
+        // moderation поддерживает только gpt-image-1 family (см. _generateWithGenerations).
+        if (isGptImageFamily(modelKind)) form.append('moderation', 'low');
 
         // GPT Image family: поле `image[]` для множественных референсов
         // (OpenAI gpt-image-1 / 1.5 / 2 поддерживает multi-image edit).
