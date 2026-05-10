@@ -4,6 +4,8 @@
     "Enable image generation": "Включить генерацию картинок",
     "Process external blocks": "Работа с внешними блоками",
     "Also process user messages": "Также обрабатывать сообщения пользователя",
+    "Show inline image action buttons (download / regenerate)": "Показывать кнопки действий на картинках (скачать / перегенерировать)",
+    "Inline buttons opacity": "Прозрачность кнопок на картинках",
     "API type": "Тип API",
     "OpenAI-compatible (/v1/images/generations)": "OpenAI-совместимый (/v1/images/generations)",
     "Gemini-compatible (nano-banana)": "Gemini-совместимый (nano-banana)",

@@ -366,29 +366,29 @@
 
 .iig-character-tile-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
+    grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+    gap: 6px;
 }
 
 .iig-character-saved-tile {
     width: 100%;
-    padding: 8px;
+    padding: 4px;
     text-align: center;
     grid-template-columns: minmax(0, 1fr);
     justify-items: center;
-    gap: 6px;
+    gap: 3px;
 }
 
 .iig-character-saved-tile .iig-character-tile-avatar,
 .iig-character-saved-tile .iig-character-tile-avatar img,
 .iig-character-saved-tile .iig-character-tile-avatar-placeholder {
-    width: 72px;
-    height: 72px;
+    width: 56px;
+    height: 56px;
 }
 
 .iig-character-saved-tile .iig-character-tile-avatar img,
 .iig-character-saved-tile .iig-character-tile-avatar-placeholder {
-    border-radius: 12px;
+    border-radius: 10px;
 }
 
 .iig-character-saved-tile .iig-character-tile-meta {
@@ -398,6 +398,15 @@
 
 .iig-character-saved-tile .iig-character-tile-meta b {
     max-width: 100%;
+    font-size: 0.72em;
+    line-height: 1.15;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    word-break: break-word;
 }
 
 .iig-character-saved-tile:hover {
@@ -411,7 +420,13 @@
 
 @media (max-width: 520px) {
     .iig-character-tile-grid {
-        grid-template-columns: minmax(0, 1fr);
+        grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+    }
+    .iig-character-saved-tile .iig-character-tile-avatar,
+    .iig-character-saved-tile .iig-character-tile-avatar img,
+    .iig-character-saved-tile .iig-character-tile-avatar-placeholder {
+        width: 48px;
+        height: 48px;
     }
 }
 
@@ -1240,7 +1255,7 @@
     backdrop-filter: blur(6px);
     -webkit-backdrop-filter: blur(6px);
     z-index: 2;
-    opacity: 0.65;
+    opacity: var(--iig-actions-opacity, 0.65);
     transition: opacity 0.15s ease;
 }
 
@@ -1250,9 +1265,8 @@
     opacity: 1;
 }
 
-/* Touch devices: full opacity always (no hover state). */
-@media (hover: none) {
-    .iig-img-actions { opacity: 1; }
+body.iig-actions-hidden .iig-img-actions {
+    display: none !important;
 }
 
 .iig-img-action {

@@ -394,6 +394,29 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
         providerOptions: options,
     });
 
+    iigLog('INFO', `References collected for ${settings.apiType}: ${references.length} ref(s)`);
+    for (let i = 0; i < references.length; i++) {
+        const ref = references[i];
+        const src = getReferenceSource(ref) || '?';
+        const desc = getReferenceDescription(ref);
+        const img = getReferenceImage(ref);
+        const imgInfo = img.startsWith('data:')
+            ? `data-url(${img.length} chars)`
+            : (img ? `base64(${img.length} chars)` : 'EMPTY');
+        const descPreview = desc ? `"${desc.substring(0, 100)}${desc.length > 100 ? '…' : ''}"` : '(no description)';
+        iigLog('INFO', `  ref[${i}] source=${src} desc=${descPreview} img=${imgInfo}`);
+    }
+    iigLog(
+        'INFO',
+        `Prompt: ${prompt.length} chars, style="${style || ''}", options=${JSON.stringify({
+            aspectRatio: options.aspectRatio,
+            imageSize: options.imageSize,
+            quality: options.quality,
+            preset: options.preset,
+            messageId: options.messageId,
+        })}`
+    );
+
     // Записываем snapshot (in-memory, перезатирается на каждой генерации) для
     // кнопки «Show last request» в настройках. Делаем до generate, чтобы
     // snapshot был доступен даже если провайдер упадёт.
@@ -502,9 +525,12 @@ export async function processMessageTags(messageId) {
     if (message.is_user && !settings.processUserMessages) return;
 
     const tags = await parseMessageImageTags(message, { checkExistence: true });
-    iigLog('INFO', `parseImageTags returned: ${tags.length} tags`);
-    if (tags.length > 0) {
-        iigLog('INFO', `First tag: ${JSON.stringify(tags[0]).substring(0, 200)}`);
+    iigLog('INFO', `parseImageTags returned: ${tags.length} tags (message ${messageId}, is_user=${!!message.is_user})`);
+    for (let i = 0; i < tags.length; i++) {
+        const t = tags[i];
+        const promptPreview = String(t.prompt || '').substring(0, 60);
+        const srcPreview = String(t.existingSrc || '').substring(0, 50);
+        iigLog('INFO', `  tag[${i}] prompt="${promptPreview}" newFormat=${!!t.isNewFormat} src="${srcPreview}"`);
     }
     if (tags.length === 0) {
         iigLog('INFO', 'No tags found by parser');
@@ -863,6 +889,11 @@ export async function regenerateMessageImages(messageId) {
     try {
         const tags = await parseMessageImageTags(message, { forceAll: true });
 
+        iigLog('INFO', `regenerateMessageImages(messageId=${messageId}): parser found ${tags.length} tag(s)`);
+        for (let i = 0; i < tags.length; i++) {
+            iigLog('INFO', `  tag[${i}] prompt: "${String(tags[i].prompt || '').substring(0, 60)}"`);
+        }
+
         if (tags.length === 0) {
             toastr.warning(t`No tags to regenerate`, t`Image Generation`);
             return;
@@ -873,11 +904,13 @@ export async function regenerateMessageImages(messageId) {
 
         const messageElement = document.querySelector(`#chat .mes[mesid="${messageId}"]`);
         if (!messageElement) {
+            iigLog('WARN', `regenerateMessageImages: .mes[mesid="${messageId}"] not found in DOM`);
             return;
         }
 
         const mesTextEl = messageElement.querySelector('.mes_text');
         if (!mesTextEl) {
+            iigLog('WARN', `regenerateMessageImages: .mes_text not found inside message ${messageId}`);
             return;
         }
 
@@ -891,6 +924,7 @@ export async function regenerateMessageImages(messageId) {
             const tag = tags[index];
             const tagId = `iig-regen-${messageId}-${index}`;
             applyConfiguredStyleToTag(tag, settings);
+            iigLog('INFO', `regen iter[${index}/${tags.length - 1}] start: prompt="${String(tag.prompt || '').substring(0, 40)}"`);
 
             try {
                 // Find the existing rendered media element with data-iig-instruction
@@ -898,6 +932,7 @@ export async function regenerateMessageImages(messageId) {
                     mesTextEl.querySelectorAll('img[data-iig-instruction], video[data-iig-instruction]')
                 );
                 const existingMedia = existingMediaList[index] || existingMediaList[0] || null;
+                iigLog('INFO', `regen iter[${index}] DOM media count=${existingMediaList.length}, picked=${existingMedia ? (existingMediaList[index] === existingMedia ? `[${index}]` : '[0]-fallback') : 'NONE'}`);
                 if (existingMedia) {
                     // Preserve the instruction for future regenerations
                     const instruction = existingMedia.getAttribute('data-iig-instruction');
@@ -938,6 +973,9 @@ export async function regenerateMessageImages(messageId) {
                         ? t`Video ${index + 1}/${tags.length} ready`
                         : t`Image ${index + 1}/${tags.length} ready`;
                     toastr.success(readyMsg, t`Image Generation`, { timeOut: 2000 });
+                    iigLog('INFO', `regen iter[${index}] complete`);
+                } else {
+                    iigLog('WARN', `regen iter[${index}] skipped: no DOM element found`);
                 }
             } catch (error) {
                 iigLog('ERROR', `Regeneration failed for tag ${index}:`, error);

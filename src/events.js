@@ -22,7 +22,12 @@ export function addRegenerateButton(messageElement, messageId) {
     btn.tabIndex = 0;
     btn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        await regenerateMessageImages(messageId);
+        const liveMesId = parseInt(messageElement.getAttribute('mesid') || '', 10);
+        const targetId = Number.isFinite(liveMesId) ? liveMesId : messageId;
+        if (targetId !== messageId) {
+            iigLog('INFO', `regenerate-btn click: captured messageId=${messageId} differs from live mesid=${liveMesId}; using ${targetId}`);
+        }
+        await regenerateMessageImages(targetId);
     });
 
     extraMesButtons.appendChild(btn);

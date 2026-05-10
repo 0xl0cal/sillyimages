@@ -127,6 +127,14 @@ function isOpenRouterAiHost(url) {
     }
 }
 
+function isGoogleNativeHost(url) {
+    try {
+        return new URL(url).hostname.endsWith('googleapis.com');
+    } catch {
+        return false;
+    }
+}
+
 // ----- Model detection helpers -----
 
 export function isImageModel(modelId) {
@@ -968,12 +976,16 @@ export class GeminiProvider extends Provider {
 
         iigLog('INFO', `Gemini request config: model=${model}, aspectRatio=${aspectRatio}, imageSize=${imageSize || '(default)'}, promptLength=${fullPrompt.length}, refImages=${references.length}`);
 
+        const authHeader = isGoogleNativeHost(url)
+            ? { 'x-goog-api-key': settings.apiKey }
+            : { 'Authorization': `Bearer ${settings.apiKey}` };
+
         let response;
         try {
             response = await fetchWithTimeout(url, {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${settings.apiKey}`,
+                    ...authHeader,
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(body),

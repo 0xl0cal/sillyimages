@@ -90,6 +90,8 @@ export const defaultSettings = Object.freeze({
     processUserMessages: false,
     imageContextEnabled: false,
     imageContextCount: 1,
+    imageActionsEnabled: true,
+    imageActionsOpacity: 80,
     styles: [],
     activeStyleId: '',
     apiType: 'openai', // 'openai' | 'gemini' | 'openrouter' | 'electronhub' | 'naistera' | 'a1111'

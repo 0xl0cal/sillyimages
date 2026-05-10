@@ -4,6 +4,8 @@
     "Enable image generation": "Увімкнути генерацію зображень",
     "Process external blocks": "Обробляти зовнішні блоки",
     "Also process user messages": "Також обробляти повідомлення користувача",
+    "Show inline image action buttons (download / regenerate)": "Показувати кнопки дій на зображеннях (завантажити / перегенерувати)",
+    "Inline buttons opacity": "Прозорість кнопок на зображеннях",
     "API type": "Тип API",
     "OpenAI-compatible (/v1/images/generations)": "OpenAI-сумісний (/v1/images/generations)",
     "Gemini-compatible (nano-banana)": "Gemini-сумісний (nano-banana)",
