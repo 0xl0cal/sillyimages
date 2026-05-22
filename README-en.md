@@ -157,6 +157,8 @@ Line format: `full-name (primary-trigger) — description`. If only one lorebook
 
 - Endpoint: `https://naistera.org` (default). Token comes from the Telegram bot.
 - `POST /api/generate`, body: `{ prompt, model, aspect_ratio, preset?, reference_images? }`.
+- Can use polling: send `sync: false`, receive `job_id`, then read
+  `GET /api/generate/jobs/{job_id}` with the same Bearer token.
 - Models: `grok`, `grok-pro`, `nano banana 2`, `novelai`. References supported by `grok` and `nano banana 2`.
 - Can return video (`media_kind: "video"`) — the "Enable video generation" option.
 

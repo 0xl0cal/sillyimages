@@ -1441,6 +1441,57 @@ export class NaisteraProvider extends Provider {
         return naisteraModelSupportsReferences(settings.naisteraModel);
     }
 
+    async pollJob(endpoint, jobId, settings) {
+        const base = endpoint.replace(/\/api\/generate\/?$/i, '').replace(/\/$/, '');
+        const url = `${base}/api/generate/jobs/${encodeURIComponent(jobId)}`;
+        const intervalMs = Math.max(1000, Math.min(30000, Number(settings.naisteraPollIntervalMs) || 3000));
+        const timeoutMs = Math.max(30000, Math.min(900000, Number(settings.naisteraPollTimeoutMs) || 600000));
+        const started = Date.now();
+        while (Date.now() - started < timeoutMs) {
+            const response = await fetch(url, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${settings.apiKey}`,
+                    'Accept': 'application/json',
+                },
+            });
+            const text = await response.text().catch(() => '');
+            let result = null;
+            try {
+                result = text ? JSON.parse(text) : null;
+            } catch (_err) {
+                result = null;
+            }
+            if (!response.ok) {
+                throw new ProviderError({
+                    message: `Polling API Error (${response.status}): ${String(text).slice(0, 800)}`,
+                    code: String(response.status),
+                    status: response.status,
+                    retryable: isRetryableHttpStatus(response.status),
+                    providerId: 'naistera',
+                });
+            }
+            const status = String(result?.status || '').toLowerCase();
+            if (status === 'completed' || result?.data_url) return result;
+            if (status === 'failed' || result?.error) {
+                throw new ProviderError({
+                    message: `Generation failed: ${result?.detail || result?.error?.detail || 'Unknown Error'}`,
+                    code: String(result?.error?.status_code || 'failed'),
+                    status: Number(result?.error?.status_code) || 0,
+                    retryable: isRetryableHttpStatus(Number(result?.error?.status_code) || 0),
+                    providerId: 'naistera',
+                });
+            }
+            await new Promise((resolve) => setTimeout(resolve, intervalMs));
+        }
+        throw new ProviderError({
+            message: `Naistera polling timed out after ${Math.round(timeoutMs / 1000)}s`,
+            code: 'timeout',
+            retryable: true,
+            providerId: 'naistera',
+        });
+    }
+
     async collectReferences({ prompt: _prompt, messageId, matchedAdditionalRefs = [], providerOptions = {} }) {
         const settings = getSettings();
         const normalizedModel = normalizeNaisteraModel(providerOptions.model || settings.naisteraModel);
@@ -1512,6 +1563,9 @@ export class NaisteraProvider extends Provider {
             body.video_test_mode = true;
             body.video_test_every_n_messages = videoEveryN;
         }
+        if (settings.naisteraPolling) {
+            body.sync = false;
+        }
 
         let response;
         try {
@@ -1554,7 +1608,10 @@ export class NaisteraProvider extends Provider {
             });
         }
 
-        const result = await response.json();
+        let result = await response.json();
+        if (result?.job_id && !result?.data_url) {
+            result = await this.pollJob(endpoint, result.job_id, settings);
+        }
         if (!result?.data_url) {
             throw new ProviderError({
                 message: 'No data_url in response',
