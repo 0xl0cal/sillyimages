@@ -276,6 +276,22 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
             </div>
 
             <div class="iig-settings-card-nested ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}" id="iig_naistera_video_section">
+                <h4>${t`Polling`}</h4>
+                <label class="checkbox_label">
+                    <input type="checkbox" id="iig_naistera_polling" ${settings.naisteraPolling ? 'checked' : ''}>
+                    <span>${t`Use job polling API`}</span>
+                </label>
+                <div class="flex-container ${settings.naisteraPolling ? '' : 'iig-hidden'}" id="iig_naistera_polling_row">
+                    <div class="flex1">
+                        <label for="iig_naistera_poll_interval">${t`Poll interval (ms)`}</label>
+                        <input type="number" id="iig_naistera_poll_interval" class="text_pole" min="1000" max="30000" step="500" value="${Number(settings.naisteraPollIntervalMs) || 3000}">
+                    </div>
+                    <div class="flex1">
+                        <label for="iig_naistera_poll_timeout">${t`Poll timeout (ms)`}</label>
+                        <input type="number" id="iig_naistera_poll_timeout" class="text_pole" min="30000" max="900000" step="10000" value="${Number(settings.naisteraPollTimeoutMs) || 600000}">
+                    </div>
+                </div>
+
                 <h4>${t`Video`}</h4>
                 <label class="checkbox_label">
                     <input type="checkbox" id="iig_naistera_video_test" ${settings.naisteraVideoTest ? 'checked' : ''}>
@@ -1436,6 +1452,26 @@ function bindApiSectionEvents(settings, updateVisibility) {
         settings.naisteraVideoTest = e.target.checked;
         saveSettings();
         updateVisibility();
+    });
+
+    document.getElementById('iig_naistera_polling')?.addEventListener('change', (e) => {
+        settings.naisteraPolling = e.target.checked;
+        saveSettings();
+        updateVisibility();
+    });
+
+    document.getElementById('iig_naistera_poll_interval')?.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value, 10);
+        settings.naisteraPollIntervalMs = Number.isFinite(value) ? Math.max(1000, Math.min(30000, value)) : 3000;
+        e.target.value = String(settings.naisteraPollIntervalMs);
+        saveSettings();
+    });
+
+    document.getElementById('iig_naistera_poll_timeout')?.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value, 10);
+        settings.naisteraPollTimeoutMs = Number.isFinite(value) ? Math.max(30000, Math.min(900000, value)) : 600000;
+        e.target.value = String(settings.naisteraPollTimeoutMs);
+        saveSettings();
     });
 
     document.getElementById('iig_naistera_video_every_n')?.addEventListener('input', (e) => {
@@ -2706,6 +2742,7 @@ function buildUpdateVisibility(settings) {
         document.getElementById('iig_naistera_model_row')?.classList.toggle('iig-hidden', !isNaistera);
         document.getElementById('iig_naistera_aspect_row')?.classList.toggle('iig-hidden', !isNaistera);
         document.getElementById('iig_naistera_video_section')?.classList.toggle('iig-hidden', !isNaistera);
+        document.getElementById('iig_naistera_polling_row')?.classList.toggle('iig-hidden', !(isNaistera && settings.naisteraPolling));
         document.getElementById('iig_naistera_video_frequency_row')?.classList.toggle('iig-hidden', !(isNaistera && settings.naisteraVideoTest));
         document.getElementById('iig_naistera_refs_section')?.classList.toggle('iig-hidden', !naisteraRefsSupported);
         document.getElementById('iig_naistera_use_active_persona_avatar_row')?.classList.toggle('iig-hidden', !(naisteraRefsSupported && settings.naisteraSendUserAvatar));

@@ -157,6 +157,8 @@ tavern (tavern) — cozy wooden inn
 
 - Endpoint: `https://naistera.org` (дефолт). Токен — из Telegram-бота.
 - `POST /api/generate`, тело: `{ prompt, model, aspect_ratio, preset?, reference_images? }`.
+- Может работать через polling: отправляет `sync: false`, получает `job_id`,
+  затем читает `GET /api/generate/jobs/{job_id}` с тем же Bearer-токеном.
 - Модели: `grok`, `grok-pro`, `nano banana 2`, `novelai`. Референсы поддерживают `grok` и `nano banana 2`.
 - Умеет возвращать видео (`media_kind: "video"`) — опция «Включить генерацию видео».
 
