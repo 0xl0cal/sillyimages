@@ -379,6 +379,30 @@ export async function fetchWithTimeout(url, init = {}, timeoutMs = 600_000, exte
     }
 }
 
+/**
+ * Promise-based delay that resolves early when `signal` aborts. Removes its
+ * abort listener on the normal timeout path, so it is safe to call repeatedly
+ * (e.g. inside a polling loop) without accumulating listeners.
+ */
+export function abortableDelay(ms, signal = null) {
+    return new Promise((resolve) => {
+        if (signal?.aborted) {
+            resolve();
+            return;
+        }
+        let timer = null;
+        const onAbort = () => {
+            clearTimeout(timer);
+            resolve();
+        };
+        timer = setTimeout(() => {
+            signal?.removeEventListener('abort', onAbort);
+            resolve();
+        }, ms);
+        signal?.addEventListener('abort', onAbort, { once: true });
+    });
+}
+
 // ----- Error / UI asset paths -----
 
 export const ERROR_IMAGE_PATH = '/scripts/extensions/third-party/sillyimages/error.svg';

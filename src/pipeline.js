@@ -22,6 +22,7 @@ import {
     ERROR_IMAGE_PATH,
     STOPPED_IMAGE_PATH,
     parseImageDataUrl,
+    abortableDelay,
     ProviderError,
 } from './utils.js';
 import {
@@ -551,7 +552,7 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
 
             const delay = baseDelay * Math.pow(2, attempt);
             onStatusUpdate?.(t`Retry in ${delay / 1000}s...`);
-            await new Promise(resolve => setTimeout(resolve, delay));
+            await abortableDelay(delay, externalSignal);
         }
     }
 

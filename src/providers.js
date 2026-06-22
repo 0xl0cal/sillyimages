@@ -32,6 +32,7 @@ import {
     imageUrlToDataUrl,
     base64ToBlob,
     fetchWithTimeout,
+    abortableDelay,
     ProviderError,
     isRetryableHttpStatus,
 } from './utils.js';
@@ -1528,13 +1529,7 @@ export class NaisteraProvider extends Provider {
                 });
             }
             // Abort-aware wait so Stop is responsive instead of blocking a full interval.
-            await new Promise((resolve) => {
-                const timer = setTimeout(resolve, intervalMs);
-                signal?.addEventListener('abort', () => {
-                    clearTimeout(timer);
-                    resolve();
-                }, { once: true });
-            });
+            await abortableDelay(intervalMs, signal);
             if (abortedByUser()) throwAborted();
         }
         throw new ProviderError({
