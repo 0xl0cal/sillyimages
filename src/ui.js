@@ -82,6 +82,8 @@ import {
     getUserReferenceKeyForAvatar,
     setCharacterReferenceDescriptionForKey,
     setUserReferenceDescriptionForKey,
+    deleteCharacterReferenceDescriptionForKey,
+    deleteUserReferenceDescriptionForKey,
     characterAvatarUrl,
     userAvatarUrl,
     loadPersonasModule,
@@ -2006,7 +2008,7 @@ function bindAdditionalReferencesEvents(settings) {
             return;
         }
 
-        refs.push({
+        refs.unshift({
             name: '',
             description: '',
             imagePath: '',
@@ -2255,12 +2257,17 @@ function bindAdditionalReferencesEvents(settings) {
 function buildSavedCharacterTileHtml(entry) {
     const safeTitle = sanitizeForHtml(entry.title);
     return `
-        <button type="button" class="menu_button iig-character-saved-tile ${entry.active ? 'iig-character-saved-tile-active' : ''}" data-iig-character-kind="${sanitizeForHtml(entry.kind)}" data-iig-character-key="${sanitizeForHtml(entry.key)}" title="${safeTitle}">
-            <div class="iig-character-tile-avatar">${buildAvatarPreviewHtml(entry.avatarUrl, entry.kind === 'char' ? 'fa-user-pen' : 'fa-user')}</div>
-            <div class="iig-character-tile-meta">
-                <b>${safeTitle}</b>
-            </div>
-        </button>
+        <div class="iig-character-saved-tile-wrapper">
+            <button type="button" class="menu_button iig-character-saved-tile ${entry.active ? 'iig-character-saved-tile-active' : ''}" data-iig-character-kind="${sanitizeForHtml(entry.kind)}" data-iig-character-key="${sanitizeForHtml(entry.key)}" title="${safeTitle}">
+                <div class="iig-character-tile-avatar">${buildAvatarPreviewHtml(entry.avatarUrl, entry.kind === 'char' ? 'fa-user-pen' : 'fa-user')}</div>
+                <div class="iig-character-tile-meta">
+                    <b>${safeTitle}</b>
+                </div>
+            </button>
+            <button type="button" class="iig-character-saved-tile-delete" data-iig-character-kind="${sanitizeForHtml(entry.kind)}" data-iig-character-key="${sanitizeForHtml(entry.key)}" title="${t`Delete saved description`}" aria-label="${t`Delete saved description`}">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
     `;
 }
 
@@ -2617,6 +2624,27 @@ function bindCharacterReferenceDescriptionEvents(settings) {
 
     document.getElementById('iig_characters_section')?.addEventListener('click', async (e) => {
         const target = e.target instanceof Element ? e.target : null;
+        const deleteBtn = target?.closest('.iig-character-saved-tile-delete');
+        if (deleteBtn) {
+            e.preventDefault();
+            e.stopPropagation();
+            const kind = String(deleteBtn.getAttribute('data-iig-character-kind') || '');
+            const key = String(deleteBtn.getAttribute('data-iig-character-key') || '');
+            if (!kind || !key) return;
+            const confirmed = await Popup.show.confirm(
+                t`Delete saved description for this entry? This will remove its description and display name from the extension.`,
+                t`Confirm`,
+            );
+            if (!confirmed) return;
+            if (kind === 'char') {
+                deleteCharacterReferenceDescriptionForKey(key, settings);
+            } else if (kind === 'user') {
+                deleteUserReferenceDescriptionForKey(key, settings);
+            }
+            await renderSavedCharacterTiles(settings);
+            toastr.success(t`Saved description removed`, t`Image Generation`, { timeOut: 1500 });
+            return;
+        }
         const tile = target?.closest('.iig-character-saved-tile');
         if (!tile) return;
         e.preventDefault();

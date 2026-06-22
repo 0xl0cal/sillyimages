@@ -182,6 +182,28 @@ export function setUserReferenceDescriptionForKey(key, value, settings = getSett
     saveSettings();
 }
 
+export function deleteCharacterReferenceDescriptionForKey(key, settings = getSettings()) {
+    const store = ensureCharacterReferenceDescriptionStore(settings);
+    const stringKey = String(key || '');
+    if (!stringKey) return;
+    delete store.characters[stringKey];
+    if (store.displayNames?.characters) {
+        delete store.displayNames.characters[stringKey];
+    }
+    saveSettings();
+}
+
+export function deleteUserReferenceDescriptionForKey(key, settings = getSettings()) {
+    const store = ensureCharacterReferenceDescriptionStore(settings);
+    const stringKey = String(key || '');
+    if (!stringKey) return;
+    delete store.users[stringKey];
+    if (store.displayNames?.users) {
+        delete store.displayNames.users[stringKey];
+    }
+    saveSettings();
+}
+
 // ----- Загрузка модуля personas (для активного user persona avatar) -----
 
 export async function loadPersonasModule() {
@@ -901,6 +923,7 @@ export async function importAdditionalReferencesFromUrls(rawValue) {
 
     const queue = urls.slice(0, availableSlots);
     const importedNames = [];
+    const importedRefs = [];
 
     for (let index = 0; index < queue.length; index++) {
         const url = queue[index];
@@ -911,7 +934,7 @@ export async function importAdditionalReferencesFromUrls(rawValue) {
             refName: name,
         });
 
-        refs.push({
+        importedRefs.push({
             name,
             description: '',
             imagePath,
@@ -920,6 +943,8 @@ export async function importAdditionalReferencesFromUrls(rawValue) {
         });
         importedNames.push(name);
     }
+
+    refs.unshift(...importedRefs);
 
     saveSettings();
     renderAdditionalReferencesList();

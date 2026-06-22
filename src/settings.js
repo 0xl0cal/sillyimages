@@ -29,14 +29,35 @@ export const DEFAULT_REF_INSTRUCTION = '[CRITICAL: The reference image(s) above 
 const MAX_LOG_ENTRIES = 200;
 const logBuffer = [];
 
+function describeErrorLike(value) {
+    if (value instanceof Error) {
+        const bits = [`${value.name || 'Error'}: ${value.message}`];
+        if (value.code !== undefined) bits.push(`code=${value.code}`);
+        if (value.cause !== undefined && value.cause !== null) {
+            bits.push(`cause=${describeErrorLike(value.cause)}`);
+        }
+        return bits.join(' ');
+    }
+    if (value && typeof value === 'object') {
+        try {
+            return JSON.stringify(value);
+        } catch {
+            return String(value);
+        }
+    }
+    return String(value);
+}
+
 function formatLogArg(a) {
     if (a instanceof Error) {
         const parts = [`${a.name || 'Error'}: ${a.message}`];
-        // Useful custom fields on ProviderError / fetch errors / etc.
-        for (const key of ['code', 'status', 'providerId', 'cause']) {
+        for (const key of ['code', 'status', 'providerId']) {
             if (a[key] !== undefined && a[key] !== null) {
-                parts.push(`${key}=${typeof a[key] === 'object' ? JSON.stringify(a[key]) : a[key]}`);
+                parts.push(`${key}=${a[key]}`);
             }
+        }
+        if (a.cause !== undefined && a.cause !== null) {
+            parts.push(`cause=${describeErrorLike(a.cause)}`);
         }
         if (a.stack) parts.push(a.stack);
         return parts.join('\n');

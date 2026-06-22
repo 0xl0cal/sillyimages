@@ -544,12 +544,21 @@ async function parseOpenAIError(response) {
  * @param {string} endpointLabel — короткое имя endpoint-а для сообщения.
  * @param {string} providerId
  */
-function throwAsProviderError(error, endpointLabel, providerId) {
+function throwAsProviderError(error, endpointLabel, providerId, signal = null) {
     if (error instanceof ProviderError) {
         throw error;
     }
-    // AbortError = наш таймаут (fetchWithTimeout) или внешний abort.
     if (error?.name === 'AbortError') {
+        const reason = signal?.reason;
+        if (signal?.aborted && (reason === 'user-cancel' || reason?.message === 'user-cancel')) {
+            throw new ProviderError({
+                message: t`Generation stopped by user`,
+                code: 'aborted',
+                retryable: false,
+                providerId,
+                cause: error,
+            });
+        }
         throw new ProviderError({
             message: t`Request to ${endpointLabel} timed out. Check your connection and try regenerating.`,
             code: 'timeout',
@@ -705,6 +714,8 @@ export class OpenAIProvider extends Provider {
             `OpenAI generate: model=${settings.model} kind=${modelKind} refs=${references.length} size=${requestedSize} quality=${quality} raw=${!!settings.rawEndpoint}`
         );
 
+        const signal = options.signal || null;
+
         // Роутинг: есть референсы → /v1/images/edits (multipart),
         // иначе → /v1/images/generations (JSON). В raw-режиме оба пути шлются
         // на один URL (settings.endpoint целиком) — юзер сам отвечает за
@@ -719,6 +730,7 @@ export class OpenAIProvider extends Provider {
                 size: requestedSize,
                 quality,
                 references,
+                signal,
             });
         }
 
@@ -730,10 +742,11 @@ export class OpenAIProvider extends Provider {
             prompt: fullPrompt,
             size: requestedSize,
             quality,
+            signal,
         });
     }
 
-    async _generateWithGenerations({ url, apiKey, model, modelKind, prompt, size, quality }) {
+    async _generateWithGenerations({ url, apiKey, model, modelKind, prompt, size, quality, signal = null }) {
 
         const body = {
             model,
@@ -765,9 +778,9 @@ export class OpenAIProvider extends Provider {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(body),
-            }, OPENAI_REQUEST_TIMEOUT_MS);
+            }, OPENAI_REQUEST_TIMEOUT_MS, signal);
         } catch (error) {
-            throwAsProviderError(error, `OpenAI /v1/images/generations (${url})`, 'openai');
+            throwAsProviderError(error, `OpenAI /v1/images/generations (${url})`, 'openai', signal);
         }
 
         if (!response.ok) {
@@ -785,7 +798,7 @@ export class OpenAIProvider extends Provider {
         return extractImageFromResult(result);
     }
 
-    async _generateWithEdits({ url, apiKey, model, modelKind, prompt, size, quality, references }) {
+    async _generateWithEdits({ url, apiKey, model, modelKind, prompt, size, quality, references, signal = null }) {
         const form = new FormData();
 
         form.append('model', model);
@@ -819,9 +832,9 @@ export class OpenAIProvider extends Provider {
                     'Authorization': `Bearer ${apiKey}`,
                 },
                 body: form,
-            }, OPENAI_REQUEST_TIMEOUT_MS);
+            }, OPENAI_REQUEST_TIMEOUT_MS, signal);
         } catch (error) {
-            throwAsProviderError(error, `OpenAI /v1/images/edits (${url})`, 'openai');
+            throwAsProviderError(error, `OpenAI /v1/images/edits (${url})`, 'openai', signal);
         }
 
         if (!response.ok) {
@@ -979,6 +992,7 @@ export class GeminiProvider extends Provider {
         const authHeader = isGoogleNativeHost(url)
             ? { 'x-goog-api-key': settings.apiKey }
             : { 'Authorization': `Bearer ${settings.apiKey}` };
+        const signal = options.signal || null;
 
         let response;
         try {
@@ -989,9 +1003,9 @@ export class GeminiProvider extends Provider {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(body),
-            }, GEMINI_REQUEST_TIMEOUT_MS);
+            }, GEMINI_REQUEST_TIMEOUT_MS, signal);
         } catch (error) {
-            throwAsProviderError(error, `Gemini ${model}`, 'gemini');
+            throwAsProviderError(error, `Gemini ${model}`, 'gemini', signal);
         }
 
         if (!response.ok) {
@@ -1271,15 +1285,16 @@ export class OpenRouterProvider extends Provider {
             headers['X-Title'] = 'SillyTavern Inline Image Generation';
         }
 
+        const signal = options.signal || null;
         let response;
         try {
             response = await fetchWithTimeout(url, {
                 method: 'POST',
                 headers,
                 body: JSON.stringify(body),
-            }, OPENROUTER_REQUEST_TIMEOUT_MS);
+            }, OPENROUTER_REQUEST_TIMEOUT_MS, signal);
         } catch (error) {
-            throwAsProviderError(error, `OpenRouter ${model}`, 'openrouter');
+            throwAsProviderError(error, `OpenRouter ${model}`, 'openrouter', signal);
         }
 
         if (!response.ok) {
@@ -1525,6 +1540,7 @@ export class NaisteraProvider extends Provider {
             body.video_test_every_n_messages = videoEveryN;
         }
 
+        const signal = options.signal || null;
         let response;
         try {
             response = await fetch(url, {
@@ -1534,8 +1550,18 @@ export class NaisteraProvider extends Provider {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(body),
+                signal,
             });
         } catch (error) {
+            if (error?.name === 'AbortError' && signal?.aborted && (signal.reason === 'user-cancel' || signal.reason?.message === 'user-cancel')) {
+                throw new ProviderError({
+                    message: t`Generation stopped by user`,
+                    code: 'aborted',
+                    retryable: false,
+                    providerId: 'naistera',
+                    cause: error,
+                });
+            }
             const pageOrigin = window.location.origin;
             let endpointOrigin = endpoint;
             try {
@@ -1717,15 +1743,16 @@ export class A1111Provider extends Provider {
 
         iigLog('INFO', `A1111 request: model=${settings.model || '(default)'} steps=${body.steps} cfg=${body.cfg_scale} ${body.width}x${body.height} sampler=${body.sampler_name} hires=${body.enable_hr}`);
 
+        const signal = options.signal || null;
         let response;
         try {
             response = await fetchWithTimeout(url, {
                 method: 'POST',
                 headers,
                 body: JSON.stringify(body),
-            }, A1111_REQUEST_TIMEOUT_MS);
+            }, A1111_REQUEST_TIMEOUT_MS, signal);
         } catch (error) {
-            throwAsProviderError(error, 'A1111', 'a1111');
+            throwAsProviderError(error, 'A1111', 'a1111', signal);
         }
 
         if (!response.ok) {
