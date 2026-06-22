@@ -82,11 +82,14 @@ import {
     getUserReferenceKeyForAvatar,
     setCharacterReferenceDescriptionForKey,
     setUserReferenceDescriptionForKey,
+    deleteCharacterReferenceDescriptionForKey,
+    deleteUserReferenceDescriptionForKey,
     characterAvatarUrl,
     userAvatarUrl,
     loadPersonasModule,
 } from './references.js';
 import { fetchModels, resolveActiveProvider, getActiveProviderMaxReferences, A1111_RESOLUTION_PRESETS } from './providers.js';
+import { applyImageActionsStyle } from './imageActions.js';
 import { t } from './i18n.js';
 // Относительный путь: /scripts/extensions/third-party/sillyimages/src/ui.js → /scripts/popup.js
 import { Popup } from '../../../../popup.js';
@@ -158,6 +161,17 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                 <input type="checkbox" id="iig_process_user_messages" ${settings.processUserMessages ? 'checked' : ''}>
                 <span>${t`Also process user messages`}</span>
             </label>
+
+            <label class="checkbox_label">
+                <input type="checkbox" id="iig_image_actions_enabled" ${settings.imageActionsEnabled !== false ? 'checked' : ''}>
+                <span>${t`Show inline image action buttons (download / regenerate)`}</span>
+            </label>
+
+            <div class="flex-row" id="iig_image_actions_opacity_row" style="${settings.imageActionsEnabled !== false ? '' : 'display:none;'}">
+                <label for="iig_image_actions_opacity">${t`Inline buttons opacity`}</label>
+                <input type="range" id="iig_image_actions_opacity" class="flex1" min="0" max="100" step="1" value="${Number.isFinite(Number(settings.imageActionsOpacity)) ? Number(settings.imageActionsOpacity) : 80}">
+                <div id="iig_image_actions_opacity_value" style="min-width:42px;text-align:right;">${Number.isFinite(Number(settings.imageActionsOpacity)) ? Number(settings.imageActionsOpacity) : 80}%</div>
+            </div>
 
             <div class="flex-row">
                 <label for="iig_api_type">${t`API type`}</label>
@@ -1251,6 +1265,26 @@ function bindApiSectionEvents(settings, updateVisibility) {
         saveSettings();
     });
 
+    document.getElementById('iig_image_actions_enabled')?.addEventListener('change', (e) => {
+        settings.imageActionsEnabled = e.target.checked;
+        const opacityRow = document.getElementById('iig_image_actions_opacity_row');
+        if (opacityRow) {
+            opacityRow.style.display = e.target.checked ? '' : 'none';
+        }
+        applyImageActionsStyle(settings);
+        saveSettings();
+    });
+
+    document.getElementById('iig_image_actions_opacity')?.addEventListener('input', (e) => {
+        const raw = Number(e.target.value);
+        const clamped = Number.isFinite(raw) ? Math.max(0, Math.min(100, Math.round(raw))) : 80;
+        settings.imageActionsOpacity = clamped;
+        const valueLabel = document.getElementById('iig_image_actions_opacity_value');
+        if (valueLabel) valueLabel.textContent = `${clamped}%`;
+        applyImageActionsStyle(settings);
+        saveSettings();
+    });
+
     document.getElementById('iig_external_blocks')?.addEventListener('change', (e) => {
         settings.externalBlocks = e.target.checked;
         saveSettings();
@@ -2010,7 +2044,7 @@ function bindAdditionalReferencesEvents(settings) {
             return;
         }
 
-        refs.push({
+        refs.unshift({
             name: '',
             description: '',
             imagePath: '',
@@ -2257,13 +2291,19 @@ function bindAdditionalReferencesEvents(settings) {
 // ----- Character reference description events -----
 
 function buildSavedCharacterTileHtml(entry) {
+    const safeTitle = sanitizeForHtml(entry.title);
     return `
-        <button type="button" class="menu_button iig-character-saved-tile ${entry.active ? 'iig-character-saved-tile-active' : ''}" data-iig-character-kind="${sanitizeForHtml(entry.kind)}" data-iig-character-key="${sanitizeForHtml(entry.key)}">
-            <div class="iig-character-tile-avatar">${buildAvatarPreviewHtml(entry.avatarUrl, entry.kind === 'char' ? 'fa-user-pen' : 'fa-user')}</div>
-            <div class="iig-character-tile-meta">
-                <b>${sanitizeForHtml(entry.title)}</b>
-            </div>
-        </button>
+        <div class="iig-character-saved-tile-wrapper">
+            <button type="button" class="menu_button iig-character-saved-tile ${entry.active ? 'iig-character-saved-tile-active' : ''}" data-iig-character-kind="${sanitizeForHtml(entry.kind)}" data-iig-character-key="${sanitizeForHtml(entry.key)}" title="${safeTitle}">
+                <div class="iig-character-tile-avatar">${buildAvatarPreviewHtml(entry.avatarUrl, entry.kind === 'char' ? 'fa-user-pen' : 'fa-user')}</div>
+                <div class="iig-character-tile-meta">
+                    <b>${safeTitle}</b>
+                </div>
+            </button>
+            <button type="button" class="iig-character-saved-tile-delete" data-iig-character-kind="${sanitizeForHtml(entry.kind)}" data-iig-character-key="${sanitizeForHtml(entry.key)}" title="${t`Delete saved description`}" aria-label="${t`Delete saved description`}">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
     `;
 }
 
@@ -2620,6 +2660,27 @@ function bindCharacterReferenceDescriptionEvents(settings) {
 
     document.getElementById('iig_characters_section')?.addEventListener('click', async (e) => {
         const target = e.target instanceof Element ? e.target : null;
+        const deleteBtn = target?.closest('.iig-character-saved-tile-delete');
+        if (deleteBtn) {
+            e.preventDefault();
+            e.stopPropagation();
+            const kind = String(deleteBtn.getAttribute('data-iig-character-kind') || '');
+            const key = String(deleteBtn.getAttribute('data-iig-character-key') || '');
+            if (!kind || !key) return;
+            const confirmed = await Popup.show.confirm(
+                t`Delete saved description for this entry? This will remove its description and display name from the extension.`,
+                t`Confirm`,
+            );
+            if (!confirmed) return;
+            if (kind === 'char') {
+                deleteCharacterReferenceDescriptionForKey(key, settings);
+            } else if (kind === 'user') {
+                deleteUserReferenceDescriptionForKey(key, settings);
+            }
+            await renderSavedCharacterTiles(settings);
+            toastr.success(t`Saved description removed`, t`Image Generation`, { timeOut: 1500 });
+            return;
+        }
         const tile = target?.closest('.iig-character-saved-tile');
         if (!tile) return;
         e.preventDefault();

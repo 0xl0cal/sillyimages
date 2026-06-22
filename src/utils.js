@@ -382,6 +382,7 @@ export async function fetchWithTimeout(url, init = {}, timeoutMs = 600_000, exte
 // ----- Error / UI asset paths -----
 
 export const ERROR_IMAGE_PATH = '/scripts/extensions/third-party/sillyimages/error.svg';
+export const STOPPED_IMAGE_PATH = '/scripts/extensions/third-party/sillyimages/stopped.svg';
 
 // ----- Provider error -----
 

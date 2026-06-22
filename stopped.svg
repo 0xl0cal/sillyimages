@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300">
+  <rect fill="#1a1a1a" width="400" height="300" rx="8"/>
+  <rect x="170" y="70" width="60" height="60" rx="6" fill="none" stroke="#bbb" stroke-width="4"/>
+  <text x="200" y="180" text-anchor="middle" fill="#aaa" font-size="16" font-family="Arial">Генерация остановлена</text>
+  <text x="200" y="210" text-anchor="middle" fill="#666" font-size="14" font-family="Arial">Нажмите для повтора</text>
+</svg>

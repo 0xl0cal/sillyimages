@@ -9,15 +9,26 @@
  */
 
 import { t } from './i18n.js';
-import { iigLog } from './settings.js';
+import { iigLog, getSettings } from './settings.js';
 import { regenerateSingleTag } from './pipeline.js';
 
 const IMG_SELECTOR = 'img[data-iig-instruction]';
+
+export function applyImageActionsStyle(settings = getSettings()) {
+    const enabled = settings.imageActionsEnabled !== false;
+    const rawOpacity = Number(settings.imageActionsOpacity);
+    const opacity = Number.isFinite(rawOpacity)
+        ? Math.max(0, Math.min(100, rawOpacity)) / 100
+        : 0.8;
+    document.documentElement.style.setProperty('--iig-actions-opacity', String(opacity));
+    document.body.classList.toggle('iig-actions-hidden', !enabled);
+}
 
 export function initImageActions() {
     const chat = document.getElementById('chat');
     if (!chat) return;
 
+    applyImageActionsStyle();
     scanAndAttach(chat);
 
     const observer = new MutationObserver((mutations) => {
