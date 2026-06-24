@@ -187,6 +187,31 @@ function refToPreviewDataUrl(ref) {
     return value.startsWith('data:') ? value : `data:image/png;base64,${value}`;
 }
 
+function buildAvatarReferenceSnapshotBlock(references = [], settings = getSettings()) {
+    if (settings.sendRefDescriptions === false) {
+        return '';
+    }
+
+    const lines = references
+        .map((ref, index) => {
+            const source = getReferenceSource(ref);
+            if (source !== 'char' && source !== 'user') {
+                return '';
+            }
+            const description = getReferenceDescription(ref);
+            if (!description) {
+                return '';
+            }
+            const label = source === 'char' ? '{{char}} avatar' : '{{user}} avatar';
+            return `- Reference ${index + 1} (${label}): ${description}`;
+        })
+        .filter(Boolean);
+
+    return lines.length > 0
+        ? `Character reference descriptions:\n${lines.join('\n')}`
+        : '';
+}
+
 /**
  * Строит snapshot финального запроса для in-memory отображения в UI.
  * Воспроизводит apiType-зависимую логику сборки prompt'а (refInstruction
@@ -194,6 +219,12 @@ function refToPreviewDataUrl(ref) {
  */
 function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs, options, provider, settings }) {
     let snapshotPrompt = buildFinalGenerationPrompt(prompt, style, matchedAdditionalRefs || [], settings);
+    if (settings.apiType === 'openai' || settings.apiType === 'electronhub') {
+        const avatarDescriptions = buildAvatarReferenceSnapshotBlock(references, settings);
+        if (avatarDescriptions) {
+            snapshotPrompt = `${snapshotPrompt}\n\n${avatarDescriptions}`.trim();
+        }
+    }
     let refInstructionApplied = false;
 
     if (references.length > 0 && REF_INSTRUCTION_PROVIDERS.has(settings.apiType)) {

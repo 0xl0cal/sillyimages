@@ -587,13 +587,14 @@ export async function collectPreviousContextReferences(messageId, format, reques
 
 export function buildAdditionalReferenceRowsHtml(settings = getSettings()) {
     const refs = ensureAdditionalReferencesArray(settings);
+    const isPowerMode = settings.additionalReferencesMode === 'power';
 
     if (refs.length === 0) {
         return '<p class="hint">Пока пусто. Добавь референс с именем-триггером и картинкой.</p>';
     }
 
     const lastIndex = refs.length - 1;
-    return refs.map((ref, index) => {
+    return `<div class="${isPowerMode ? 'iig-additional-ref-list-power' : 'iig-additional-ref-list-simple'}">` + refs.map((ref, index) => {
         const previewSrc = normalizeStoredImagePath(ref.imagePath);
         const isAlways = ref.matchMode === 'always';
         const isEnabled = ref.enabled !== false;
@@ -606,7 +607,7 @@ export function buildAdditionalReferenceRowsHtml(settings = getSettings()) {
         const isLast = index === lastIndex;
 
         return `
-            <div class="iig-additional-ref-row ${isEnabled ? '' : 'iig-additional-ref-row-disabled'}" data-ref-index="${index}">
+            <div class="iig-additional-ref-row ${isPowerMode ? 'iig-additional-ref-row-power' : 'iig-additional-ref-row-simple'} ${isEnabled ? '' : 'iig-additional-ref-row-disabled'}" data-ref-index="${index}">
                 <div class="iig-additional-ref-content">
                     <div class="iig-additional-ref-preview">
                         ${previewHtml}
@@ -636,10 +637,10 @@ export function buildAdditionalReferenceRowsHtml(settings = getSettings()) {
                         </div>
                         <textarea
                             class="text_pole flex1 iig-additional-ref-description"
-                            rows="2"
+                            rows="${isPowerMode ? '2' : '1'}"
                             placeholder="${t`Reference description`}"
                         >${sanitizeForHtml(ref.description || '')}</textarea>
-                        <div class="iig-additional-ref-lorebook-grid">
+                        <div class="iig-additional-ref-lorebook-grid ${isPowerMode ? '' : 'iig-hidden'}">
                             <input
                                 type="text"
                                 class="text_pole iig-additional-ref-group"
@@ -666,11 +667,11 @@ export function buildAdditionalReferenceRowsHtml(settings = getSettings()) {
                                 <input type="checkbox" class="iig-additional-ref-always" ${isAlways ? 'checked' : ''}>
                                 <span>${isAlways ? t`Always send` : t`Send on match`}</span>
                             </label>
-                            <label class="checkbox_label" title="${t`Interpret trigger as JS regex (e.g. /cat|kitten/i). Secondary keys remain literal.`}">
+                            <label class="checkbox_label ${isPowerMode ? '' : 'iig-hidden'}" title="${t`Interpret trigger as JS regex (e.g. /cat|kitten/i). Secondary keys remain literal.`}">
                                 <input type="checkbox" class="iig-additional-ref-regex" ${useRegex ? 'checked' : ''}>
                                 <span>${t`Regex`}</span>
                             </label>
-                            <div class="iig-additional-ref-move">
+                            <div class="iig-additional-ref-move ${isPowerMode ? '' : 'iig-hidden'}">
                                 <div class="menu_button iig-additional-ref-move-up ${isFirst ? 'disabled' : ''}" title="${t`Move up`}" ${isFirst ? 'aria-disabled="true"' : ''}>
                                     <i class="fa-solid fa-arrow-up"></i>
                                 </div>
@@ -683,7 +684,7 @@ export function buildAdditionalReferenceRowsHtml(settings = getSettings()) {
                 </div>
             </div>
         `;
-    }).join('');
+    }).join('') + '</div>';
 }
 
 /**

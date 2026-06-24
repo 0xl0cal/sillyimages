@@ -101,6 +101,36 @@ function additionalReferenceDescription(ref, settings = getSettings()) {
     return String(ref?.description || ref?.name || '').trim();
 }
 
+function buildAvatarReferencePromptBlock(references = [], settings = getSettings()) {
+    if (settings.sendRefDescriptions === false) {
+        return '';
+    }
+
+    const lines = references
+        .map((ref, index) => {
+            const source = getReferenceSource(ref);
+            if (source !== 'char' && source !== 'user') {
+                return '';
+            }
+            const description = getReferenceDescription(ref);
+            if (!description) {
+                return '';
+            }
+            const label = source === 'char' ? '{{char}} avatar' : '{{user}} avatar';
+            return `- Reference ${index + 1} (${label}): ${description}`;
+        })
+        .filter(Boolean);
+
+    return lines.length > 0
+        ? `Character reference descriptions:\n${lines.join('\n')}`
+        : '';
+}
+
+function appendPromptBlock(prompt, block) {
+    const text = String(block || '').trim();
+    return text ? `${prompt}\n\n${text}`.trim() : prompt;
+}
+
 // ----- Endpoint URL builder (raw mode support) -----
 
 /**
@@ -664,11 +694,11 @@ export class OpenAIProvider extends Provider {
 
         if (settings.sendCharAvatar) {
             const charAvatar = await getCharacterAvatarBase64();
-            if (charAvatar) refs.push(charAvatar);
+            if (charAvatar) refs.push(makeReferenceObject(charAvatar, getCharacterReferenceDescription(settings), 'char'));
         }
         if (settings.sendUserAvatar) {
             const userAvatar = await getUserAvatarBase64();
-            if (userAvatar) refs.push(userAvatar);
+            if (userAvatar) refs.push(makeReferenceObject(userAvatar, await getUserReferenceDescription(settings), 'user'));
         }
 
         for (const ref of matchedAdditionalRefs) {
@@ -676,13 +706,13 @@ export class OpenAIProvider extends Provider {
             const imagePath = normalizeStoredImagePath(ref.imagePath);
             if (!imagePath) continue;
             const b64 = await imageUrlToBase64(imagePath);
-            if (b64) refs.push(b64);
+            if (b64) refs.push(makeReferenceObject(b64, additionalReferenceDescription(ref, settings), 'additional'));
         }
 
         if (settings.imageContextEnabled) {
             const contextCount = normalizeImageContextCount(settings.imageContextCount);
             const contextRefs = await collectPreviousContextReferences(messageId, 'base64', contextCount);
-            refs.push(...contextRefs);
+            refs.push(...contextRefs.map((ref) => makeReferenceObject(ref, '', 'context')));
         }
 
         if (refs.length > maxRefs) {
@@ -694,6 +724,7 @@ export class OpenAIProvider extends Provider {
     async generate({ prompt, style, references = [], options = {} }) {
         const settings = getSettings();
         let fullPrompt = buildFinalGenerationPrompt(prompt, style, options.matchedAdditionalRefs || [], settings);
+        fullPrompt = appendPromptBlock(fullPrompt, buildAvatarReferencePromptBlock(references, settings));
 
         // Префикс refInstruction — только когда реально уходит хотя бы один
         // ref в /v1/images/edits. Без рефов /generations не нуждается в нём.
@@ -815,12 +846,12 @@ export class OpenAIProvider extends Provider {
         // Остальные (dall-e-2, unknown): одиночный `image`.
         if (isGptImageFamily(modelKind) && references.length > 1) {
             references.forEach((ref, idx) => {
-                const blob = base64ToBlob(ref, 'image/png');
+                const blob = base64ToBlob(getReferenceImage(ref), 'image/png');
                 // OpenAI принимает повторный `image[]` как массив.
                 form.append('image[]', blob, `reference-${idx}.png`);
             });
         } else {
-            const blob = base64ToBlob(references[0], 'image/png');
+            const blob = base64ToBlob(getReferenceImage(references[0]), 'image/png');
             form.append('image', blob, 'reference-0.png');
         }
 

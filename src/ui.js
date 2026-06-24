@@ -86,7 +86,6 @@ import {
     deleteUserReferenceDescriptionForKey,
     characterAvatarUrl,
     userAvatarUrl,
-    loadPersonasModule,
 } from './references.js';
 import { fetchModels, resolveActiveProvider, getActiveProviderMaxReferences, A1111_RESOLUTION_PRESETS } from './providers.js';
 import { applyImageActionsStyle } from './imageActions.js';
@@ -550,8 +549,8 @@ let characterReferenceEventsBound = false;
 let characterReferenceRefreshTimer = null;
 let characterReferencePollTimer = null;
 let characterReferenceLastSignature = '';
-let optimisticUserReferenceKey = '';
-let optimisticCharacterReferenceKey = '';
+let selectedUserReferenceKey = '';
+let selectedCharacterReferenceKey = '';
 
 function cssEscape(value) {
     const raw = String(value || '');
@@ -624,6 +623,25 @@ function getCurrentCharacterRefMeta() {
     }
 }
 
+function getCharacterRefMetaForKey(key, settings = getSettings()) {
+    const normalizedKey = String(key || '').trim();
+    if (!normalizedKey) return getCurrentCharacterRefMeta();
+
+    const context = SillyTavern.getContext();
+    const characters = Array.isArray(context?.characters) ? context.characters : [];
+    const foundIndex = characters.findIndex((character, index) => getCharacterReferenceKeyForCharacter(character, index) === normalizedKey);
+    const character = foundIndex >= 0 ? characters[foundIndex] : {};
+    const fallbackTitle = String(character.name || normalizedKey.replace(/^(avatar|name|id):/, '') || t`Saved character`);
+
+    return {
+        key: normalizedKey,
+        fallbackTitle,
+        title: getCharacterDisplayName('char', normalizedKey, fallbackTitle, settings),
+        avatarUrl: characterAvatarUrl(character),
+        description: getCharacterReferenceDescriptionStore(settings).characters?.[normalizedKey] || '',
+    };
+}
+
 function getCurrentUserRefMeta(settings = getSettings()) {
     const avatarFile = String(settings.userAvatarFile || '').trim();
     const key = getUserReferenceKeyForAvatar(avatarFile);
@@ -634,6 +652,24 @@ function getCurrentUserRefMeta(settings = getSettings()) {
         title: getCharacterDisplayName('user', key, fallbackTitle, settings),
         avatarUrl: userAvatarUrl(avatarFile),
         description: '',
+    };
+}
+
+function getUserRefMetaForKey(key, settings = getSettings()) {
+    const normalizedKey = String(key || '').trim();
+    if (!normalizedKey) return getCurrentUserRefMeta(settings);
+
+    const avatarFile = normalizedKey.startsWith('avatar:') || normalizedKey.startsWith('persona:')
+        ? normalizedKey.split(':').slice(1).join(':')
+        : '';
+    const fallbackTitle = avatarFile || normalizedKey || t`Selected user persona`;
+
+    return {
+        key: normalizedKey,
+        fallbackTitle,
+        title: getCharacterDisplayName('user', normalizedKey, fallbackTitle, settings),
+        avatarUrl: userAvatarUrl(avatarFile),
+        description: getCharacterReferenceDescriptionStore(settings).users?.[normalizedKey] || '',
     };
 }
 
@@ -660,8 +696,8 @@ function buildAvatarPreviewHtml(src, iconClass = 'fa-user') {
     return `<div class="iig-character-tile-avatar-placeholder"><i class="fa-solid ${iconClass}"></i></div>`;
 }
 
-function buildActiveCharacterEditorsHtml(settings = getSettings(), userMeta = null) {
-    const char = getCurrentCharacterRefMeta();
+function buildActiveCharacterEditorsHtml(settings = getSettings(), userMeta = null, charMeta = null) {
+    const char = charMeta || getCurrentCharacterRefMeta();
     const user = userMeta || getCurrentUserRefMeta(settings);
     return `
         <div class="iig-character-active-grid">
@@ -920,12 +956,23 @@ function buildReferencesSettingsSectionHtml(settings = getSettings()) {
 
                 ${buildLorebookBarHtml(settings)}
 
+                <div class="iig-ref-mode-toggle" role="group" aria-label="${t`Reference list mode`}">
+                    <label class="checkbox_label">
+                        <input type="radio" name="iig_additional_refs_mode" value="simple" ${settings.additionalReferencesMode !== 'power' ? 'checked' : ''}>
+                        <span>${t`Simple`}</span>
+                    </label>
+                    <label class="checkbox_label">
+                        <input type="radio" name="iig_additional_refs_mode" value="power" ${settings.additionalReferencesMode === 'power' ? 'checked' : ''}>
+                        <span>${t`Power users`}</span>
+                    </label>
+                </div>
+
                 <div class="iig-additional-ref-actions">
                     <div id="iig_additional_refs_add" class="menu_button iig-button-inline">
                         <i class="fa-solid fa-plus"></i> ${t`Add reference`}
                     </div>
                     <div id="iig_additional_refs_import" class="menu_button iig-button-inline">
-                        <i class="fa-solid fa-link"></i> ${t`Import reference`}
+                        <i class="fa-solid fa-link"></i> ${t`Load reference`}
                     </div>
                 </div>
                 <div id="iig_additional_refs_status" class="hint" style="margin-bottom: 8px;"></div>
@@ -2037,6 +2084,15 @@ function refreshAdditionalReferencesList() {
 }
 
 function bindAdditionalReferencesEvents(settings) {
+    document.querySelectorAll('input[name="iig_additional_refs_mode"]').forEach((input) => {
+        input.addEventListener('change', (e) => {
+            if (!(e.target instanceof HTMLInputElement) || !e.target.checked) return;
+            settings.additionalReferencesMode = e.target.value === 'power' ? 'power' : 'simple';
+            saveSettings();
+            refreshAdditionalReferencesList();
+        });
+    });
+
     document.getElementById('iig_additional_refs_add')?.addEventListener('click', () => {
         const refs = ensureAdditionalReferencesArray(settings);
         if (refs.length >= MAX_ADDITIONAL_REFERENCES) {
@@ -2082,6 +2138,7 @@ function bindAdditionalReferencesEvents(settings) {
         try {
             const result = await importAdditionalReferencesFromUrls(input.value);
             closeReferenceImportModal();
+            refreshAdditionalReferencesList();
             const tail = result.skippedCount > 0 ? t`, skipped: ${result.skippedCount}` : '';
             toastr.success(t`Imported: ${result.importedCount}` + tail, t`Image Generation`);
         } catch (error) {
@@ -2316,27 +2373,9 @@ function markSavedTileActive(kind, key) {
     }
 }
 
-function setOptimisticSavedTile(kind, key, settings = getSettings()) {
-    if (kind === 'user') {
-        optimisticUserReferenceKey = key;
-    } else if (kind === 'char') {
-        optimisticCharacterReferenceKey = key;
-    }
-    markSavedTileActive(kind, key);
-    setTimeout(() => {
-        if (kind === 'user' && optimisticUserReferenceKey === key) {
-            optimisticUserReferenceKey = '';
-            scheduleCharactersSettingsRefresh(settings, { force: true });
-        } else if (kind === 'char' && optimisticCharacterReferenceKey === key) {
-            optimisticCharacterReferenceKey = '';
-            scheduleCharactersSettingsRefresh(settings, { force: true });
-        }
-    }, 3000);
-}
-
 function getSavedCharacterEntries(settings = getSettings()) {
     const store = getCharacterReferenceDescriptionStore(settings);
-    const currentKey = optimisticCharacterReferenceKey || getCurrentCharacterRefMeta().key;
+    const currentKey = selectedCharacterReferenceKey || getCurrentCharacterRefMeta().key;
     const context = SillyTavern.getContext();
     const characters = Array.isArray(context?.characters) ? context.characters : [];
     const byKey = new Map();
@@ -2365,7 +2404,7 @@ function getSavedCharacterEntries(settings = getSettings()) {
 
 async function getSavedUserEntries(settings = getSettings()) {
     const store = getCharacterReferenceDescriptionStore(settings);
-    const currentKey = optimisticUserReferenceKey || await getCurrentUserReferenceKey(settings);
+    const currentKey = selectedUserReferenceKey || await getCurrentUserReferenceKey(settings);
     return Object.entries(store.users || {})
         .map(([key, description]) => {
             const trimmed = String(description || '').trim();
@@ -2389,7 +2428,13 @@ async function getSavedUserEntries(settings = getSettings()) {
 async function renderCharactersSettings(settings = getSettings()) {
     const active = document.getElementById('iig_character_active_editors');
     if (active) {
-        active.innerHTML = buildActiveCharacterEditorsHtml(settings, await getCurrentUserRefMetaAsync(settings));
+        const userMeta = selectedUserReferenceKey
+            ? getUserRefMetaForKey(selectedUserReferenceKey, settings)
+            : await getCurrentUserRefMetaAsync(settings);
+        const charMeta = selectedCharacterReferenceKey
+            ? getCharacterRefMetaForKey(selectedCharacterReferenceKey, settings)
+            : getCurrentCharacterRefMeta();
+        active.innerHTML = buildActiveCharacterEditorsHtml(settings, userMeta, charMeta);
     }
     await refreshCharacterReferenceDescriptionFields(settings);
     await renderSavedCharacterTiles(settings);
@@ -2417,21 +2462,29 @@ async function renderSavedCharacterTiles(settings = getSettings()) {
 async function refreshCharacterReferenceDescriptionFields(settings) {
     const charTextarea = document.getElementById('iig_char_ref_description');
     if (charTextarea instanceof HTMLTextAreaElement) {
-        charTextarea.value = getCharacterReferenceDescription(settings);
+        charTextarea.value = selectedCharacterReferenceKey
+            ? getCharacterReferenceDescriptionStore(settings).characters?.[selectedCharacterReferenceKey] || ''
+            : getCharacterReferenceDescription(settings);
     }
     const charNameInput = document.getElementById('iig_char_ref_display_name');
     if (charNameInput instanceof HTMLInputElement) {
-        const char = getCurrentCharacterRefMeta();
+        const char = selectedCharacterReferenceKey
+            ? getCharacterRefMetaForKey(selectedCharacterReferenceKey, settings)
+            : getCurrentCharacterRefMeta();
         charNameInput.value = char.title;
         charNameInput.placeholder = char.fallbackTitle || '';
     }
     const userTextarea = document.getElementById('iig_user_ref_description');
     if (userTextarea instanceof HTMLTextAreaElement) {
-        userTextarea.value = await getUserReferenceDescription(settings);
+        userTextarea.value = selectedUserReferenceKey
+            ? getCharacterReferenceDescriptionStore(settings).users?.[selectedUserReferenceKey] || ''
+            : await getUserReferenceDescription(settings);
     }
     const userNameInput = document.getElementById('iig_user_ref_display_name');
     if (userNameInput instanceof HTMLInputElement) {
-        const user = await getCurrentUserRefMetaAsync(settings);
+        const user = selectedUserReferenceKey
+            ? getUserRefMetaForKey(selectedUserReferenceKey, settings)
+            : await getCurrentUserRefMetaAsync(settings);
         userNameInput.value = user.title;
         userNameInput.placeholder = user.fallbackTitle || '';
     }
@@ -2451,6 +2504,8 @@ async function getCharacterReferenceUiSignature(settings = getSettings()) {
         characterId,
         char.key,
         userKey,
+        selectedCharacterReferenceKey,
+        selectedUserReferenceKey,
         String(settings.userAvatarFile || ''),
         settings.useActiveUserPersonaAvatar ? 'active-persona' : 'manual-avatar',
     ].join('|');
@@ -2458,6 +2513,15 @@ async function getCharacterReferenceUiSignature(settings = getSettings()) {
 
 async function refreshCharactersSettingsIfContextChanged(settings = getSettings(), { force = false } = {}) {
     const signature = await getCharacterReferenceUiSignature(settings);
+    const activeElement = document.activeElement;
+    const isEditingCharacterField = activeElement instanceof HTMLElement
+        && Boolean(activeElement.closest('#iig_characters_section'))
+        && (activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement);
+    if (isEditingCharacterField) {
+        await renderSavedCharacterTiles(settings);
+        characterReferenceLastSignature = signature;
+        return;
+    }
     if (!force && signature === characterReferenceLastSignature) {
         await renderSavedCharacterTiles(settings);
         return;
@@ -2519,121 +2583,17 @@ function bindCharacterContextChangeEvents(settings = getSettings()) {
     }
 }
 
-function findCharacterListElement(index, character = {}) {
-    const avatar = String(character?.avatar || '').trim();
-    const name = String(character?.name || '').trim();
-    const selectors = [
-        `.character_select[chid="${index}"]`,
-        `.character_select[data-chid="${index}"]`,
-        `.character_select[data-character-id="${index}"]`,
-        `[chid="${index}"].character_select`,
-        `[data-chid="${index}"].character_select`,
-        `[data-character-id="${index}"].character_select`,
-    ];
-    if (avatar) {
-        selectors.push(`.character_select[avatar="${cssEscape(avatar)}"]`);
-        selectors.push(`.character_select[data-avatar="${cssEscape(avatar)}"]`);
-    }
-    if (name) {
-        selectors.push(`.character_select[title="${cssEscape(name)}"]`);
-        selectors.push(`.character_select[data-name="${cssEscape(name)}"]`);
-    }
-    for (const selector of selectors) {
-        const el = document.querySelector(selector);
-        if (el instanceof HTMLElement) return el;
-    }
-    return null;
-}
-
-async function runWithShortTimeout(fn, timeoutMs = 800) {
-    return await Promise.race([
-        Promise.resolve().then(fn),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs)),
-    ]);
-}
-
-function openCharacterByIndex(index, character = {}) {
-    const context = SillyTavern.getContext();
-    const listElement = findCharacterListElement(index, character);
-
-    if (listElement) {
-        try {
-            listElement.click();
-            listElement.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-        } catch (_error) {
-            // Fall through to function-based variants.
-        }
-    }
-
-    const attempts = [];
-    if (listElement) {
-        attempts.push([globalThis.selectCharacterById, listElement]);
-        attempts.push([context?.selectCharacterById, listElement]);
-    }
-    attempts.push(
-        [context?.selectCharacter, index],
-        [context?.openCharacterChat, index],
-        [globalThis.selectCharacter, index],
-        [globalThis.openCharacterChat, index],
-    );
-
-    (async () => {
-        for (const [fn, arg] of attempts) {
-            if (typeof fn !== 'function') continue;
-            try {
-                await runWithShortTimeout(() => fn.call(globalThis, arg));
-                return;
-            } catch (_error) {
-                // Try the next known SillyTavern variant.
-            }
-        }
-    })();
-}
-
 async function openCharacterTile(kind, key, settings = getSettings()) {
     if (kind === 'user') {
-        setOptimisticSavedTile(kind, key, settings);
-
-        const keyKind = String(key || '').split(':')[0];
-        const avatarFile = String(key || '').replace(/^(avatar|persona):/, '').trim();
-        if (avatarFile) {
-            settings.userAvatarFile = avatarFile;
-            settings.useActiveUserPersonaAvatar = keyKind === 'persona';
-            syncActivePersonaAvatarMode(settings.useActiveUserPersonaAvatar);
-            syncUserAvatarSelection(avatarFile);
-            saveSettings();
-
-            if (keyKind === 'persona') {
-                loadPersonasModule()
-                    .then(async (personasModule) => {
-                        if (typeof personasModule?.setUserAvatar === 'function') {
-                            await runWithShortTimeout(() => personasModule.setUserAvatar(avatarFile), 1200);
-                        } else if (typeof personasModule?.changeUserAvatar === 'function') {
-                            await runWithShortTimeout(() => personasModule.changeUserAvatar(avatarFile), 1200);
-                        }
-                    })
-                    .catch(() => {
-                        // Selecting the extension avatar is enough for generation refs.
-                    })
-                    .finally(() => {
-                        scheduleCharactersSettingsRefresh(settings, { force: true });
-                    });
-            }
-        }
-        renderSavedCharacterTiles(settings).catch(() => {});
-        setTimeout(() => scheduleCharactersSettingsRefresh(settings, { force: true }), 250);
+        selectedUserReferenceKey = key;
+        markSavedTileActive(kind, key);
+        await renderCharactersSettings(settings);
         return;
     }
 
-    const context = SillyTavern.getContext();
-    const characters = Array.isArray(context?.characters) ? context.characters : [];
-    const index = characters.findIndex((character, idx) => getCharacterReferenceKeyForCharacter(character, idx) === key);
-    if (index >= 0) {
-        setOptimisticSavedTile(kind, key, settings);
-        openCharacterByIndex(index, characters[index]);
-    }
-    renderSavedCharacterTiles(settings).catch(() => {});
-    setTimeout(() => scheduleCharactersSettingsRefresh(settings, { force: true }), 250);
+    selectedCharacterReferenceKey = key;
+    markSavedTileActive(kind, key);
+    await renderCharactersSettings(settings);
 }
 
 function bindCharacterReferenceDescriptionEvents(settings) {
@@ -2647,6 +2607,7 @@ function bindCharacterReferenceDescriptionEvents(settings) {
         const key = String(tile?.getAttribute('data-iig-character-key') || '');
         if (target.classList.contains('iig-character-display-name-input')) {
             setCharacterDisplayName(kind, key || (kind === 'char' ? getCurrentCharacterRefMeta().key : await getCurrentUserReferenceKey(settings)), target.value, settings);
+            saveSettings();
             renderSavedCharacterTiles(settings).catch(() => {});
             return;
         }
@@ -2655,6 +2616,7 @@ function bindCharacterReferenceDescriptionEvents(settings) {
         } else if (kind === 'user') {
             setUserReferenceDescriptionForKey(key || await getCurrentUserReferenceKey(settings), target.value, settings);
         }
+        saveSettings();
         renderSavedCharacterTiles(settings).catch(() => {});
     });
 

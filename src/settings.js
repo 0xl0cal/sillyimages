@@ -186,6 +186,7 @@ export const defaultSettings = Object.freeze({
     // именно изображать, особенно когда сами картинки референсов слабо
     // соответствуют запросу.
     sendRefDescriptions: true,
+    additionalReferencesMode: 'simple',
     // Local-only character/user reference descriptions. Keys are derived from
     // current SillyTavern character and active/selected user persona avatar.
     characterReferenceDescriptions: {

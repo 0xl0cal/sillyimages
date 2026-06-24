@@ -392,7 +392,8 @@
 }
 
 .iig-character-saved-tile .iig-character-tile-meta {
-    align-items: center;
+    align-items: flex-start;
+    justify-content: center;
     max-width: 100%;
 }
 
@@ -499,6 +500,69 @@
     border-radius: 8px;
     background: color-mix(in srgb, var(--SmartThemeBlurTintColor) 92%, transparent);
     border: 1px solid var(--SmartThemeBorderColor);
+}
+
+.iig-ref-mode-toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin: 8px 0;
+}
+
+.iig-ref-mode-toggle .checkbox_label {
+    width: auto;
+    margin: 0;
+}
+
+.iig-additional-ref-list-simple {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.iig-additional-ref-row-simple {
+    margin-top: 0;
+    padding: 8px;
+}
+
+.iig-additional-ref-row-simple .iig-additional-ref-content {
+    grid-template-columns: 52px minmax(0, 1fr);
+    gap: 8px;
+}
+
+.iig-additional-ref-row-simple .iig-additional-ref-preview,
+.iig-additional-ref-row-simple .iig-additional-ref-thumb,
+.iig-additional-ref-row-simple .iig-additional-ref-thumb-placeholder {
+    width: 52px;
+}
+
+.iig-additional-ref-row-simple .iig-additional-ref-thumb,
+.iig-additional-ref-row-simple .iig-additional-ref-thumb-placeholder {
+    height: 52px;
+    border-radius: 7px;
+}
+
+.iig-additional-ref-row-simple .iig-additional-ref-header {
+    grid-template-columns: minmax(0, 1fr) 34px 34px 34px;
+    gap: 6px;
+}
+
+.iig-additional-ref-row-simple .iig-additional-ref-upload,
+.iig-additional-ref-row-simple .iig-additional-ref-upload-url,
+.iig-additional-ref-row-simple .iig-additional-ref-remove {
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+}
+
+.iig-additional-ref-row-simple .iig-additional-ref-main {
+    gap: 6px;
+}
+
+.iig-additional-ref-row-simple .iig-additional-ref-description {
+    min-height: 34px;
+    resize: vertical;
 }
 
 .iig-additional-ref-content {
@@ -868,7 +932,6 @@
     }
 
     .iig-button-inline {
-        width: 100%;
         justify-content: center;
     }
 
@@ -917,6 +980,26 @@
     .iig-additional-ref-actions,
     .iig-debug-actions {
         width: 100%;
+    }
+
+    .iig-additional-ref-actions .iig-button-inline,
+    .iig-debug-actions .iig-button-inline {
+        flex: 1 1 160px;
+    }
+
+    .iig-additional-ref-row-simple .iig-additional-ref-content {
+        grid-template-columns: 52px minmax(0, 1fr);
+    }
+
+    .iig-additional-ref-row-simple .iig-additional-ref-preview,
+    .iig-additional-ref-row-simple .iig-additional-ref-thumb,
+    .iig-additional-ref-row-simple .iig-additional-ref-thumb-placeholder {
+        width: 52px;
+    }
+
+    .iig-additional-ref-row-simple .iig-additional-ref-thumb,
+    .iig-additional-ref-row-simple .iig-additional-ref-thumb-placeholder {
+        height: 52px;
     }
 
     .iig-avatar-dropdown-list {
