@@ -43,7 +43,7 @@ import {
     resolveActiveProvider,
     validateSettings,
 } from './providers.js';
-import { getReferenceDescription, getReferenceImage, getReferenceSource } from './references.js';
+import { getReferenceDescription, getReferenceImage } from './references.js';
 import { t } from './i18n.js';
 
 // ----- Friendly error classification -----
@@ -187,6 +187,13 @@ function refToPreviewDataUrl(ref) {
     return value.startsWith('data:') ? value : `data:image/png;base64,${value}`;
 }
 
+function referenceSource(ref) {
+    if (ref && typeof ref === 'object' && !Array.isArray(ref)) {
+        return String(ref.source || '').trim();
+    }
+    return '';
+}
+
 function buildAvatarReferenceSnapshotBlock(references = [], settings = getSettings()) {
     if (settings.sendRefDescriptions === false) {
         return '';
@@ -194,7 +201,7 @@ function buildAvatarReferenceSnapshotBlock(references = [], settings = getSettin
 
     const lines = references
         .map((ref, index) => {
-            const source = getReferenceSource(ref);
+            const source = referenceSource(ref);
             if (source !== 'char' && source !== 'user') {
                 return '';
             }
@@ -258,7 +265,7 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
             dataUrl: refToPreviewDataUrl(ref),
             label: `ref ${index + 1}`,
             description: getReferenceDescription(ref),
-            source: getReferenceSource(ref),
+            source: referenceSource(ref),
         })),
         matchedRefs: matchedRefsInfo,
         metadata: {
@@ -471,7 +478,7 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
     iigLog('INFO', `References collected for ${settings.apiType}: ${references.length} ref(s)`);
     for (let i = 0; i < references.length; i++) {
         const ref = references[i];
-        const src = getReferenceSource(ref) || '?';
+        const src = referenceSource(ref) || '?';
         const desc = getReferenceDescription(ref);
         const img = getReferenceImage(ref);
         const imgInfo = img.startsWith('data:')

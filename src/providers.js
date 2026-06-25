@@ -49,7 +49,6 @@ import {
     makeReferenceObject,
     getReferenceImage,
     getReferenceDescription,
-    getReferenceSource,
 } from './references.js';
 
 // ----- Max references helper -----
@@ -102,6 +101,13 @@ function additionalReferenceDescription(ref, settings = getSettings()) {
     return String(ref?.description || ref?.name || '').trim();
 }
 
+function referenceSource(ref) {
+    if (ref && typeof ref === 'object' && !Array.isArray(ref)) {
+        return String(ref.source || '').trim();
+    }
+    return '';
+}
+
 function buildAvatarReferencePromptBlock(references = [], settings = getSettings()) {
     if (settings.sendRefDescriptions === false) {
         return '';
@@ -109,7 +115,7 @@ function buildAvatarReferencePromptBlock(references = [], settings = getSettings
 
     const lines = references
         .map((ref, index) => {
-            const source = getReferenceSource(ref);
+            const source = referenceSource(ref);
             if (source !== 'char' && source !== 'user') {
                 return '';
             }
