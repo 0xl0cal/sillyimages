@@ -49,6 +49,7 @@ import {
     makeReferenceObject,
     getReferenceImage,
     getReferenceDescription,
+    getReferenceSource,
 } from './references.js';
 
 // ----- Max references helper -----
