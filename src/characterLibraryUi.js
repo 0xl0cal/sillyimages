@@ -1,7 +1,6 @@
 import { getSettings, saveSettings } from './settings.js';
 import {
-    addCharacterLibraryDescription,
-    addCharacterLibraryReference,
+    addCharacterLibraryAppearanceItem,
     deleteCharacterLibraryEntry,
     downloadReferenceImageFromUrl,
     fetchUserAvatars,
@@ -37,8 +36,7 @@ function emptyLibraryEntry() {
     return {
         displayName: '',
         primary: { enabled: true, imagePath: '', description: '' },
-        descriptions: [],
-        references: [],
+        appearanceItems: [],
     };
 }
 
@@ -160,45 +158,34 @@ function buildEntityOptionHtml(entity, selectedKey) {
         </button>`;
 }
 
-function buildDescriptionRowsHtml(entry) {
-    if (entry.descriptions.length === 0) {
-        return `<div class="iig-library-empty">${t`No appearance descriptions.`}</div>`;
+function buildAppearanceItemsHtml(entry) {
+    if (entry.appearanceItems.length === 0) {
+        return `<div class="iig-library-empty">${t`No appearance details.`}</div>`;
     }
-    return entry.descriptions.map((description) => `
-        <div class="iig-library-description-row ${description.enabled === false ? 'disabled' : ''}" data-description-id="${sanitizeForHtml(description.id)}">
-            <label class="checkbox_label iig-library-enable" title="${t`Use description`}">
-                <input type="checkbox" class="iig-library-description-enabled" ${description.enabled !== false ? 'checked' : ''}>
-                <span></span>
-            </label>
-            <textarea class="text_pole iig-library-description-text" rows="2" placeholder="${t`Appearance description`}">${sanitizeForHtml(description.text)}</textarea>
-            <button type="button" class="menu_button iig-library-description-remove" title="${t`Delete description`}"><i class="fa-solid fa-trash"></i></button>
-        </div>`).join('');
-}
-
-function buildImageReferenceRowsHtml(entry) {
-    if (entry.references.length === 0) {
-        return `<div class="iig-library-empty">${t`No additional character references.`}</div>`;
-    }
-    return entry.references.map((reference) => {
-        const preview = normalizeStoredImagePath(reference.imagePath);
+    return entry.appearanceItems.map((item) => {
+        const isImage = item.type === 'image';
+        const preview = isImage ? normalizeStoredImagePath(item.imagePath) : '';
         return `
-            <div class="iig-library-reference-row ${reference.enabled === false ? 'disabled' : ''}" data-reference-id="${sanitizeForHtml(reference.id)}">
-                <div class="iig-library-reference-preview">${buildAvatarHtml(preview, 'fa-image')}</div>
-                <label class="checkbox_label iig-library-enable" title="${t`Use reference`}">
-                    <input type="checkbox" class="iig-library-reference-enabled" ${reference.enabled !== false ? 'checked' : ''}>
+            <div class="iig-library-appearance-row ${isImage ? 'image' : 'text'} ${item.enabled === false ? 'disabled' : ''}" data-appearance-id="${sanitizeForHtml(item.id)}" data-appearance-type="${item.type}">
+                <label class="checkbox_label iig-library-enable" title="${isImage ? t`Use image reference` : t`Use text description`}">
+                    <input type="checkbox" class="iig-library-appearance-enabled" ${item.enabled !== false ? 'checked' : ''}>
                     <span></span>
                 </label>
-                <div class="iig-library-reference-fields">
-                    <input type="text" class="text_pole iig-library-reference-name" value="${sanitizeForHtml(reference.name)}" placeholder="${t`Reference name`}">
-                    <textarea class="text_pole iig-library-reference-description" rows="2" placeholder="${t`Reference description`}">${sanitizeForHtml(reference.description)}</textarea>
+                <div class="iig-library-appearance-preview">
+                    ${isImage ? buildAvatarHtml(preview, 'fa-image') : '<span class="iig-library-appearance-text-icon"><i class="fa-solid fa-align-left"></i></span>'}
+                </div>
+                <div class="iig-library-appearance-fields">
+                    <span class="iig-library-appearance-type">${isImage ? t`Image reference` : t`Text description`}</span>
+                    ${isImage ? `<input type="text" class="text_pole iig-library-appearance-name" value="${sanitizeForHtml(item.name)}" placeholder="${t`Reference name`}">` : ''}
+                    <textarea class="text_pole iig-library-appearance-description" rows="2" placeholder="${isImage ? t`Reference description` : t`Appearance description`}">${sanitizeForHtml(item.description)}</textarea>
                 </div>
                 <div class="iig-library-row-actions">
-                    <label class="menu_button" title="${t`Choose image`}">
+                    ${isImage ? `<label class="menu_button" title="${t`Choose image`}">
                         <i class="fa-solid fa-upload"></i>
-                        <input type="file" accept="image/*" class="iig-library-reference-file" hidden>
+                        <input type="file" accept="image/*" class="iig-library-appearance-file" hidden>
                     </label>
-                    <button type="button" class="menu_button iig-library-reference-url" title="${t`Load image by URL`}"><i class="fa-solid fa-link"></i></button>
-                    <button type="button" class="menu_button iig-library-reference-remove" title="${t`Delete reference`}"><i class="fa-solid fa-trash"></i></button>
+                    <button type="button" class="menu_button iig-library-appearance-url" title="${t`Load image by URL`}"><i class="fa-solid fa-link"></i></button>` : ''}
+                    <button type="button" class="menu_button iig-library-appearance-remove" title="${t`Delete`}"><i class="fa-solid fa-trash"></i></button>
                 </div>
             </div>`;
     }).join('');
@@ -245,18 +232,13 @@ function buildEditorHtml(entity, entry) {
 
             <section class="iig-library-editor-section">
                 <div class="iig-library-section-head">
-                    <strong>${t`Appearance descriptions`}</strong>
-                    <button type="button" class="menu_button iig-library-description-add"><i class="fa-solid fa-plus"></i><span>${t`Add description`}</span></button>
+                    <strong>${t`Appearance details`}</strong>
+                    <div class="iig-library-row-actions iig-library-appearance-add-actions">
+                        <button type="button" class="menu_button iig-library-appearance-add" data-appearance-type="text"><i class="fa-solid fa-plus"></i><span>${t`Add description`}</span></button>
+                        <button type="button" class="menu_button iig-library-appearance-add" data-appearance-type="image"><i class="fa-solid fa-plus"></i><span>${t`Add reference`}</span></button>
+                    </div>
                 </div>
-                <div class="iig-library-description-list">${buildDescriptionRowsHtml(entry)}</div>
-            </section>
-
-            <section class="iig-library-editor-section">
-                <div class="iig-library-section-head">
-                    <strong>${t`Additional references`}</strong>
-                    <button type="button" class="menu_button iig-library-reference-add"><i class="fa-solid fa-plus"></i><span>${t`Add reference`}</span></button>
-                </div>
-                <div class="iig-library-reference-list">${buildImageReferenceRowsHtml(entry)}</div>
+                <div class="iig-library-appearance-list">${buildAppearanceItemsHtml(entry)}</div>
             </section>
         </div>`;
 }
@@ -356,8 +338,8 @@ async function replaceReferenceImage(editorState, target, imagePath) {
         editorState.entry.primary.imagePath = imagePath;
         return;
     }
-    const reference = findById(editorState.entry.references, target);
-    if (reference) reference.imagePath = imagePath;
+    const item = findById(editorState.entry.appearanceItems, target);
+    if (item?.type === 'image') item.imagePath = imagePath;
 }
 
 async function handleFileUpload(input, settings) {
@@ -365,8 +347,8 @@ async function handleFileUpload(input, settings) {
     if (!file) return;
     const state = getActiveEditor(settings);
     if (!state) return;
-    const referenceRow = input.closest('.iig-library-reference-row');
-    const target = referenceRow?.getAttribute('data-reference-id') || 'primary';
+    const appearanceRow = input.closest('.iig-library-appearance-row.image');
+    const target = appearanceRow?.getAttribute('data-appearance-id') || 'primary';
     try {
         const path = await saveUploadedImage(file, {
             mode: target === 'primary' ? 'character-primary-reference' : 'character-additional-reference',
@@ -376,8 +358,8 @@ async function handleFileUpload(input, settings) {
         });
         await replaceReferenceImage(state, target, path);
         if (target !== 'primary') {
-            const reference = findById(state.entry.references, target);
-            if (reference && !reference.name) reference.name = file.name.replace(/\.[^.]+$/, '');
+            const item = findById(state.entry.appearanceItems, target);
+            if (item?.type === 'image' && !item.name) item.name = file.name.replace(/\.[^.]+$/, '');
         }
         saveSettings();
         await renderCharacterLibrary(settings);
@@ -405,8 +387,8 @@ async function handleUrlUpload(target, settings) {
         });
         await replaceReferenceImage(state, target, path);
         if (target !== 'primary') {
-            const reference = findById(state.entry.references, target);
-            if (reference && !reference.name) reference.name = getReferenceNameFromUrl(trimmed);
+            const item = findById(state.entry.appearanceItems, target);
+            if (item?.type === 'image' && !item.name) item.name = getReferenceNameFromUrl(trimmed);
         }
         saveSettings();
         await renderCharacterLibrary(settings);
@@ -488,14 +470,10 @@ export function bindCharacterLibraryEvents(settings = getSettings()) {
         if (target.classList.contains('iig-library-display-name')) state.entry.displayName = target.value;
         if (target.classList.contains('iig-library-primary-description')) state.entry.primary.description = target.value;
 
-        const descriptionRow = target.closest('.iig-library-description-row');
-        const description = findById(state.entry.descriptions, String(descriptionRow?.getAttribute('data-description-id') || ''));
-        if (description && target.classList.contains('iig-library-description-text')) description.text = target.value;
-
-        const referenceRow = target.closest('.iig-library-reference-row');
-        const reference = findById(state.entry.references, String(referenceRow?.getAttribute('data-reference-id') || ''));
-        if (reference && target.classList.contains('iig-library-reference-name')) reference.name = target.value;
-        if (reference && target.classList.contains('iig-library-reference-description')) reference.description = target.value;
+        const appearanceRow = target.closest('.iig-library-appearance-row');
+        const item = findById(state.entry.appearanceItems, String(appearanceRow?.getAttribute('data-appearance-id') || ''));
+        if (item?.type === 'image' && target.classList.contains('iig-library-appearance-name')) item.name = target.value;
+        if (item && target.classList.contains('iig-library-appearance-description')) item.description = target.value;
         saveSettings();
         if (target.classList.contains('iig-library-display-name')) renderEntityList(settings).catch(() => {});
     });
@@ -510,14 +488,11 @@ export function bindCharacterLibraryEvents(settings = getSettings()) {
         const state = getActiveEditor(settings);
         if (!state) return;
         if (target.classList.contains('iig-library-primary-enabled')) state.entry.primary.enabled = target.checked;
-        const descriptionRow = target.closest('.iig-library-description-row');
-        const description = findById(state.entry.descriptions, String(descriptionRow?.getAttribute('data-description-id') || ''));
-        if (description && target.classList.contains('iig-library-description-enabled')) description.enabled = target.checked;
-        const referenceRow = target.closest('.iig-library-reference-row');
-        const reference = findById(state.entry.references, String(referenceRow?.getAttribute('data-reference-id') || ''));
-        if (reference && target.classList.contains('iig-library-reference-enabled')) reference.enabled = target.checked;
+        const appearanceRow = target.closest('.iig-library-appearance-row');
+        const item = findById(state.entry.appearanceItems, String(appearanceRow?.getAttribute('data-appearance-id') || ''));
+        if (item && target.classList.contains('iig-library-appearance-enabled')) item.enabled = target.checked;
         saveSettings();
-        target.closest('.iig-library-primary-row, .iig-library-description-row, .iig-library-reference-row')?.classList.toggle('disabled', !target.checked);
+        target.closest('.iig-library-primary-row, .iig-library-appearance-row')?.classList.toggle('disabled', !target.checked);
     });
 
     section.addEventListener('click', async (event) => {
@@ -539,35 +514,24 @@ export function bindCharacterLibraryEvents(settings = getSettings()) {
 
         const state = getActiveEditor(settings);
         if (!state) return;
-        if (target.closest('.iig-library-description-add')) {
-            addCharacterLibraryDescription(state.kind, state.key, settings);
+        const addAppearanceButton = target.closest('.iig-library-appearance-add');
+        if (addAppearanceButton) {
+            const type = addAppearanceButton.getAttribute('data-appearance-type') === 'image' ? 'image' : 'text';
+            addCharacterLibraryAppearanceItem(state.kind, state.key, type, settings);
             await renderEditor(settings);
             return;
         }
-        if (target.closest('.iig-library-reference-add')) {
-            addCharacterLibraryReference(state.kind, state.key, settings);
-            await renderEditor(settings);
-            return;
-        }
-        const descriptionRow = target.closest('.iig-library-description-row');
-        if (target.closest('.iig-library-description-remove') && descriptionRow) {
-            const id = String(descriptionRow.getAttribute('data-description-id') || '');
-            state.entry.descriptions = state.entry.descriptions.filter((item) => item.id !== id);
+        const appearanceRow = target.closest('.iig-library-appearance-row');
+        if (target.closest('.iig-library-appearance-remove') && appearanceRow) {
+            const id = String(appearanceRow.getAttribute('data-appearance-id') || '');
+            state.entry.appearanceItems = state.entry.appearanceItems.filter((item) => item.id !== id);
             saveSettings();
             await renderEditor(settings);
             return;
         }
-        const referenceRow = target.closest('.iig-library-reference-row');
-        if (target.closest('.iig-library-reference-remove') && referenceRow) {
-            const id = String(referenceRow.getAttribute('data-reference-id') || '');
-            state.entry.references = state.entry.references.filter((item) => item.id !== id);
-            saveSettings();
-            await renderEditor(settings);
-            return;
-        }
-        const referenceUrl = target.closest('.iig-library-reference-url');
-        if (referenceUrl && referenceRow) {
-            await handleUrlUpload(String(referenceRow.getAttribute('data-reference-id') || ''), settings);
+        const appearanceUrl = target.closest('.iig-library-appearance-url');
+        if (appearanceUrl && appearanceRow?.getAttribute('data-appearance-type') === 'image') {
+            await handleUrlUpload(String(appearanceRow.getAttribute('data-appearance-id') || ''), settings);
             return;
         }
         if (target.closest('.iig-library-primary-url')) {

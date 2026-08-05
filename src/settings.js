@@ -22,9 +22,166 @@ export const DEFAULT_REF_INSTRUCTION = '[CRITICAL: The reference image(s) above 
 
 const NON_SCHEMA_SETTING_KEYS = Object.freeze([
     'additionalReferences',
-    'characterReferenceDescriptions',
     'stylePresets',
 ]);
+
+function migratedAppearanceItemId(type, bucket, key, index) {
+    const input = `${type}:${bucket}:${key}:${index}`;
+    let hash = 2166136261;
+    for (let i = 0; i < input.length; i += 1) {
+        hash ^= input.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+    }
+    return `iig-migrated-${type}-${(hash >>> 0).toString(36)}`;
+}
+
+function migratedCharacterLibraryKey(bucket, key) {
+    const value = String(key || '').trim();
+    if (bucket === 'users' && value.startsWith('persona:')) {
+        return `avatar:${value.slice('persona:'.length)}`;
+    }
+    return value;
+}
+
+function appearanceItemSignature(item) {
+    const type = item?.type === 'image' ? 'image' : 'text';
+    return [
+        type,
+        String(item?.name || '').trim(),
+        String(item?.imagePath || '').trim(),
+        String(item?.description || '').replace(/\s+/g, ' ').trim(),
+    ].join('\n');
+}
+
+function appendUniqueAppearanceItem(items, item) {
+    const signature = appearanceItemSignature(item);
+    if (items.some((existing) => appearanceItemSignature(existing) === signature)) return;
+    items.push(item);
+}
+
+function migrateCharacterLibraryEntry(raw, bucket, key) {
+    const entry = raw && typeof raw === 'object' ? { ...raw } : {};
+    const items = Array.isArray(entry.appearanceItems) ? [...entry.appearanceItems] : [];
+
+    const descriptions = Array.isArray(entry.descriptions) ? entry.descriptions : [];
+    descriptions.forEach((description, index) => {
+        const text = String(description?.text || description?.description || '').trim();
+        if (!text) return;
+        appendUniqueAppearanceItem(items, {
+            id: String(description?.id || '').trim() || migratedAppearanceItemId('text', bucket, key, index),
+            type: 'text',
+            enabled: description?.enabled !== false,
+            name: '',
+            imagePath: '',
+            description: text,
+        });
+    });
+
+    const references = Array.isArray(entry.references) ? entry.references : [];
+    references.forEach((reference, index) => {
+        appendUniqueAppearanceItem(items, {
+            id: String(reference?.id || '').trim() || migratedAppearanceItemId('image', bucket, key, index),
+            type: 'image',
+            enabled: reference?.enabled !== false,
+            name: String(reference?.name || '').trim(),
+            imagePath: String(reference?.imagePath || '').trim(),
+            description: String(reference?.description || '').trim(),
+        });
+    });
+
+    entry.appearanceItems = items;
+    delete entry.descriptions;
+    delete entry.references;
+    return entry;
+}
+
+function mergeCharacterLibraryEntries(target, source) {
+    if (!target) return source;
+    const merged = { ...source, ...target };
+    merged.displayName = String(target.displayName || source.displayName || '').trim();
+    merged.primary = target.primary || source.primary;
+    merged.appearanceItems = Array.isArray(target.appearanceItems) ? [...target.appearanceItems] : [];
+    for (const item of Array.isArray(source.appearanceItems) ? source.appearanceItems : []) {
+        appendUniqueAppearanceItem(merged.appearanceItems, item);
+    }
+    return merged;
+}
+
+function characterReferenceSettingsNeedMigration(settings) {
+    if (settings.characterReferenceDescriptions && typeof settings.characterReferenceDescriptions === 'object') {
+        return true;
+    }
+    const library = settings.characterReferenceLibrary;
+    if (!library || typeof library !== 'object') return false;
+    for (const bucket of ['characters', 'users']) {
+        const entries = library[bucket];
+        if (!entries || typeof entries !== 'object') continue;
+        if (bucket === 'users' && Object.keys(entries).some((key) => key.startsWith('persona:'))) return true;
+        if (Object.values(entries).some((entry) => (
+            Array.isArray(entry?.descriptions) || Array.isArray(entry?.references)
+        ))) return true;
+    }
+    return false;
+}
+
+function migrateCharacterReferenceSettings(settings) {
+    if (!characterReferenceSettingsNeedMigration(settings)) return false;
+    const sourceLibrary = settings.characterReferenceLibrary && typeof settings.characterReferenceLibrary === 'object'
+        ? settings.characterReferenceLibrary
+        : {};
+    const library = { characters: {}, users: {} };
+
+    for (const bucket of ['characters', 'users']) {
+        const entries = sourceLibrary[bucket] && typeof sourceLibrary[bucket] === 'object'
+            ? sourceLibrary[bucket]
+            : {};
+        for (const [rawKey, rawEntry] of Object.entries(entries)) {
+            const key = migratedCharacterLibraryKey(bucket, rawKey);
+            if (!key) continue;
+            const entry = migrateCharacterLibraryEntry(rawEntry, bucket, key);
+            library[bucket][key] = mergeCharacterLibraryEntries(library[bucket][key], entry);
+        }
+    }
+
+    const descriptions = settings.characterReferenceDescriptions;
+    if (descriptions && typeof descriptions === 'object') {
+        for (const bucket of ['characters', 'users']) {
+            const values = descriptions[bucket] && typeof descriptions[bucket] === 'object'
+                ? descriptions[bucket]
+                : {};
+            const displayNames = descriptions.displayNames?.[bucket]
+                && typeof descriptions.displayNames[bucket] === 'object'
+                ? descriptions.displayNames[bucket]
+                : {};
+            const keys = new Set([...Object.keys(values), ...Object.keys(displayNames)]);
+            let index = 0;
+            for (const rawKey of keys) {
+                const key = migratedCharacterLibraryKey(bucket, rawKey);
+                if (!key) continue;
+                const entry = library[bucket][key] || migrateCharacterLibraryEntry({}, bucket, key);
+                const displayName = String(displayNames[rawKey] || '').trim();
+                if (displayName && !entry.displayName) entry.displayName = displayName;
+                const description = String(values[rawKey] || '').trim();
+                if (description) {
+                    appendUniqueAppearanceItem(entry.appearanceItems, {
+                        id: migratedAppearanceItemId('text', bucket, key, index),
+                        type: 'text',
+                        enabled: true,
+                        name: '',
+                        imagePath: '',
+                        description,
+                    });
+                }
+                library[bucket][key] = entry;
+                index += 1;
+            }
+        }
+        delete settings.characterReferenceDescriptions;
+    }
+
+    settings.characterReferenceLibrary = library;
+    return true;
+}
 
 // ----- Logger -----
 
@@ -185,8 +342,8 @@ export const defaultSettings = Object.freeze({
     // соответствуют запросу.
     sendRefDescriptions: true,
     additionalReferencesMode: 'simple',
-    // Character and persona reference libraries. Each entry can replace its
-    // main avatar, add text descriptions, and attach extra reference images.
+    // Character and persona appearance libraries. Each entry has a main
+    // reference and a unified list of text descriptions and image references.
     characterReferenceLibrary: {
         characters: {},
         users: {},
@@ -421,6 +578,8 @@ export function getSettings() {
         context.extensionSettings[MODULE_NAME] = structuredClone(defaultSettings);
     }
 
+    const characterReferencesMigrated = migrateCharacterReferenceSettings(context.extensionSettings[MODULE_NAME]);
+
     // Ensure all default keys exist
     for (const key of Object.keys(defaultSettings)) {
         if (!Object.hasOwn(context.extensionSettings[MODULE_NAME], key)) {
@@ -433,6 +592,10 @@ export function getSettings() {
 
     for (const key of NON_SCHEMA_SETTING_KEYS) {
         delete context.extensionSettings[MODULE_NAME][key];
+    }
+
+    if (characterReferencesMigrated) {
+        context.saveSettingsDebounced();
     }
 
     return context.extensionSettings[MODULE_NAME];

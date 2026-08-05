@@ -52,7 +52,6 @@ import {
     sanitizeForHtml,
 } from './utils.js';
 import {
-    buildAdditionalReferenceRowsHtml,
     renderAdditionalReferencesList,
     renderAdditionalReferencesStatus,
     buildUserAvatarDropdownControl,
@@ -785,25 +784,31 @@ function buildReferencesSettingsSectionHtml(settings = getSettings()) {
             <div class="iig-settings-group ${refsSectionVisible ? '' : 'iig-hidden'}" id="iig_additional_refs_section">
                 <div class="iig-settings-group-title"><i class="fa-solid fa-images"></i><span>${t`Additional references`}</span></div>
 
-                ${buildLorebookBarHtml(settings)}
-
-                <div class="iig-ref-mode-toggle" role="group" aria-label="${t`Reference list mode`}">
-                    <label class="checkbox_label">
-                        <input type="radio" name="iig_additional_refs_mode" value="simple" ${settings.additionalReferencesMode !== 'power' ? 'checked' : ''}>
-                        <span>${t`Simple`}</span>
-                    </label>
-                    <label class="checkbox_label">
-                        <input type="radio" name="iig_additional_refs_mode" value="power" ${settings.additionalReferencesMode === 'power' ? 'checked' : ''}>
-                        <span>${t`Power users`}</span>
-                    </label>
-                </div>
-
-                <div class="iig-additional-ref-actions">
-                    <div id="iig_additional_refs_add" class="menu_button iig-button-inline">
-                        <i class="fa-solid fa-plus"></i> ${t`Add reference`}
+                <details class="iig-reference-library-settings">
+                    <summary><i class="fa-solid fa-book"></i><span>${t`Reference libraries`}</span></summary>
+                    <div class="iig-reference-library-settings-body">
+                        ${buildLorebookBarHtml(settings)}
                     </div>
-                    <div id="iig_additional_refs_import" class="menu_button iig-button-inline">
-                        <i class="fa-solid fa-link"></i> ${t`Load reference`}
+                </details>
+
+                <div class="iig-additional-ref-toolbar">
+                    <div class="iig-ref-mode-toggle" role="group" aria-label="${t`Reference list mode`}">
+                        <label>
+                            <input type="radio" name="iig_additional_refs_mode" value="simple" ${settings.additionalReferencesMode !== 'power' ? 'checked' : ''}>
+                            <span>${t`Simple`}</span>
+                        </label>
+                        <label>
+                            <input type="radio" name="iig_additional_refs_mode" value="power" ${settings.additionalReferencesMode === 'power' ? 'checked' : ''}>
+                            <span>${t`Power users`}</span>
+                        </label>
+                    </div>
+                    <div class="iig-additional-ref-actions">
+                        <button type="button" id="iig_additional_refs_add" class="menu_button iig-button-inline">
+                            <i class="fa-solid fa-plus"></i><span>${t`Add reference`}</span>
+                        </button>
+                        <button type="button" id="iig_additional_refs_import" class="menu_button iig-button-inline">
+                            <i class="fa-solid fa-link"></i><span>${t`Load reference`}</span>
+                        </button>
                     </div>
                 </div>
                 <div id="iig_additional_refs_status" class="hint" style="margin-bottom: 8px;"></div>
@@ -1939,14 +1944,63 @@ function bindLorebookBarEvents(settings) {
 
 // ----- Additional references events -----
 
-/**
- * Обёртка над `renderAdditionalReferencesList`, пробрасывающая текущий
- * provider-лимит референсов. Нужна чтобы references.js не зависел от
- * providers.js (иначе ESM-цикл).
- */
+let selectedAdditionalReferenceId = '';
+let additionalReferenceSearchQuery = '';
+let additionalReferenceFilter = 'all';
+
+function getAdditionalReferenceIndex(element) {
+    const container = element?.closest?.('[data-ref-index]');
+    const index = Number.parseInt(String(container?.getAttribute('data-ref-index') || ''), 10);
+    return Number.isInteger(index) ? index : -1;
+}
+
+function filterAdditionalReferenceRows() {
+    const query = additionalReferenceSearchQuery.trim().toLowerCase();
+    const rows = [...document.querySelectorAll('.iig-additional-ref-list-row')];
+    let visibleCount = 0;
+    for (const row of rows) {
+        const matchesQuery = !query || String(row.getAttribute('data-ref-search') || '').includes(query);
+        const matchesFilter = additionalReferenceFilter === 'all'
+            || (additionalReferenceFilter === 'enabled' && row.getAttribute('data-ref-enabled') === 'true')
+            || row.getAttribute('data-ref-match-mode') === additionalReferenceFilter;
+        const visible = matchesQuery && matchesFilter;
+        row.classList.toggle('iig-hidden', !visible);
+        if (visible) visibleCount += 1;
+    }
+    document.getElementById('iig_additional_refs_no_results')?.classList.toggle(
+        'iig-hidden',
+        rows.length === 0 || visibleCount > 0,
+    );
+}
+
 function refreshAdditionalReferencesList() {
-    const maxRefs = getActiveProviderMaxReferences(getSettings());
-    renderAdditionalReferencesList(maxRefs);
+    const settings = getSettings();
+    const refs = getActiveLorebookReferences(settings);
+    if (!refs.some((ref) => ref.id === selectedAdditionalReferenceId)) {
+        selectedAdditionalReferenceId = refs[0]?.id || '';
+    }
+    renderAdditionalReferencesList(getActiveProviderMaxReferences(settings), {
+        selectedId: selectedAdditionalReferenceId,
+        query: additionalReferenceSearchQuery,
+        filter: additionalReferenceFilter,
+    });
+    filterAdditionalReferenceRows();
+}
+
+function updateAdditionalReferenceListPreview(ref) {
+    const row = [...document.querySelectorAll('.iig-additional-ref-list-row')]
+        .find((item) => item.getAttribute('data-ref-id') === ref.id);
+    if (!row) return;
+    const title = String(ref.name || '').trim() || t`Untitled reference`;
+    const description = String(ref.description || '').replace(/\s+/g, ' ').trim() || t`No description`;
+    const titleElement = row.querySelector('.iig-additional-ref-list-copy strong');
+    const descriptionElement = row.querySelector('.iig-additional-ref-list-copy small');
+    if (titleElement) titleElement.textContent = title;
+    if (descriptionElement) descriptionElement.textContent = description;
+    row.setAttribute('data-ref-search', `${ref.name || ''} ${ref.description || ''} ${ref.group || ''}`.toLowerCase());
+    const editorTitle = document.querySelector('.iig-additional-ref-editor-heading strong');
+    if (editorTitle) editorTitle.textContent = title;
+    filterAdditionalReferenceRows();
 }
 
 function bindAdditionalReferencesEvents(settings) {
@@ -1977,6 +2031,7 @@ function bindAdditionalReferencesEvents(settings) {
             useRegex: false,
             secondaryKeys: '',
         });
+        selectedAdditionalReferenceId = getActiveLorebookReferences(settings)[0]?.id || '';
         saveSettings();
         refreshAdditionalReferencesList();
     });
@@ -2031,6 +2086,12 @@ function bindAdditionalReferencesEvents(settings) {
             return;
         }
 
+        if (target.id === 'iig_additional_refs_search') {
+            additionalReferenceSearchQuery = target.value;
+            filterAdditionalReferenceRows();
+            return;
+        }
+
         const isNameField = target.classList.contains('iig-additional-ref-name');
         const isDescriptionField = target.classList.contains('iig-additional-ref-description');
         const isGroupField = target.classList.contains('iig-additional-ref-group');
@@ -2040,11 +2101,8 @@ function bindAdditionalReferencesEvents(settings) {
             return;
         }
 
-        const row = target.closest('.iig-additional-ref-row');
-        const index = Number.parseInt(String(row?.getAttribute('data-ref-index') || ''), 10);
-        if (!Number.isInteger(index)) {
-            return;
-        }
+        const index = getAdditionalReferenceIndex(target);
+        if (index < 0) return;
 
         const refs = getActiveLorebookReferences(settings);
         if (!refs[index]) {
@@ -2060,19 +2118,21 @@ function bindAdditionalReferencesEvents(settings) {
             refs[index].priority = Number.isFinite(parsed) ? parsed : 0;
         }
         saveSettings();
-        // Обновляем только статус (ссылок на provider-limit warning), не
-        // ре-рендерим карточки — иначе слетает фокус.
+        updateAdditionalReferenceListPreview(refs[index]);
         renderAdditionalReferencesStatus(getActiveProviderMaxReferences(settings));
     });
 
     document.getElementById('iig_additional_refs_list')?.addEventListener('change', async (e) => {
         const target = e.target;
+        if (target instanceof HTMLSelectElement && target.id === 'iig_additional_refs_filter') {
+            additionalReferenceFilter = ['enabled', 'match', 'always'].includes(target.value) ? target.value : 'all';
+            filterAdditionalReferenceRows();
+            return;
+        }
+
         if (target instanceof HTMLInputElement && target.classList.contains('iig-additional-ref-enabled')) {
-            const row = target.closest('.iig-additional-ref-row');
-            const index = Number.parseInt(String(row?.getAttribute('data-ref-index') || ''), 10);
-            if (!Number.isInteger(index)) {
-                return;
-            }
+            const index = getAdditionalReferenceIndex(target);
+            if (index < 0) return;
 
             const refs = getActiveLorebookReferences(settings);
             if (!refs[index]) {
@@ -2085,13 +2145,32 @@ function bindAdditionalReferencesEvents(settings) {
             return;
         }
 
+        if (target instanceof HTMLSelectElement && target.classList.contains('iig-additional-ref-match-mode')) {
+            const index = getAdditionalReferenceIndex(target);
+            const refs = getActiveLorebookReferences(settings);
+            if (index < 0 || !refs[index]) return;
+            refs[index].matchMode = target.value === 'always' ? 'always' : 'match';
+            saveSettings();
+            refreshAdditionalReferencesList();
+            return;
+        }
+
+        if (target instanceof HTMLInputElement && target.classList.contains('iig-additional-ref-regex')) {
+            const index = getAdditionalReferenceIndex(target);
+            const refs = getActiveLorebookReferences(settings);
+            if (index < 0 || !refs[index]) return;
+            refs[index].useRegex = target.checked;
+            saveSettings();
+            refreshAdditionalReferencesList();
+            return;
+        }
+
         if (!(target instanceof HTMLInputElement) || !target.classList.contains('iig-additional-ref-file')) {
             return;
         }
 
-        const row = target.closest('.iig-additional-ref-row');
-        const index = Number.parseInt(String(row?.getAttribute('data-ref-index') || ''), 10);
-        if (!Number.isInteger(index)) {
+        const index = getAdditionalReferenceIndex(target);
+        if (index < 0) {
             target.value = '';
             return;
         }
@@ -2132,30 +2211,16 @@ function bindAdditionalReferencesEvents(settings) {
         }
     });
 
-    document.getElementById('iig_additional_refs_list')?.addEventListener('change', (e) => {
-        const target = e.target;
-        if (!(target instanceof HTMLInputElement)) return;
-
-        const isAlways = target.classList.contains('iig-additional-ref-always');
-        const isRegex = target.classList.contains('iig-additional-ref-regex');
-        if (!isAlways && !isRegex) return;
-
-        const row = target.closest('.iig-additional-ref-row');
-        const index = Number.parseInt(String(row?.getAttribute('data-ref-index') || ''), 10);
-        if (!Number.isInteger(index)) return;
-
-        const refs = getActiveLorebookReferences(settings);
-        if (!refs[index]) return;
-
-        if (isAlways) refs[index].matchMode = target.checked ? 'always' : 'match';
-        if (isRegex) refs[index].useRegex = target.checked;
-        saveSettings();
-        refreshAdditionalReferencesList();
-    });
-
     document.getElementById('iig_additional_refs_list')?.addEventListener('click', async (e) => {
         const target = e.target instanceof Element ? e.target : null;
         if (!target) return;
+
+        const selectButton = target.closest('[data-ref-select]');
+        if (selectButton) {
+            selectedAdditionalReferenceId = String(selectButton.getAttribute('data-ref-select') || '');
+            refreshAdditionalReferencesList();
+            return;
+        }
 
         const urlBtn = target.closest('.iig-additional-ref-upload-url');
         const removeBtn = !urlBtn ? target.closest('.iig-additional-ref-remove') : null;
@@ -2164,9 +2229,8 @@ function bindAdditionalReferencesEvents(settings) {
         const button = urlBtn || removeBtn || upBtn || downBtn;
         if (!button) return;
 
-        const row = button.closest('.iig-additional-ref-row');
-        const index = Number.parseInt(String(row?.getAttribute('data-ref-index') || ''), 10);
-        if (!Number.isInteger(index)) return;
+        const index = getAdditionalReferenceIndex(button);
+        if (index < 0) return;
 
         const refs = getActiveLorebookReferences(settings);
         if (urlBtn) {
@@ -2199,6 +2263,7 @@ function bindAdditionalReferencesEvents(settings) {
             );
             if (!confirmed) return;
             refs.splice(index, 1);
+            selectedAdditionalReferenceId = refs[index]?.id || refs[index - 1]?.id || '';
         } else if (upBtn && index > 0) {
             [refs[index - 1], refs[index]] = [refs[index], refs[index - 1]];
         } else if (downBtn && index < refs.length - 1) {

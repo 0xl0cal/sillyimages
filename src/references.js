@@ -45,20 +45,14 @@ function makeCharacterLibraryItemId(prefix) {
     return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function normalizeCharacterDescription(raw) {
+function normalizeCharacterAppearanceItem(raw) {
+    const type = raw?.type === 'image' ? 'image' : 'text';
     return {
-        id: String(raw?.id || '').trim() || makeCharacterLibraryItemId('description'),
+        id: String(raw?.id || '').trim() || makeCharacterLibraryItemId('appearance'),
+        type,
         enabled: raw?.enabled !== false,
-        text: String(raw?.text || '').trim(),
-    };
-}
-
-function normalizeCharacterImageReference(raw) {
-    return {
-        id: String(raw?.id || '').trim() || makeCharacterLibraryItemId('reference'),
-        enabled: raw?.enabled !== false,
-        name: String(raw?.name || '').trim(),
-        imagePath: normalizeStoredImagePath(raw?.imagePath),
+        name: type === 'image' ? String(raw?.name || '').trim() : '',
+        imagePath: type === 'image' ? normalizeStoredImagePath(raw?.imagePath) : '',
         description: String(raw?.description || '').trim(),
     };
 }
@@ -71,8 +65,7 @@ function normalizeCharacterLibraryEntry(raw) {
             imagePath: normalizeStoredImagePath(raw?.primary?.imagePath),
             description: String(raw?.primary?.description || '').trim(),
         },
-        descriptions: (Array.isArray(raw?.descriptions) ? raw.descriptions : []).map(normalizeCharacterDescription),
-        references: (Array.isArray(raw?.references) ? raw.references : []).map(normalizeCharacterImageReference),
+        appearanceItems: (Array.isArray(raw?.appearanceItems) ? raw.appearanceItems : []).map(normalizeCharacterAppearanceItem),
     };
 }
 
@@ -194,20 +187,12 @@ export function deleteCharacterLibraryEntry(kind, key, settings = getSettings())
     saveSettings();
 }
 
-export function addCharacterLibraryDescription(kind, key, settings = getSettings()) {
+export function addCharacterLibraryAppearanceItem(kind, key, type, settings = getSettings()) {
     const entry = getCharacterLibraryEntry(kind, key, settings);
-    const description = normalizeCharacterDescription({});
-    entry.descriptions.push(description);
+    const item = normalizeCharacterAppearanceItem({ type });
+    entry.appearanceItems.push(item);
     saveSettings();
-    return description;
-}
-
-export function addCharacterLibraryReference(kind, key, settings = getSettings()) {
-    const entry = getCharacterLibraryEntry(kind, key, settings);
-    const reference = normalizeCharacterImageReference({});
-    entry.references.push(reference);
-    saveSettings();
-    return reference;
+    return item;
 }
 
 export function getCharacterLibraryDescription(kind, key, settings = getSettings()) {
@@ -215,7 +200,9 @@ export function getCharacterLibraryDescription(kind, key, settings = getSettings
     if (!entry) return '';
     return [
         entry.primary.enabled !== false ? entry.primary.description : '',
-        ...entry.descriptions.filter((item) => item.enabled !== false).map((item) => item.text),
+        ...entry.appearanceItems
+            .filter((item) => item.type === 'text' && item.enabled !== false)
+            .map((item) => item.description),
     ].map(normalizeReferenceDescription).filter(Boolean).join(' ');
 }
 
@@ -501,15 +488,15 @@ export async function collectCharacterLibraryReferences(kind, format, settings =
         }
     }
 
-    for (const reference of entry?.references || []) {
-        if (reference.enabled === false) continue;
-        const imagePath = normalizeStoredImagePath(reference.imagePath);
+    for (const item of entry?.appearanceItems || []) {
+        if (item.type !== 'image' || item.enabled === false) continue;
+        const imagePath = normalizeStoredImagePath(item.imagePath);
         if (!imagePath) continue;
         const image = await convert(imagePath);
         if (image) {
             const description = results.length === 0 && sharedDescription
-                ? `${sharedDescription} ${reference.description}`.trim()
-                : reference.description;
+                ? `${sharedDescription} ${item.description}`.trim()
+                : item.description;
             results.push(makeReferenceObject(image, description, source));
         }
     }
@@ -567,106 +554,172 @@ export async function collectPreviousContextReferences(messageId, format, reques
 
 // ----- Additional references -----
 
-export function buildAdditionalReferenceRowsHtml(settings = getSettings()) {
+export function buildAdditionalReferenceRowsHtml(settings = getSettings(), viewState = {}) {
     const refs = getActiveLorebookReferences(settings);
     const isPowerMode = settings.additionalReferencesMode === 'power';
-
-    if (refs.length === 0) {
-        return '<p class="hint">Пока пусто. Добавь референс с именем-триггером и картинкой.</p>';
-    }
-
-    const lastIndex = refs.length - 1;
-    return `<div class="${isPowerMode ? 'iig-additional-ref-list-power' : 'iig-additional-ref-list-simple'}">` + refs.map((ref, index) => {
+    const selectedId = String(viewState.selectedId || '');
+    const selectedIndex = Math.max(0, refs.findIndex((ref) => ref.id === selectedId));
+    const selectedRef = refs[selectedIndex] || null;
+    const query = String(viewState.query || '');
+    const filter = ['enabled', 'match', 'always'].includes(viewState.filter) ? viewState.filter : 'all';
+    const listRowsHtml = refs.map((ref, index) => {
         const previewSrc = normalizeStoredImagePath(ref.imagePath);
         const isAlways = ref.matchMode === 'always';
         const isEnabled = ref.enabled !== false;
-        const useRegex = ref.useRegex === true;
         const previewHtml = previewSrc
-            ? `<img src="${sanitizeForHtml(previewSrc)}" alt="${sanitizeForHtml(ref.name || `ref-${index + 1}`)}" class="iig-additional-ref-thumb">`
-            : `<div class="iig-additional-ref-thumb iig-additional-ref-thumb-placeholder">${t`none`}</div>`;
-
-        const isFirst = index === 0;
-        const isLast = index === lastIndex;
-
+            ? `<img src="${sanitizeForHtml(previewSrc)}" alt="${sanitizeForHtml(ref.name || `ref-${index + 1}`)}" class="iig-additional-ref-list-thumb">`
+            : `<div class="iig-additional-ref-list-thumb iig-additional-ref-thumb-placeholder"><i class="fa-solid fa-image"></i></div>`;
+        const title = String(ref.name || '').trim() || t`Untitled reference`;
+        const description = String(ref.description || '').replace(/\s+/g, ' ').trim() || t`No description`;
+        const searchText = `${ref.name || ''} ${ref.description || ''} ${ref.group || ''}`.toLowerCase();
         return `
-            <div class="iig-additional-ref-row ${isPowerMode ? 'iig-additional-ref-row-power' : 'iig-additional-ref-row-simple'} ${isEnabled ? '' : 'iig-additional-ref-row-disabled'}" data-ref-index="${index}">
-                <div class="iig-additional-ref-content">
-                    <div class="iig-additional-ref-preview">
-                        ${previewHtml}
-                        <label class="checkbox_label iig-additional-ref-enabled-toggle" title="${isEnabled ? t`Disable reference` : t`Enable reference`}">
-                            <input type="checkbox" class="iig-additional-ref-enabled" ${isEnabled ? 'checked' : ''}>
-                            <span></span>
+            <div
+                class="iig-additional-ref-list-row ${ref.id === selectedRef?.id ? 'selected' : ''} ${isEnabled ? '' : 'disabled'}"
+                data-ref-index="${index}"
+                data-ref-id="${sanitizeForHtml(ref.id)}"
+                data-ref-search="${sanitizeForHtml(searchText)}"
+                data-ref-enabled="${isEnabled ? 'true' : 'false'}"
+                data-ref-match-mode="${isAlways ? 'always' : 'match'}"
+            >
+                <label class="checkbox_label iig-additional-ref-list-enabled" title="${isEnabled ? t`Disable reference` : t`Enable reference`}">
+                    <input type="checkbox" class="iig-additional-ref-enabled" ${isEnabled ? 'checked' : ''}>
+                    <span></span>
+                </label>
+                <button type="button" class="menu_button iig-additional-ref-select" data-ref-select="${sanitizeForHtml(ref.id)}">
+                    ${previewHtml}
+                    <span class="iig-additional-ref-list-copy">
+                        <strong>${sanitizeForHtml(title)}</strong>
+                        <small>${sanitizeForHtml(description)}</small>
+                    </span>
+                    <span class="iig-additional-ref-list-badges">
+                        <span class="iig-reference-badge">${isAlways ? t`Always` : t`Match`}</span>
+                        ${isPowerMode && ref.useRegex === true ? `<span class="iig-reference-badge">${t`Regex`}</span>` : ''}
+                        ${isPowerMode && ref.group ? `<span class="iig-reference-badge">${sanitizeForHtml(ref.group)}</span>` : ''}
+                    </span>
+                </button>
+            </div>`;
+    }).join('');
+
+    const selectedPreviewSrc = normalizeStoredImagePath(selectedRef?.imagePath);
+    const selectedPreviewHtml = selectedPreviewSrc
+        ? `<img src="${sanitizeForHtml(selectedPreviewSrc)}" alt="${sanitizeForHtml(selectedRef?.name || t`Reference`)}" class="iig-additional-ref-editor-thumb">`
+        : `<div class="iig-additional-ref-editor-thumb iig-additional-ref-thumb-placeholder"><i class="fa-solid fa-image"></i></div>`;
+    const editorHtml = selectedRef ? `
+        <div class="iig-additional-ref-editor-content" data-ref-index="${selectedIndex}" data-ref-id="${sanitizeForHtml(selectedRef.id)}">
+            <div class="iig-additional-ref-editor-heading">
+                <div>
+                    <strong>${sanitizeForHtml(String(selectedRef.name || '').trim() || t`Untitled reference`)}</strong>
+                    <small>${isPowerMode ? t`Advanced editor` : t`Reference editor`}</small>
+                </div>
+                <label class="checkbox_label" title="${selectedRef.enabled !== false ? t`Disable reference` : t`Enable reference`}">
+                    <input type="checkbox" class="iig-additional-ref-enabled" ${selectedRef.enabled !== false ? 'checked' : ''}>
+                    <span></span>
+                </label>
+            </div>
+
+            <div class="iig-additional-ref-editor-main">
+                <div class="iig-additional-ref-editor-image">
+                    ${selectedPreviewHtml}
+                    <div class="iig-additional-ref-image-actions">
+                        <label class="menu_button iig-additional-ref-upload" title="${t`Upload image`}">
+                            <i class="fa-solid fa-upload"></i>
+                            <input type="file" accept="image/*" class="iig-additional-ref-file" style="display:none">
                         </label>
-                    </div>
-                    <div class="iig-additional-ref-main">
-                        <div class="iig-additional-ref-header">
-                            <input
-                                type="text"
-                                class="text_pole flex1 iig-additional-ref-name"
-                                placeholder="${t`Trigger name (or regex)`}"
-                                value="${sanitizeForHtml(ref.name || '')}"
-                            >
-                            <label class="menu_button iig-additional-ref-upload" title="${t`Upload image`}">
-                                <i class="fa-solid fa-upload"></i>
-                                <input type="file" accept="image/*" class="iig-additional-ref-file" style="display:none">
-                            </label>
-                            <div class="menu_button iig-additional-ref-upload-url" title="${t`Upload image by URL`}">
-                                <i class="fa-solid fa-link"></i>
-                            </div>
-                            <div class="menu_button iig-additional-ref-remove" title="${t`Delete`}">
-                                <i class="fa-solid fa-trash"></i>
-                            </div>
-                        </div>
-                        <textarea
-                            class="text_pole flex1 iig-additional-ref-description"
-                            rows="2"
-                            placeholder="${t`Reference description`}"
-                        >${sanitizeForHtml(ref.description || '')}</textarea>
-                        <div class="iig-additional-ref-lorebook-grid ${isPowerMode ? '' : 'iig-hidden'}">
-                            <input
-                                type="text"
-                                class="text_pole iig-additional-ref-group"
-                                placeholder="${t`Group (e.g. characters, locations)`}"
-                                value="${sanitizeForHtml(ref.group || '')}"
-                            >
-                            <input
-                                type="text"
-                                class="text_pole iig-additional-ref-secondary"
-                                placeholder="${t`Secondary keys (AND, comma-separated)`}"
-                                value="${sanitizeForHtml(ref.secondaryKeys || '')}"
-                            >
-                            <input
-                                type="number"
-                                class="text_pole iig-additional-ref-priority"
-                                placeholder="${t`Priority`}"
-                                step="1"
-                                value="${Number.isFinite(ref.priority) ? ref.priority : 0}"
-                                title="${t`Higher priority is matched first when provider limits references`}"
-                            >
-                        </div>
-                        <div class="iig-additional-ref-footer">
-                            <label class="checkbox_label">
-                                <input type="checkbox" class="iig-additional-ref-always" ${isAlways ? 'checked' : ''}>
-                                <span>${isAlways ? t`Always send` : t`Send on match`}</span>
-                            </label>
-                            <label class="checkbox_label ${isPowerMode ? '' : 'iig-hidden'}" title="${t`Interpret trigger as JS regex (e.g. /cat|kitten/i). Secondary keys remain literal.`}">
-                                <input type="checkbox" class="iig-additional-ref-regex" ${useRegex ? 'checked' : ''}>
-                                <span>${t`Regex`}</span>
-                            </label>
-                            <div class="iig-additional-ref-move ${isPowerMode ? '' : 'iig-hidden'}">
-                                <div class="menu_button iig-additional-ref-move-up ${isFirst ? 'disabled' : ''}" title="${t`Move up`}" ${isFirst ? 'aria-disabled="true"' : ''}>
-                                    <i class="fa-solid fa-arrow-up"></i>
-                                </div>
-                                <div class="menu_button iig-additional-ref-move-down ${isLast ? 'disabled' : ''}" title="${t`Move down`}" ${isLast ? 'aria-disabled="true"' : ''}>
-                                    <i class="fa-solid fa-arrow-down"></i>
-                                </div>
-                            </div>
-                        </div>
+                        <button type="button" class="menu_button iig-additional-ref-upload-url" title="${t`Upload image by URL`}">
+                            <i class="fa-solid fa-link"></i>
+                        </button>
                     </div>
                 </div>
+                <div class="iig-additional-ref-editor-fields">
+                    <label>
+                        <span>${t`Name`}</span>
+                        <input type="text" class="text_pole iig-additional-ref-name" placeholder="${t`Reference name`}"
+                            value="${sanitizeForHtml(selectedRef.name || '')}">
+                    </label>
+                    <label>
+                        <span>${t`Description`}</span>
+                        <textarea class="text_pole iig-additional-ref-description" rows="3" placeholder="${t`Reference description`}">${sanitizeForHtml(selectedRef.description || '')}</textarea>
+                    </label>
+                    <label>
+                        <span>${t`Send`}</span>
+                        <select class="iig-additional-ref-match-mode">
+                            <option value="match" ${selectedRef.matchMode !== 'always' ? 'selected' : ''}>${t`On match`}</option>
+                            <option value="always" ${selectedRef.matchMode === 'always' ? 'selected' : ''}>${t`Always`}</option>
+                        </select>
+                    </label>
+                </div>
             </div>
-        `;
-    }).join('') + '</div>';
+
+            ${isPowerMode ? `
+                <details class="iig-additional-ref-editor-section">
+                    <summary><i class="fa-solid fa-code-branch"></i><span>${t`Matching rules`}</span></summary>
+                    <div class="iig-additional-ref-editor-section-body">
+                        <label class="checkbox_label" title="${t`Interpret the reference name as a JavaScript regular expression`}">
+                            <input type="checkbox" class="iig-additional-ref-regex" ${selectedRef.useRegex === true ? 'checked' : ''}>
+                            <span>${t`Use regex`}</span>
+                        </label>
+                        <label>
+                            <span>${t`Secondary keys`}</span>
+                            <input type="text" class="text_pole iig-additional-ref-secondary" placeholder="${t`AND conditions, comma-separated`}"
+                                value="${sanitizeForHtml(selectedRef.secondaryKeys || '')}">
+                        </label>
+                    </div>
+                </details>
+                <details class="iig-additional-ref-editor-section">
+                    <summary><i class="fa-solid fa-layer-group"></i><span>${t`Organization`}</span></summary>
+                    <div class="iig-additional-ref-editor-section-body iig-additional-ref-organization-grid">
+                        <label>
+                            <span>${t`Group`}</span>
+                            <input type="text" class="text_pole iig-additional-ref-group" placeholder="${t`Characters, locations, items`}"
+                                value="${sanitizeForHtml(selectedRef.group || '')}">
+                        </label>
+                        <label>
+                            <span>${t`Priority`}</span>
+                            <input type="number" class="text_pole iig-additional-ref-priority" step="1"
+                                value="${Number.isFinite(selectedRef.priority) ? selectedRef.priority : 0}"
+                                title="${t`Higher priority is matched first when provider limits references`}">
+                        </label>
+                    </div>
+                </details>` : ''}
+
+            <div class="iig-additional-ref-editor-actions">
+                ${isPowerMode ? `
+                    <button type="button" class="menu_button iig-additional-ref-move-up ${selectedIndex === 0 ? 'disabled' : ''}" title="${t`Move up`}" ${selectedIndex === 0 ? 'aria-disabled="true"' : ''}>
+                        <i class="fa-solid fa-arrow-up"></i><span>${t`Up`}</span>
+                    </button>
+                    <button type="button" class="menu_button iig-additional-ref-move-down ${selectedIndex === refs.length - 1 ? 'disabled' : ''}" title="${t`Move down`}" ${selectedIndex === refs.length - 1 ? 'aria-disabled="true"' : ''}>
+                        <i class="fa-solid fa-arrow-down"></i><span>${t`Down`}</span>
+                    </button>` : ''}
+                <button type="button" class="menu_button redWarningBG iig-additional-ref-remove">
+                    <i class="fa-solid fa-trash"></i><span>${t`Delete`}</span>
+                </button>
+            </div>
+        </div>` : `<div class="iig-library-empty iig-additional-ref-editor-empty">${t`Add a reference to start editing.`}</div>`;
+
+    return `
+        <div class="iig-additional-ref-workspace ${isPowerMode ? 'power' : 'simple'}">
+            <div class="iig-additional-ref-browser">
+                <div class="iig-additional-ref-tools">
+                    <label class="iig-additional-ref-search">
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                        <input id="iig_additional_refs_search" class="text_pole" type="search" value="${sanitizeForHtml(query)}" placeholder="${t`Search references`}">
+                    </label>
+                    <select id="iig_additional_refs_filter" title="${t`Filter references`}">
+                        <option value="all" ${filter === 'all' ? 'selected' : ''}>${t`All`}</option>
+                        <option value="enabled" ${filter === 'enabled' ? 'selected' : ''}>${t`Enabled`}</option>
+                        <option value="match" ${filter === 'match' ? 'selected' : ''}>${t`On match`}</option>
+                        <option value="always" ${filter === 'always' ? 'selected' : ''}>${t`Always`}</option>
+                    </select>
+                </div>
+                <div class="iig-additional-ref-compact-list">
+                    ${listRowsHtml || `<div class="iig-library-empty">${t`Add a reference with an image, name, and description.`}</div>`}
+                </div>
+                <div id="iig_additional_refs_no_results" class="iig-library-empty iig-hidden">${t`No references match the current search.`}</div>
+            </div>
+            <div class="iig-additional-ref-editor">
+                ${editorHtml}
+            </div>
+        </div>`;
 }
 
 /**
@@ -699,13 +752,13 @@ export function renderAdditionalReferencesStatus(providerMaxRefs = 0) {
  * `providerMaxRefs` (optional) — лимит картинок на один запрос у активного
  * провайдера/модели.
  */
-export function renderAdditionalReferencesList(providerMaxRefs = 0) {
+export function renderAdditionalReferencesList(providerMaxRefs = 0, viewState = {}) {
     const container = document.getElementById('iig_additional_refs_list');
     if (!container) {
         return;
     }
 
-    container.innerHTML = buildAdditionalReferenceRowsHtml();
+    container.innerHTML = buildAdditionalReferenceRowsHtml(getSettings(), viewState);
     renderAdditionalReferencesStatus(providerMaxRefs);
 }
 
