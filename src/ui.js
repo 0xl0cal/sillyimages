@@ -601,7 +601,7 @@ function buildStylesSettingsSectionHtml() {
 // ----- Character reference library -----
 
 function buildCharactersSettingsSectionHtml(settings = getSettings()) {
-    return buildSettingsSectionHtml('iig_characters_section', t`Character references`, buildCharacterLibraryBodyHtml(settings), false);
+    return buildSettingsSectionHtml('iig_characters_section', t`Character library`, buildCharacterLibraryBodyHtml(settings), false);
 }
 
 // ----- References section -----
@@ -2491,8 +2491,13 @@ export function createSettingsUI() {
         return;
     }
 
+    if (document.getElementById('iig_settings_root')) {
+        bindCharacterLibraryEvents(settings);
+        return;
+    }
+
     const html = `
-        <div class="inline-drawer">
+        <div id="iig_settings_root" class="inline-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
                 <b>${t`Image Generation`}</b>
                 <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>

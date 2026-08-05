@@ -47,7 +47,6 @@ function appearanceItemSignature(item) {
     const type = item?.type === 'image' ? 'image' : 'text';
     return [
         type,
-        String(item?.name || '').trim(),
         String(item?.imagePath || '').trim(),
         String(item?.description || '').replace(/\s+/g, ' ').trim(),
     ].join('\n');
@@ -71,7 +70,6 @@ function migrateCharacterLibraryEntry(raw, bucket, key) {
             id: String(description?.id || '').trim() || migratedAppearanceItemId('text', bucket, key, index),
             type: 'text',
             enabled: description?.enabled !== false,
-            name: '',
             imagePath: '',
             description: text,
         });
@@ -83,7 +81,6 @@ function migrateCharacterLibraryEntry(raw, bucket, key) {
             id: String(reference?.id || '').trim() || migratedAppearanceItemId('image', bucket, key, index),
             type: 'image',
             enabled: reference?.enabled !== false,
-            name: String(reference?.name || '').trim(),
             imagePath: String(reference?.imagePath || '').trim(),
             description: String(reference?.description || '').trim(),
         });
@@ -100,6 +97,12 @@ function mergeCharacterLibraryEntries(target, source) {
     const merged = { ...source, ...target };
     merged.displayName = String(target.displayName || source.displayName || '').trim();
     merged.primary = target.primary || source.primary;
+    merged.generations = Array.isArray(target.generations) ? [...target.generations] : [];
+    for (const generation of Array.isArray(source.generations) ? source.generations : []) {
+        if (!merged.generations.some((item) => item?.imagePath === generation?.imagePath)) {
+            merged.generations.push(generation);
+        }
+    }
     merged.appearanceItems = Array.isArray(target.appearanceItems) ? [...target.appearanceItems] : [];
     for (const item of Array.isArray(source.appearanceItems) ? source.appearanceItems : []) {
         appendUniqueAppearanceItem(merged.appearanceItems, item);
@@ -167,7 +170,6 @@ function migrateCharacterReferenceSettings(settings) {
                         id: migratedAppearanceItemId('text', bucket, key, index),
                         type: 'text',
                         enabled: true,
-                        name: '',
                         imagePath: '',
                         description,
                     });

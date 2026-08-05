@@ -6,9 +6,16 @@ import { t } from './i18n.js';
 
 const OVERLAY_ID = 'iig_lightbox';
 const IMG_SELECTOR = 'img[data-iig-instruction]:not(.iig-error-image)';
+const GALLERY_IMG_SELECTOR = 'img[data-iig-lightbox]';
+const OPENABLE_IMG_SELECTOR = `${IMG_SELECTOR}, ${GALLERY_IMG_SELECTOR}`;
 const MIN_SCALE = 1;
 const MAX_SCALE = 5;
 const ZOOM_STEP = 1.4;
+const WHEEL_ZOOM_SENSITIVITY = 0.0035;
+const PINCH_ZOOM_SENSITIVITY = 1.65;
+const WHEEL_END_DELAY = 90;
+const PAN_RESISTANCE = 0.28;
+const SCALE_EPSILON = 0.001;
 const SWIPE_THRESHOLD = 60;
 const TAP_MAX_MOVE = 10;
 const DOUBLE_TAP_MS = 300;
@@ -50,10 +57,8 @@ export function initLightbox() {
     const pointers = new Map();
     let pinchStartDist = 0;
     let pinchStartScale = 1;
-    let pinchStartTx = 0;
-    let pinchStartTy = 0;
-    let pinchMidX = 0;
-    let pinchMidY = 0;
+    let pinchAnchorX = 0;
+    let pinchAnchorY = 0;
     let dragStartX = 0;
     let dragStartY = 0;
     let dragStartTx = 0;
@@ -64,28 +69,108 @@ export function initLightbox() {
     let swipeStartX = 0;
     let swipeStartY = 0;
     let swipeActive = false;
-
-    const applyTransform = () => {
-        imgEl.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+    let transformFrame = 0;
+    let wheelEndTimer = null;
+    let lastZoomPointX = null;
+    let lastZoomPointY = null;
+    const geometry = {
+        baseWidth: 0,
+        baseHeight: 0,
+        viewportWidth: 0,
+        viewportHeight: 0,
+        centerX: 0,
+        centerY: 0,
     };
 
-    // Use element's layout size (pre-transform) to compute pan bounds —
-    // getBoundingClientRect reflects the old transform until applyTransform runs.
-    const clampPan = () => {
-        if (scale <= 1) {
+    const renderTransform = () => {
+        transformFrame = 0;
+        imgEl.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(${scale})`;
+    };
+
+    const applyTransform = (immediate = false) => {
+        if (immediate) {
+            if (transformFrame) cancelAnimationFrame(transformFrame);
+            renderTransform();
+            return;
+        }
+        if (!transformFrame) transformFrame = requestAnimationFrame(renderTransform);
+    };
+
+    const refreshGeometry = () => {
+        const parent = imgEl.parentElement;
+        if (!parent) return;
+        const parentRect = parent.getBoundingClientRect();
+        geometry.baseWidth = imgEl.offsetWidth || imgEl.naturalWidth || 0;
+        geometry.baseHeight = imgEl.offsetHeight || imgEl.naturalHeight || 0;
+        geometry.viewportWidth = parent.clientWidth || window.innerWidth;
+        geometry.viewportHeight = parent.clientHeight || window.innerHeight;
+        geometry.centerX = parentRect.left + imgEl.offsetLeft + geometry.baseWidth / 2;
+        geometry.centerY = parentRect.top + imgEl.offsetTop + geometry.baseHeight / 2;
+    };
+
+    const getPanBounds = (scaleValue = scale) => ({
+        x: Math.max(0, (geometry.baseWidth * scaleValue - geometry.viewportWidth) / 2),
+        y: Math.max(0, (geometry.baseHeight * scaleValue - geometry.viewportHeight) / 2),
+    });
+
+    const applyResistance = (value, limit) => {
+        if (value > limit) return limit + (value - limit) * PAN_RESISTANCE;
+        if (value < -limit) return -limit + (value + limit) * PAN_RESISTANCE;
+        return value;
+    };
+
+    const clampPan = (elastic = false) => {
+        if (scale <= MIN_SCALE + SCALE_EPSILON && !elastic) {
             tx = 0;
             ty = 0;
             return;
         }
-        const baseW = imgEl.offsetWidth || imgEl.naturalWidth || 0;
-        const baseH = imgEl.offsetHeight || imgEl.naturalHeight || 0;
-        const parent = imgEl.parentElement;
-        const pw = parent?.clientWidth || window.innerWidth;
-        const ph = parent?.clientHeight || window.innerHeight;
-        const overflowX = Math.max(0, (baseW * scale - pw) / 2);
-        const overflowY = Math.max(0, (baseH * scale - ph) / 2);
-        tx = Math.max(-overflowX, Math.min(overflowX, tx));
-        ty = Math.max(-overflowY, Math.min(overflowY, ty));
+        const bounds = getPanBounds();
+        if (elastic) {
+            tx = applyResistance(tx, bounds.x);
+            ty = applyResistance(ty, bounds.y);
+        } else {
+            tx = Math.max(-bounds.x, Math.min(bounds.x, tx));
+            ty = Math.max(-bounds.y, Math.min(bounds.y, ty));
+        }
+    };
+
+    const updateZoomState = () => {
+        overlay.classList.toggle('zoomed', scale > MIN_SCALE + SCALE_EPSILON);
+    };
+
+    const syncStateFromRenderedTransform = () => {
+        const value = getComputedStyle(imgEl).transform;
+        if (!value || value === 'none') return;
+        try {
+            const matrix = new DOMMatrixReadOnly(value);
+            const renderedScale = Math.hypot(matrix.a, matrix.b);
+            if (Number.isFinite(renderedScale) && renderedScale > 0) scale = renderedScale;
+            if (Number.isFinite(matrix.e)) tx = matrix.e;
+            if (Number.isFinite(matrix.f)) ty = matrix.f;
+        } catch (_error) {
+            // Keep the current state when the browser cannot parse the matrix.
+        }
+    };
+
+    const beginInteraction = () => {
+        if (!overlay.classList.contains('interacting')) {
+            syncStateFromRenderedTransform();
+            overlay.classList.add('interacting');
+            applyTransform(true);
+        }
+        refreshGeometry();
+    };
+
+    const endInteraction = () => {
+        if (!overlay.classList.contains('interacting')) return;
+        applyTransform(true);
+        overlay.classList.remove('interacting');
+        // Commit the current gesture frame before animating back into bounds.
+        void imgEl.offsetWidth;
+        clampPan(false);
+        updateZoomState();
+        applyTransform(true);
     };
 
     const clearTapCloseTimer = () => {
@@ -95,34 +180,51 @@ export function initLightbox() {
         }
     };
 
-    const resetZoom = () => {
+    const resetZoom = (animate = true) => {
+        if (!animate) overlay.classList.add('interacting');
         scale = 1;
         tx = 0;
         ty = 0;
-        overlay.classList.remove('zoomed');
-        applyTransform();
+        updateZoomState();
+        applyTransform(true);
+        if (!animate) {
+            void imgEl.offsetWidth;
+            overlay.classList.remove('interacting');
+        }
     };
 
-    const zoomAtPoint = (newScale, pointX, pointY) => {
+    const clearWheelEndTimer = () => {
+        if (wheelEndTimer) {
+            clearTimeout(wheelEndTimer);
+            wheelEndTimer = null;
+        }
+    };
+
+    const zoomAtPoint = (newScale, pointX, pointY, elastic = false) => {
         newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, newScale));
-        if (newScale === scale) return;
-        const rect = imgEl.getBoundingClientRect();
-        const cx = rect.left + rect.width / 2;
-        const cy = rect.top + rect.height / 2;
-        const factor = newScale / scale;
-        tx = pointX - cx - factor * (pointX - cx - tx);
-        ty = pointY - cy - factor * (pointY - cy - ty);
+        if (Math.abs(newScale - scale) < SCALE_EPSILON) return;
+        if (!geometry.baseWidth || !geometry.baseHeight) refreshGeometry();
+        const localX = (pointX - geometry.centerX - tx) / scale;
+        const localY = (pointY - geometry.centerY - ty) / scale;
+        tx = pointX - geometry.centerX - localX * newScale;
+        ty = pointY - geometry.centerY - localY * newScale;
         scale = newScale;
-        // Toggle class BEFORE applyTransform so CSS transition state matches the
-        // first rendered frame (avoids pinch stutter on the first move).
-        overlay.classList.toggle('zoomed', scale > 1);
-        clampPan();
+        updateZoomState();
+        clampPan(elastic);
         applyTransform();
     };
 
-    const zoomAtCenter = (newScale) => {
-        const rect = imgEl.getBoundingClientRect();
-        zoomAtPoint(newScale, rect.left + rect.width / 2, rect.top + rect.height / 2);
+    const rememberZoomPoint = (x, y) => {
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+        lastZoomPointX = x;
+        lastZoomPointY = y;
+    };
+
+    const zoomAtPreferredPoint = (newScale) => {
+        refreshGeometry();
+        const pointX = lastZoomPointX ?? geometry.centerX + tx;
+        const pointY = lastZoomPointY ?? geometry.centerY + ty;
+        zoomAtPoint(newScale, pointX, pointY);
     };
 
     const collectImagesFromChat = () => {
@@ -135,6 +237,15 @@ export function initLightbox() {
         });
     };
 
+    const collectImagesFor = (img) => {
+        const gallery = img.closest('[data-iig-lightbox-gallery]');
+        if (gallery) {
+            return Array.from(gallery.querySelectorAll(GALLERY_IMG_SELECTOR))
+                .filter((item) => item.getAttribute('src'));
+        }
+        return collectImagesFromChat();
+    };
+
     const updateNavVisibility = () => {
         const multi = imageList.length > 1;
         prevBtn.style.display = multi ? '' : 'none';
@@ -145,16 +256,25 @@ export function initLightbox() {
         if (imageList.length === 0) return;
         currentIndex = (idx + imageList.length) % imageList.length;
         const src = imageList[currentIndex];
+        const caption = src.getAttribute('data-iig-lightbox-caption') || src.alt || '';
+        geometry.baseWidth = 0;
+        geometry.baseHeight = 0;
         imgEl.src = src.src;
-        imgEl.alt = src.alt || '';
-        captionEl.textContent = src.alt || '';
-        resetZoom();
+        imgEl.alt = caption;
+        captionEl.textContent = caption;
+        pointers.clear();
+        clearWheelEndTimer();
+        resetZoom(false);
     };
 
     const openAt = (img) => {
         clearTapCloseTimer();
+        clearWheelEndTimer();
         lastTapTime = 0;
-        imageList = collectImagesFromChat();
+        lastZoomPointX = null;
+        lastZoomPointY = null;
+        pointers.clear();
+        imageList = collectImagesFor(img);
         currentIndex = Math.max(0, imageList.findIndex((x) => x === img));
         if (currentIndex < 0) {
             imageList = [img];
@@ -179,7 +299,7 @@ export function initLightbox() {
         document.body.style.overflow = '';
         imgEl.src = '';
         captionEl.textContent = '';
-        resetZoom();
+        resetZoom(false);
         imageList = [];
     };
 
@@ -187,14 +307,20 @@ export function initLightbox() {
     overlay.querySelector('.iig-lightbox-close')?.addEventListener('click', close);
     overlay.querySelector('.iig-lightbox-zoom-in')?.addEventListener('click', (e) => {
         e.stopPropagation();
-        zoomAtCenter(scale * ZOOM_STEP);
+        clearWheelEndTimer();
+        endInteraction();
+        zoomAtPreferredPoint(scale * ZOOM_STEP);
     });
     overlay.querySelector('.iig-lightbox-zoom-out')?.addEventListener('click', (e) => {
         e.stopPropagation();
-        zoomAtCenter(scale / ZOOM_STEP);
+        clearWheelEndTimer();
+        endInteraction();
+        zoomAtPreferredPoint(scale / ZOOM_STEP);
     });
     overlay.querySelector('.iig-lightbox-zoom-reset')?.addEventListener('click', (e) => {
         e.stopPropagation();
+        clearWheelEndTimer();
+        endInteraction();
         resetZoom();
     });
     prevBtn.addEventListener('click', (e) => {
@@ -209,32 +335,48 @@ export function initLightbox() {
     imgEl.addEventListener('wheel', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const delta = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
-        zoomAtPoint(scale * delta, e.clientX, e.clientY);
+        rememberZoomPoint(e.clientX, e.clientY);
+        beginInteraction();
+        const normalizedDelta = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? window.innerHeight : 1);
+        const factor = Math.max(0.7, Math.min(1.4, Math.exp(-normalizedDelta * WHEEL_ZOOM_SENSITIVITY)));
+        zoomAtPoint(scale * factor, e.clientX, e.clientY, true);
+        clearWheelEndTimer();
+        wheelEndTimer = setTimeout(() => {
+            wheelEndTimer = null;
+            endInteraction();
+        }, WHEEL_END_DELAY);
     }, { passive: false });
 
     imgEl.addEventListener('pointerdown', (e) => {
+        if (!pointers.has(e.pointerId) && pointers.size >= 2) return;
         e.preventDefault();
+        rememberZoomPoint(e.clientX, e.clientY);
         imgEl.setPointerCapture(e.pointerId);
         pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
         if (pointers.size === 2) {
+            clearWheelEndTimer();
+            beginInteraction();
             const pts = Array.from(pointers.values());
             pinchStartDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
             pinchStartScale = scale;
-            pinchStartTx = tx;
-            pinchStartTy = ty;
-            pinchMidX = (pts[0].x + pts[1].x) / 2;
-            pinchMidY = (pts[0].y + pts[1].y) / 2;
+            const midX = (pts[0].x + pts[1].x) / 2;
+            const midY = (pts[0].y + pts[1].y) / 2;
+            pinchAnchorX = (midX - geometry.centerX - tx) / scale;
+            pinchAnchorY = (midY - geometry.centerY - ty) / scale;
             swipeActive = false;
             dragMoved = false;
         } else if (pointers.size === 1) {
+            if (scale > MIN_SCALE + SCALE_EPSILON) {
+                clearWheelEndTimer();
+                beginInteraction();
+            }
             dragStartX = e.clientX;
             dragStartY = e.clientY;
             dragStartTx = tx;
             dragStartTy = ty;
             dragMoved = false;
-            if (scale === 1) {
+            if (scale <= MIN_SCALE + SCALE_EPSILON) {
                 swipeStartX = e.clientX;
                 swipeStartY = e.clientY;
                 swipeActive = true;
@@ -245,33 +387,32 @@ export function initLightbox() {
     });
 
     imgEl.addEventListener('pointermove', (e) => {
+        rememberZoomPoint(e.clientX, e.clientY);
         if (!pointers.has(e.pointerId)) return;
+        e.preventDefault();
         pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-        if (pointers.size === 2) {
+        if (pointers.size === 2 && pinchStartDist > 0) {
             const pts = Array.from(pointers.values());
             const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
             const midX = (pts[0].x + pts[1].x) / 2;
             const midY = (pts[0].y + pts[1].y) / 2;
-            const targetScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, pinchStartScale * (dist / pinchStartDist)));
-            const rect = imgEl.getBoundingClientRect();
-            const cx = rect.left + rect.width / 2;
-            const cy = rect.top + rect.height / 2;
-            const factor = targetScale / pinchStartScale;
-            tx = midX - cx - factor * (pinchMidX - cx - pinchStartTx);
-            ty = midY - cy - factor * (pinchMidY - cy - pinchStartTy);
+            const ratio = Math.max(0.01, dist / pinchStartDist);
+            const targetScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, pinchStartScale * Math.pow(ratio, PINCH_ZOOM_SENSITIVITY)));
+            tx = midX - geometry.centerX - pinchAnchorX * targetScale;
+            ty = midY - geometry.centerY - pinchAnchorY * targetScale;
             scale = targetScale;
-            overlay.classList.toggle('zoomed', scale > 1);
-            clampPan();
+            updateZoomState();
+            clampPan(true);
             applyTransform();
             dragMoved = true;
-        } else if (pointers.size === 1 && scale > 1) {
+        } else if (pointers.size === 1 && scale > MIN_SCALE + SCALE_EPSILON) {
             const dx = e.clientX - dragStartX;
             const dy = e.clientY - dragStartY;
             if (Math.abs(dx) > TAP_MAX_MOVE || Math.abs(dy) > TAP_MAX_MOVE) dragMoved = true;
             tx = dragStartTx + dx;
             ty = dragStartTy + dy;
-            clampPan();
+            clampPan(true);
             applyTransform();
         } else if (pointers.size === 1 && swipeActive) {
             const dx = e.clientX - swipeStartX;
@@ -282,16 +423,34 @@ export function initLightbox() {
 
     const onPointerUp = (e) => {
         if (!pointers.has(e.pointerId)) return;
+        const canceled = e.type === 'pointercancel';
         const wasMulti = pointers.size >= 2;
         pointers.delete(e.pointerId);
+        if (imgEl.hasPointerCapture(e.pointerId)) imgEl.releasePointerCapture(e.pointerId);
 
         if (wasMulti) {
             pinchStartDist = 0;
             swipeActive = false;
+            const remaining = Array.from(pointers.values())[0];
+            if (remaining && !canceled) {
+                dragStartX = remaining.x;
+                dragStartY = remaining.y;
+                dragStartTx = tx;
+                dragStartTy = ty;
+                dragMoved = true;
+            } else {
+                endInteraction();
+            }
             return;
         }
 
-        if (swipeActive && scale === 1 && imageList.length > 1) {
+        if (canceled) {
+            swipeActive = false;
+            endInteraction();
+            return;
+        }
+
+        if (swipeActive && scale <= MIN_SCALE + SCALE_EPSILON && imageList.length > 1) {
             const dx = e.clientX - swipeStartX;
             const dy = e.clientY - swipeStartY;
             if (Math.abs(dx) > SWIPE_THRESHOLD && Math.abs(dx) > Math.abs(dy)) {
@@ -302,10 +461,11 @@ export function initLightbox() {
         }
         swipeActive = false;
 
-        if (!dragMoved && scale === 1) {
+        if (!dragMoved && scale <= MIN_SCALE + SCALE_EPSILON) {
             const now = Date.now();
             if (now - lastTapTime < DOUBLE_TAP_MS) {
                 clearTapCloseTimer();
+                refreshGeometry();
                 zoomAtPoint(2, e.clientX, e.clientY);
                 lastTapTime = 0;
             } else {
@@ -313,24 +473,43 @@ export function initLightbox() {
                 clearTapCloseTimer();
                 tapCloseTimer = setTimeout(() => {
                     tapCloseTimer = null;
-                    if (scale === 1 && overlay.classList.contains('open')) {
+                    if (scale <= MIN_SCALE + SCALE_EPSILON && overlay.classList.contains('open')) {
                         close();
                     }
                 }, DOUBLE_TAP_MS);
             }
-        } else if (!dragMoved && scale > 1) {
+        } else if (!dragMoved && scale > MIN_SCALE + SCALE_EPSILON) {
             const now = Date.now();
             if (now - lastTapTime < DOUBLE_TAP_MS) {
+                endInteraction();
                 resetZoom();
                 lastTapTime = 0;
             } else {
                 lastTapTime = now;
+                endInteraction();
             }
+        } else {
+            endInteraction();
         }
     };
 
     imgEl.addEventListener('pointerup', onPointerUp);
     imgEl.addEventListener('pointercancel', onPointerUp);
+
+    imgEl.addEventListener('load', () => {
+        refreshGeometry();
+        clampPan(false);
+        applyTransform(true);
+    });
+
+    const handleViewportResize = () => {
+        if (!overlay.classList.contains('open')) return;
+        refreshGeometry();
+        clampPan(false);
+        applyTransform(true);
+    };
+    window.addEventListener('resize', handleViewportResize, { passive: true });
+    window.visualViewport?.addEventListener('resize', handleViewportResize, { passive: true });
 
     const stopBubble = (e) => e.stopPropagation();
     overlay.addEventListener('touchstart', stopBubble, { passive: true });
@@ -343,20 +522,26 @@ export function initLightbox() {
         if (!overlay.classList.contains('open')) return;
         if (e.key === 'Escape') {
             close(e);
-        } else if (e.key === 'ArrowLeft' && scale === 1) {
+        } else if (e.key === 'ArrowLeft' && scale <= MIN_SCALE + SCALE_EPSILON) {
             e.preventDefault();
             showImage(currentIndex - 1);
-        } else if (e.key === 'ArrowRight' && scale === 1) {
+        } else if (e.key === 'ArrowRight' && scale <= MIN_SCALE + SCALE_EPSILON) {
             e.preventDefault();
             showImage(currentIndex + 1);
         } else if (e.key === '+' || e.key === '=') {
             e.preventDefault();
-            zoomAtCenter(scale * ZOOM_STEP);
+            clearWheelEndTimer();
+            endInteraction();
+            zoomAtPreferredPoint(scale * ZOOM_STEP);
         } else if (e.key === '-') {
             e.preventDefault();
-            zoomAtCenter(scale / ZOOM_STEP);
+            clearWheelEndTimer();
+            endInteraction();
+            zoomAtPreferredPoint(scale / ZOOM_STEP);
         } else if (e.key === '0') {
             e.preventDefault();
+            clearWheelEndTimer();
+            endInteraction();
             resetZoom();
         }
     });
@@ -364,9 +549,9 @@ export function initLightbox() {
     // Document-level delegation so we survive any rebuild of #chat.
     document.addEventListener('click', (e) => {
         const target = /** @type {HTMLElement} */ (e.target);
-        const img = /** @type {HTMLImageElement|null} */ (target?.closest(IMG_SELECTOR));
+        const img = /** @type {HTMLImageElement|null} */ (target?.closest(OPENABLE_IMG_SELECTOR));
         if (!img) return;
-        if (!img.closest('#chat')) return;
+        if (!img.closest('#chat') && !img.closest('[data-iig-lightbox-gallery]')) return;
         if (img.classList.contains('iig-error-image')) return;
         const rawSrc = img.getAttribute('src') || '';
         if (!rawSrc || rawSrc.endsWith('[IMG:GEN]')) return;

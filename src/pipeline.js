@@ -43,7 +43,11 @@ import {
     resolveActiveProvider,
     validateSettings,
 } from './providers.js';
-import { getReferenceDescription, getReferenceImage } from './references.js';
+import {
+    getReferenceDescription,
+    getReferenceImage,
+    recordCharacterGeneration,
+} from './references.js';
 import { t } from './i18n.js';
 
 // ----- Friendly error classification -----
@@ -784,6 +788,9 @@ export async function processMessageTags(messageId) {
                 statusEl,
                 { messageId, tagIndex: index, mode: 'generate' }
             );
+            if (!isGeneratedVideoResult(generated)) {
+                recordCharacterGeneration(persistedSrc, tag.prompt, settings);
+            }
 
             const mediaElement = createGeneratedMediaElement(
                 isGeneratedVideoResult(generated)
@@ -940,6 +947,9 @@ export async function regenerateSingleTag(messageId, tagIndex) {
             statusEl,
             { messageId, tagIndex, mode: 'regenerate' }
         );
+        if (!isGeneratedVideoResult(generated)) {
+            recordCharacterGeneration(persistedSrc, tag.prompt, settings);
+        }
 
         const mediaElement = createGeneratedMediaElement(
             isGeneratedVideoResult(generated)
@@ -1074,6 +1084,9 @@ export async function regenerateMessageImages(messageId) {
                         statusEl,
                         { messageId, tagIndex: index, mode: 'regenerate' }
                     );
+                    if (!isGeneratedVideoResult(generated)) {
+                        recordCharacterGeneration(persistedSrc, tag.prompt, settings);
+                    }
 
                     const mediaElement = createGeneratedMediaElement(
                         isGeneratedVideoResult(generated)

@@ -9,8 +9,10 @@ import {
     getCharacterReferenceKeyForCharacter,
     getCurrentCharacterReferenceKey,
     getCurrentUserReferenceKey,
-    getReferenceNameFromUrl,
+    getTemporaryCharacterPrimary,
     getUserReferenceKeyForAvatar,
+    removeCharacterLibraryAppearanceItem,
+    setTemporaryCharacterPrimary,
 } from './references.js';
 import {
     normalizeStoredImagePath,
@@ -24,7 +26,8 @@ import { Popup } from '../../../../popup.js';
 let selectedKind = 'char';
 let selectedKeys = { char: '', user: '' };
 let searchQuery = '';
-let eventsBound = false;
+const boundSections = new WeakSet();
+let contextEventsBound = false;
 let refreshTimer = null;
 let searchRenderTimer = null;
 let lastContextSignature = '';
@@ -37,6 +40,7 @@ function emptyLibraryEntry() {
         displayName: '',
         primary: { enabled: true, imagePath: '', description: '' },
         appearanceItems: [],
+        generations: [],
     };
 }
 
@@ -165,6 +169,7 @@ function buildAppearanceItemsHtml(entry) {
     return entry.appearanceItems.map((item) => {
         const isImage = item.type === 'image';
         const preview = isImage ? normalizeStoredImagePath(item.imagePath) : '';
+        const temporaryPrimary = isImage && item.id === entry.temporaryPrimaryId;
         return `
             <div class="iig-library-appearance-row ${isImage ? 'image' : 'text'} ${item.enabled === false ? 'disabled' : ''}" data-appearance-id="${sanitizeForHtml(item.id)}" data-appearance-type="${item.type}">
                 <label class="checkbox_label iig-library-enable" title="${isImage ? t`Use image reference` : t`Use text description`}">
@@ -175,12 +180,11 @@ function buildAppearanceItemsHtml(entry) {
                     ${isImage ? buildAvatarHtml(preview, 'fa-image') : '<span class="iig-library-appearance-text-icon"><i class="fa-solid fa-align-left"></i></span>'}
                 </div>
                 <div class="iig-library-appearance-fields">
-                    <span class="iig-library-appearance-type">${isImage ? t`Image reference` : t`Text description`}</span>
-                    ${isImage ? `<input type="text" class="text_pole iig-library-appearance-name" value="${sanitizeForHtml(item.name)}" placeholder="${t`Reference name`}">` : ''}
                     <textarea class="text_pole iig-library-appearance-description" rows="2" placeholder="${isImage ? t`Reference description` : t`Appearance description`}">${sanitizeForHtml(item.description)}</textarea>
                 </div>
                 <div class="iig-library-row-actions">
-                    ${isImage ? `<label class="menu_button" title="${t`Choose image`}">
+                    ${isImage ? `<button type="button" class="menu_button iig-library-appearance-primary ${temporaryPrimary ? 'selected' : ''}" title="${temporaryPrimary ? t`Use saved main reference` : t`Use as temporary main reference`}"><i class="fa-solid fa-thumbtack"></i></button>
+                    <label class="menu_button" title="${t`Choose image`}">
                         <i class="fa-solid fa-upload"></i>
                         <input type="file" accept="image/*" class="iig-library-appearance-file" hidden>
                     </label>
@@ -191,12 +195,31 @@ function buildAppearanceItemsHtml(entry) {
     }).join('');
 }
 
+function buildGenerationsHtml(entry) {
+    const generations = Array.isArray(entry.generations) ? entry.generations : [];
+    if (generations.length === 0) {
+        return `<div class="iig-library-empty">${t`No generations for this character.`}</div>`;
+    }
+    return `
+        <div class="iig-library-generation-gallery" data-iig-lightbox-gallery>
+            ${generations.map((generation) => {
+                const prompt = String(generation.prompt || '').trim();
+                const caption = prompt || t`Generated image`;
+                return `<button type="button" class="iig-library-generation-item" title="${sanitizeForHtml(caption)}">
+                    <img src="${sanitizeForHtml(normalizeStoredImagePath(generation.imagePath))}" alt="${sanitizeForHtml(caption)}" data-iig-lightbox data-iig-lightbox-caption="${sanitizeForHtml(caption)}" loading="lazy" decoding="async">
+                </button>`;
+            }).join('')}
+        </div>`;
+}
+
 function buildEditorHtml(entity, entry) {
     if (!entity) {
         return `<div class="iig-library-empty iig-library-empty-editor">${t`Select a character or persona.`}</div>`;
     }
     const primaryPreview = normalizeStoredImagePath(entry.primary.imagePath) || entity.avatarUrl;
     const hasReplacement = Boolean(normalizeStoredImagePath(entry.primary.imagePath));
+    const temporaryPrimary = getTemporaryCharacterPrimary(entity.kind, entity.key);
+    entry.temporaryPrimaryId = temporaryPrimary?.id || '';
     return `
         <div class="iig-library-editor" data-library-kind="${entity.kind}" data-library-key="${sanitizeForHtml(entity.key)}">
             <div class="iig-library-editor-head">
@@ -240,6 +263,14 @@ function buildEditorHtml(entity, entry) {
                 </div>
                 <div class="iig-library-appearance-list">${buildAppearanceItemsHtml(entry)}</div>
             </section>
+
+            ${entity.kind === 'char' ? `<section class="iig-library-editor-section">
+                <div class="iig-library-section-head">
+                    <strong>${t`Generations`}</strong>
+                    <span class="iig-library-section-count">${entry.generations.length}</span>
+                </div>
+                ${buildGenerationsHtml(entry)}
+            </section>` : ''}
         </div>`;
 }
 
@@ -357,10 +388,6 @@ async function handleFileUpload(input, settings) {
             referenceId: target,
         });
         await replaceReferenceImage(state, target, path);
-        if (target !== 'primary') {
-            const item = findById(state.entry.appearanceItems, target);
-            if (item?.type === 'image' && !item.name) item.name = file.name.replace(/\.[^.]+$/, '');
-        }
         saveSettings();
         await renderCharacterLibrary(settings);
         toastr.success(t`Reference saved`, t`Image Generation`);
@@ -386,10 +413,6 @@ async function handleUrlUpload(target, settings) {
             referenceId: target,
         });
         await replaceReferenceImage(state, target, path);
-        if (target !== 'primary') {
-            const item = findById(state.entry.appearanceItems, target);
-            if (item?.type === 'image' && !item.name) item.name = getReferenceNameFromUrl(trimmed);
-        }
         saveSettings();
         await renderCharacterLibrary(settings);
         toastr.success(t`Reference saved`, t`Image Generation`);
@@ -434,9 +457,11 @@ function scheduleRefresh(settings = getSettings()) {
 }
 
 function bindContextRefresh(settings) {
+    if (contextEventsBound) return;
     const context = getContext();
     const eventNames = ['CHAT_CHANGED', 'CHARACTER_SELECTED', 'CHARACTER_EDITED', 'CHARACTER_DELETED', 'CHARACTER_ADDED', 'USER_AVATAR_CHANGED', 'PERSONA_CHANGED'];
     if (typeof context?.eventSource?.on === 'function') {
+        contextEventsBound = true;
         for (const name of eventNames) {
             const eventName = context?.event_types?.[name];
             if (eventName) context.eventSource.on(eventName, () => scheduleRefresh(settings));
@@ -445,10 +470,9 @@ function bindContextRefresh(settings) {
 }
 
 export function bindCharacterLibraryEvents(settings = getSettings()) {
-    if (eventsBound) return;
-    eventsBound = true;
     const section = document.getElementById('iig_characters_section');
-    if (!section) return;
+    if (!section || boundSections.has(section)) return;
+    boundSections.add(section);
     const details = section.closest('details');
 
     details?.addEventListener('toggle', () => {
@@ -472,7 +496,6 @@ export function bindCharacterLibraryEvents(settings = getSettings()) {
 
         const appearanceRow = target.closest('.iig-library-appearance-row');
         const item = findById(state.entry.appearanceItems, String(appearanceRow?.getAttribute('data-appearance-id') || ''));
-        if (item?.type === 'image' && target.classList.contains('iig-library-appearance-name')) item.name = target.value;
         if (item && target.classList.contains('iig-library-appearance-description')) item.description = target.value;
         saveSettings();
         if (target.classList.contains('iig-library-display-name')) renderEntityList(settings).catch(() => {});
@@ -490,7 +513,15 @@ export function bindCharacterLibraryEvents(settings = getSettings()) {
         if (target.classList.contains('iig-library-primary-enabled')) state.entry.primary.enabled = target.checked;
         const appearanceRow = target.closest('.iig-library-appearance-row');
         const item = findById(state.entry.appearanceItems, String(appearanceRow?.getAttribute('data-appearance-id') || ''));
-        if (item && target.classList.contains('iig-library-appearance-enabled')) item.enabled = target.checked;
+        if (item && target.classList.contains('iig-library-appearance-enabled')) {
+            item.enabled = target.checked;
+            if (!target.checked && getTemporaryCharacterPrimary(state.kind, state.key, settings)?.id === item.id) {
+                setTemporaryCharacterPrimary(state.kind, state.key, '', settings);
+                saveSettings();
+                await renderEditor(settings);
+                return;
+            }
+        }
         saveSettings();
         target.closest('.iig-library-primary-row, .iig-library-appearance-row')?.classList.toggle('disabled', !target.checked);
     });
@@ -522,10 +553,20 @@ export function bindCharacterLibraryEvents(settings = getSettings()) {
             return;
         }
         const appearanceRow = target.closest('.iig-library-appearance-row');
+        const appearancePrimary = target.closest('.iig-library-appearance-primary');
+        if (appearancePrimary && appearanceRow?.getAttribute('data-appearance-type') === 'image') {
+            const id = String(appearanceRow.getAttribute('data-appearance-id') || '');
+            setTemporaryCharacterPrimary(state.kind, state.key, id, settings);
+            await renderEditor(settings);
+            return;
+        }
         if (target.closest('.iig-library-appearance-remove') && appearanceRow) {
             const id = String(appearanceRow.getAttribute('data-appearance-id') || '');
-            state.entry.appearanceItems = state.entry.appearanceItems.filter((item) => item.id !== id);
-            saveSettings();
+            const removed = removeCharacterLibraryAppearanceItem(state.kind, state.key, id, settings);
+            if (!removed) {
+                console.warn('[IIG] Appearance item was not found for deletion:', id);
+                return;
+            }
             await renderEditor(settings);
             return;
         }

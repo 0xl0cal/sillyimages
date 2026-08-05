@@ -40,6 +40,8 @@ const PERSONAS_MODULE_PATHS = Object.freeze([
 
 let personasModulePromise = null;
 let cachedUserAvatars = [];
+const temporaryPrimaryReferenceIds = new Map();
+const MAX_CHARACTER_GENERATIONS = 48;
 
 function makeCharacterLibraryItemId(prefix) {
     return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -51,9 +53,19 @@ function normalizeCharacterAppearanceItem(raw) {
         id: String(raw?.id || '').trim() || makeCharacterLibraryItemId('appearance'),
         type,
         enabled: raw?.enabled !== false,
-        name: type === 'image' ? String(raw?.name || '').trim() : '',
         imagePath: type === 'image' ? normalizeStoredImagePath(raw?.imagePath) : '',
         description: String(raw?.description || '').trim(),
+    };
+}
+
+function normalizeCharacterGeneration(raw) {
+    const imagePath = normalizeStoredImagePath(raw?.imagePath);
+    if (!imagePath) return null;
+    return {
+        id: String(raw?.id || '').trim() || makeCharacterLibraryItemId('generation'),
+        imagePath,
+        prompt: String(raw?.prompt || '').trim(),
+        createdAt: Number.isFinite(Number(raw?.createdAt)) ? Number(raw.createdAt) : Date.now(),
     };
 }
 
@@ -66,7 +78,15 @@ function normalizeCharacterLibraryEntry(raw) {
             description: String(raw?.primary?.description || '').trim(),
         },
         appearanceItems: (Array.isArray(raw?.appearanceItems) ? raw.appearanceItems : []).map(normalizeCharacterAppearanceItem),
+        generations: (Array.isArray(raw?.generations) ? raw.generations : [])
+            .map(normalizeCharacterGeneration)
+            .filter(Boolean)
+            .slice(0, MAX_CHARACTER_GENERATIONS),
     };
+}
+
+function getTemporaryPrimaryKey(kind, key) {
+    return `${kind === 'user' ? 'user' : 'char'}:${String(key || '').trim()}`;
 }
 
 function ensureCharacterReferenceLibrary(settings = getSettings()) {
@@ -144,7 +164,7 @@ export function getCurrentCharacterReferenceKey() {
     try {
         const context = SillyTavern.getContext();
         const characterId = context?.characterId;
-        if (characterId === undefined || characterId === null) {
+        if (characterId === undefined || characterId === null || Number(characterId) < 0) {
             return 'no-character';
         }
         return getCharacterReferenceKeyForCharacter(context?.characters?.[characterId] || {}, characterId);
@@ -184,6 +204,7 @@ export function deleteCharacterLibraryEntry(kind, key, settings = getSettings())
     const library = ensureCharacterReferenceLibrary(settings);
     const bucket = kind === 'user' ? library.users : library.characters;
     delete bucket[String(key || '').trim()];
+    temporaryPrimaryReferenceIds.delete(getTemporaryPrimaryKey(kind, key));
     saveSettings();
 }
 
@@ -195,14 +216,88 @@ export function addCharacterLibraryAppearanceItem(kind, key, type, settings = ge
     return item;
 }
 
+export function removeCharacterLibraryAppearanceItem(kind, key, itemId, settings = getSettings()) {
+    const entry = getCharacterLibraryEntry(kind, key, settings, { create: false });
+    const normalizedId = String(itemId || '').trim();
+    if (!entry || !normalizedId) return false;
+    const nextItems = entry.appearanceItems.filter((item) => item.id !== normalizedId);
+    if (nextItems.length === entry.appearanceItems.length) return false;
+    entry.appearanceItems = nextItems;
+    if (temporaryPrimaryReferenceIds.get(getTemporaryPrimaryKey(kind, key)) === normalizedId) {
+        temporaryPrimaryReferenceIds.delete(getTemporaryPrimaryKey(kind, key));
+    }
+    saveSettings();
+    return true;
+}
+
+function getCharacterAppearanceTextDescription(entry) {
+    return (entry?.appearanceItems || [])
+        .filter((item) => item.type === 'text' && item.enabled !== false)
+        .map((item) => item.description)
+        .map(normalizeReferenceDescription)
+        .filter(Boolean)
+        .join(' ');
+}
+
+export function getTemporaryCharacterPrimary(kind, key, settings = getSettings()) {
+    const itemId = temporaryPrimaryReferenceIds.get(getTemporaryPrimaryKey(kind, key));
+    if (!itemId) return null;
+    const entry = getCharacterLibraryEntry(kind, key, settings, { create: false });
+    const item = entry?.appearanceItems.find((candidate) => (
+        candidate.id === itemId
+        && candidate.type === 'image'
+        && candidate.enabled !== false
+        && normalizeStoredImagePath(candidate.imagePath)
+    ));
+    if (item) return item;
+    temporaryPrimaryReferenceIds.delete(getTemporaryPrimaryKey(kind, key));
+    return null;
+}
+
+export function setTemporaryCharacterPrimary(kind, key, itemId, settings = getSettings()) {
+    const mapKey = getTemporaryPrimaryKey(kind, key);
+    const current = temporaryPrimaryReferenceIds.get(mapKey);
+    if (!itemId || current === itemId) {
+        temporaryPrimaryReferenceIds.delete(mapKey);
+        return null;
+    }
+    const entry = getCharacterLibraryEntry(kind, key, settings, { create: false });
+    const item = entry?.appearanceItems.find((candidate) => (
+        candidate.id === itemId
+        && candidate.type === 'image'
+        && candidate.enabled !== false
+        && normalizeStoredImagePath(candidate.imagePath)
+    ));
+    if (!item) return null;
+    temporaryPrimaryReferenceIds.set(mapKey, item.id);
+    return item;
+}
+
+export function recordCharacterGeneration(imagePath, prompt = '', settings = getSettings()) {
+    const normalizedPath = normalizeStoredImagePath(imagePath);
+    const key = getCurrentCharacterReferenceKey();
+    if (!normalizedPath || key === 'no-character') return null;
+    const entry = getCharacterLibraryEntry('char', key, settings);
+    const generation = {
+        id: makeCharacterLibraryItemId('generation'),
+        imagePath: normalizedPath,
+        prompt: String(prompt || '').trim(),
+        createdAt: Date.now(),
+    };
+    entry.generations = [
+        generation,
+        ...entry.generations.filter((item) => item.imagePath !== normalizedPath),
+    ].slice(0, MAX_CHARACTER_GENERATIONS);
+    saveSettings();
+    return generation;
+}
+
 export function getCharacterLibraryDescription(kind, key, settings = getSettings()) {
     const entry = getCharacterLibraryEntry(kind, key, settings, { create: false });
     if (!entry) return '';
     return [
         entry.primary.enabled !== false ? entry.primary.description : '',
-        ...entry.appearanceItems
-            .filter((item) => item.type === 'text' && item.enabled !== false)
-            .map((item) => item.description),
+        getCharacterAppearanceTextDescription(entry),
     ].map(normalizeReferenceDescription).filter(Boolean).join(' ');
 }
 
@@ -452,7 +547,7 @@ async function getCurrentCharacterAvatarUrl() {
     try {
         const context = SillyTavern.getContext();
         const characterId = context?.characterId;
-        if (characterId === undefined || characterId === null) return '';
+        if (characterId === undefined || characterId === null || Number(characterId) < 0) return '';
         if (typeof context.getCharacterAvatar === 'function') {
             const resolved = String(context.getCharacterAvatar(characterId) || '').trim();
             if (resolved) return resolved;
@@ -472,6 +567,19 @@ export async function collectCharacterLibraryReferences(kind, format, settings =
     const source = isUser ? 'user' : 'char';
     const results = [];
     const sharedDescription = getCharacterLibraryDescription(kind, key, settings);
+    const appearanceDescription = getCharacterAppearanceTextDescription(entry);
+    const temporaryPrimary = getTemporaryCharacterPrimary(kind, key, settings);
+
+    if (temporaryPrimary) {
+        const image = await convert(normalizeStoredImagePath(temporaryPrimary.imagePath));
+        if (image) {
+            results.push(makeReferenceObject(
+                image,
+                `${appearanceDescription} ${temporaryPrimary.description}`.trim(),
+                source,
+            ));
+        }
+    }
 
     const primary = entry?.primary || { enabled: true, imagePath: '', description: '' };
     if (primary.enabled !== false) {
@@ -481,7 +589,7 @@ export async function collectCharacterLibraryReferences(kind, format, settings =
             if (image) {
                 results.push(makeReferenceObject(
                     image,
-                    sharedDescription,
+                    temporaryPrimary ? primary.description : sharedDescription,
                     source,
                 ));
             }
@@ -490,6 +598,7 @@ export async function collectCharacterLibraryReferences(kind, format, settings =
 
     for (const item of entry?.appearanceItems || []) {
         if (item.type !== 'image' || item.enabled === false) continue;
+        if (item.id === temporaryPrimary?.id) continue;
         const imagePath = normalizeStoredImagePath(item.imagePath);
         if (!imagePath) continue;
         const image = await convert(imagePath);
