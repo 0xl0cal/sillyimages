@@ -12,17 +12,19 @@ export const MODULE_NAME = 'inline_image_gen';
 // Limits / глобальные константы размерностей.
 export const MAX_CONTEXT_IMAGES = 3;
 export const MAX_GENERATION_REFERENCE_IMAGES = 5;
-// Hard cap на размер коллекции additional references. В v2.0 старый лимит 8
-// был UI-ограничением; теперь «лорбук» даёт пользователю намного больше
-// записей, а на этап генерации всё равно попадает только столько, сколько
-// поддерживает активная модель (см. provider capabilities).
+// Lorebooks can contain a large catalog; provider limits are applied when
+// references are matched for a request.
 export const MAX_ADDITIONAL_REFERENCES = 256;
 
-// Дефолтная «критическая» инструкция, которая дописывается в начало prompt'а
-// когда хотя бы один референс отправляется провайдеру. Раньше была
-// захардкожена в 3 местах `providers.js` (Gemini / OpenRouter / Naistera).
-// Теперь редактируется в настройках и может быть отключена целиком.
+// Default instruction added to the prompt when reference images are sent.
+// The value is editable in settings and can be disabled.
 export const DEFAULT_REF_INSTRUCTION = '[CRITICAL: The reference image(s) above show the EXACT appearance of the character(s). You MUST precisely copy their: face structure, eye color, hair color and style, skin tone, body type, clothing, and all distinctive features. Do not deviate from the reference appearances.]';
+
+const NON_SCHEMA_SETTING_KEYS = Object.freeze([
+    'additionalReferences',
+    'characterReferenceDescriptions',
+    'stylePresets',
+]);
 
 // ----- Logger -----
 
@@ -167,10 +169,6 @@ export const defaultSettings = Object.freeze({
     a1111PromptPrefix: '',
     a1111NegativePrompt: '',
     a1111Seed: -1,
-    // Устаревшее поле: хранилось плоским массивом до v2.0-D.1. Сейчас это
-    // refs первого лорбука. При старте `migrateAdditionalReferencesToLorebook`
-    // перекладывает его в `lorebooks[0]` и очищает здесь.
-    additionalReferences: [],
     // Лорбуки — коллекции ref-записей. У каждого свой `enabled` (matcher
     // собирает refs из всех enabled одновременно). `activeLorebookId` хранит
     // тот, что открыт для редактирования в UI-секции References.
@@ -187,15 +185,11 @@ export const defaultSettings = Object.freeze({
     // соответствуют запросу.
     sendRefDescriptions: true,
     additionalReferencesMode: 'simple',
-    // Local-only character/user reference descriptions. Keys are derived from
-    // current SillyTavern character and active/selected user persona avatar.
-    characterReferenceDescriptions: {
+    // Character and persona reference libraries. Each entry can replace its
+    // main avatar, add text descriptions, and attach extra reference images.
+    characterReferenceLibrary: {
         characters: {},
         users: {},
-        displayNames: {
-            characters: {},
-            users: {},
-        },
     },
     // Connection profiles — именованные snapshot'ы настроек подключения
     // (apiType / endpoint / apiKey / model / provider-specific). Переключение
@@ -297,11 +291,9 @@ export function getActiveConnectionProfile(settings = getSettings()) {
 }
 
 /**
- * Миграция: если connectionProfiles пусты, создаёт `Default` профиль
- * со snapshot'ом текущих top-level connection-полей. Вызывать однократно
- * при инициализации.
+ * Creates the initial connection profile from the active connection fields.
  */
-export function migrateConnectionProfilesFromLegacy(settings = getSettings()) {
+export function initializeConnectionProfiles(settings = getSettings()) {
     ensureConnectionProfiles(settings);
     if (settings.connectionProfiles.length > 0) {
         return;
@@ -432,8 +424,15 @@ export function getSettings() {
     // Ensure all default keys exist
     for (const key of Object.keys(defaultSettings)) {
         if (!Object.hasOwn(context.extensionSettings[MODULE_NAME], key)) {
-            context.extensionSettings[MODULE_NAME][key] = defaultSettings[key];
+            const defaultValue = defaultSettings[key];
+            context.extensionSettings[MODULE_NAME][key] = defaultValue && typeof defaultValue === 'object'
+                ? structuredClone(defaultValue)
+                : defaultValue;
         }
+    }
+
+    for (const key of NON_SCHEMA_SETTING_KEYS) {
+        delete context.extensionSettings[MODULE_NAME][key];
     }
 
     return context.extensionSettings[MODULE_NAME];
@@ -455,7 +454,7 @@ export function normalizeNaisteraModel(model) {
     if (raw === 'imagine-pro') return 'grok-pro';
     if (raw === 'nano-banana') return 'nano banana 2';
     if (raw === 'nano banana') return 'nano banana 2';
-    // Legacy value migration: map removed "nano banana pro" to "nano banana 2".
+    // Normalize the retired model label to the supported Naistera model.
     if (raw === 'nano-banana-pro') return 'nano banana 2';
     if (raw === 'nano banana pro') return 'nano banana 2';
     if (raw === 'nano-banana-2') return 'nano banana 2';
@@ -565,18 +564,13 @@ export function getEffectiveEndpoint(settings = getSettings()) {
 
 export function ensureStyles(settings = getSettings()) {
     if (!Array.isArray(settings.styles)) {
-        const migratedPresets = Array.isArray(settings.stylePresets) ? settings.stylePresets : [];
-        settings.styles = migratedPresets.map((preset) => ({
-            id: String(preset?.id || `iig-style-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
-            name: String(preset?.name || '').trim(),
-            value: String(preset?.style || '').trim(),
-        }));
+        settings.styles = [];
     }
 
     settings.styles = settings.styles.map((style, index) => ({
         id: String(style?.id || `iig-style-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`),
         name: String(style?.name || t`Style ${index + 1}`).trim() || t`Style ${index + 1}`,
-        value: String(style?.value ?? style?.style ?? '').trim(),
+        value: String(style?.value || '').trim(),
     }));
 
     if (!settings.styles.some((style) => style.id === settings.activeStyleId)) {
@@ -595,7 +589,6 @@ export function createStyle(name = '') {
         value: '',
     };
     styles.push(style);
-    settings.activeStyleId = style.id;
     return style;
 }
 
@@ -631,7 +624,7 @@ export function removeStyle(styleId) {
 
     styles.splice(index, 1);
     if (settings.activeStyleId === styleId) {
-        settings.activeStyleId = styles[0]?.id || '';
+        settings.activeStyleId = '';
     }
     return true;
 }
@@ -794,32 +787,6 @@ export function ensureLorebooks(settings = getSettings()) {
 }
 
 /**
- * One-time migration из старого `settings.additionalReferences` (flat array)
- * в `settings.lorebooks[0]`. Вызывается из init. Идемпотентно.
- */
-export function migrateAdditionalReferencesToLorebook(settings = getSettings()) {
-    ensureLorebooks(settings);
-
-    const legacyRefs = Array.isArray(settings.additionalReferences) ? settings.additionalReferences : [];
-    if (legacyRefs.length === 0) {
-        settings.additionalReferences = [];
-        return;
-    }
-
-    // Переливаем в refs первого лорбука (обычно «My library»). Существующие
-    // refs в лорбуке сохраняются, legacy добавляются в конец (не перезаписывают).
-    const target = settings.lorebooks[0];
-    const existingIds = new Set(target.refs.map((r) => r.id));
-    const migrated = normalizeReferencesArrayInternal(legacyRefs)
-        .filter((r) => !existingIds.has(r.id));
-    target.refs = target.refs.concat(migrated).slice(0, MAX_ADDITIONAL_REFERENCES);
-
-    // Очищаем legacy-поле после успешной миграции.
-    settings.additionalReferences = [];
-    iigLog('INFO', `Migrated ${migrated.length} additional references to lorebook "${target.name}"`);
-}
-
-/**
  * Возвращает активный лорбук (тот, что редактируется в UI) или первый, если
  * `activeLorebookId` битый. Никогда не возвращает null при валидном settings.
  */
@@ -829,14 +796,9 @@ export function getActiveLorebook(settings = getSettings()) {
 }
 
 /**
- * Массив refs активного лорбука (read-write: мутация возвращённого массива
- * изменит state в settings).
- *
- * Имя `ensureAdditionalReferencesArray` сохранено ради минимальной diff — до
- * миграции все consumer-места считали это главным массивом refs. Теперь оно
- * эквивалентно «refs активного лорбука».
+ * Returns the editable reference array of the active lorebook.
  */
-export function ensureAdditionalReferencesArray(settings = getSettings()) {
+export function getActiveLorebookReferences(settings = getSettings()) {
     const active = getActiveLorebook(settings);
     if (!active) {
         return [];
@@ -871,7 +833,7 @@ export function getAllEnabledLorebookReferences(settings = getSettings()) {
  * первого появления. Пустая группа ('') не включается.
  */
 export function getAdditionalReferenceGroups(settings = getSettings()) {
-    const refs = ensureAdditionalReferencesArray(settings);
+    const refs = getActiveLorebookReferences(settings);
     const seen = new Set();
     const groups = [];
     for (const ref of refs) {

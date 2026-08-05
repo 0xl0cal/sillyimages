@@ -9,8 +9,7 @@
 
 import {
     getSettings,
-    migrateConnectionProfilesFromLegacy,
-    migrateAdditionalReferencesToLorebook,
+    initializeConnectionProfiles,
     saveSettings,
 } from './src/settings.js';
 import { createSettingsUI } from './src/ui.js';
@@ -25,10 +24,7 @@ import { initImageActions } from './src/imageActions.js';
     // Load/seed settings eagerly so getSettings() сразу возвращает валидный объект.
     const settings = getSettings();
 
-    // One-time migrations: заполняем connection profiles и переносим
-    // старые additionalReferences в lorebooks[0] (идемпотентно).
-    migrateConnectionProfilesFromLegacy(settings);
-    migrateAdditionalReferencesToLorebook(settings);
+    initializeConnectionProfiles(settings);
     saveSettings();
 
     // Register {{iig-book}} macro — делает refs-список доступным для вставки

@@ -31,20 +31,32 @@ export function initImageActions() {
     applyImageActionsStyle();
     scanAndAttach(chat);
 
+    const dirtyRoots = new Set();
+    let scanFrame = null;
+    const scheduleScan = (root) => {
+        dirtyRoots.add(root);
+        if (scanFrame !== null) return;
+        scanFrame = requestAnimationFrame(() => {
+            scanFrame = null;
+            const roots = [...dirtyRoots];
+            dirtyRoots.clear();
+            for (const dirtyRoot of roots) scanAndAttach(dirtyRoot);
+        });
+    };
+
     const observer = new MutationObserver((mutations) => {
-        const dirty = new Set();
         for (const m of mutations) {
             if (m.type === 'childList') {
                 for (const n of m.addedNodes) {
-                    if (n instanceof Element) dirty.add(n);
+                    if (!(n instanceof Element)) continue;
+                    if (n.matches?.(IMG_SELECTOR) || n.querySelector?.(IMG_SELECTOR)) {
+                        scheduleScan(n);
+                    }
                 }
             }
-            if (m.type === 'attributes' && m.target instanceof Element) {
-                dirty.add(m.target);
+            if (m.type === 'attributes' && m.target instanceof HTMLImageElement && m.target.matches(IMG_SELECTOR)) {
+                scheduleScan(m.target);
             }
-        }
-        for (const el of dirty) {
-            scanAndAttach(el);
         }
     });
     observer.observe(chat, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'class'] });

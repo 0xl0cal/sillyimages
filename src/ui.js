@@ -7,8 +7,7 @@
  *   - Референсы (avatar-виджеты и additional references)
  *   - Отладка (retries / export logs)
  *
- * Фабрика `bindAvatarSectionEvents` заменяет дубликат обработчиков Gemini
- * и Naistera (раньше было два блока идентичного кода).
+ * `bindAvatarSectionEvents` configures the shared Gemini and Naistera controls.
  */
 
 import {
@@ -17,11 +16,10 @@ import {
     exportLogs,
     iigLog,
     ensureStyles,
-    getActiveStyle,
     createStyle,
     updateStyle,
     removeStyle,
-    ensureAdditionalReferencesArray,
+    getActiveLorebookReferences,
     ensureLorebooks,
     getActiveLorebook,
     createLorebook,
@@ -74,38 +72,36 @@ import {
     importLorebookFromUrl,
     importLorebookFromFile,
     renderIigBookMacro,
-    getCharacterReferenceDescription,
-    getUserReferenceDescription,
-    getCharacterReferenceDescriptionStore,
-    getCurrentUserReferenceKey,
-    getCharacterReferenceKeyForCharacter,
-    getUserReferenceKeyForAvatar,
-    setCharacterReferenceDescriptionForKey,
-    setUserReferenceDescriptionForKey,
-    deleteCharacterReferenceDescriptionForKey,
-    deleteUserReferenceDescriptionForKey,
-    characterAvatarUrl,
-    userAvatarUrl,
 } from './references.js';
 import { fetchModels, resolveActiveProvider, getActiveProviderMaxReferences, A1111_RESOLUTION_PRESETS } from './providers.js';
 import { applyImageActionsStyle } from './imageActions.js';
 import { t } from './i18n.js';
+import { buildCharacterLibraryBodyHtml, bindCharacterLibraryEvents } from './characterLibraryUi.js';
 // Относительный путь: /scripts/extensions/third-party/sillyimages/src/ui.js → /scripts/popup.js
 import { Popup } from '../../../../popup.js';
 
 // ----- Section wrapper -----
 
+const SETTINGS_SECTION_ICONS = Object.freeze({
+    iig_api_section: 'fa-plug',
+    iig_styles_section: 'fa-palette',
+    iig_characters_section: 'fa-address-book',
+    iig_references_section: 'fa-images',
+    iig_debug_section: 'fa-bug',
+});
+
 function buildSettingsSectionHtml(sectionId, title, bodyHtml, expanded = true) {
+    const icon = SETTINGS_SECTION_ICONS[sectionId] || 'fa-sliders';
     return `
-        <div class="iig-section" data-section-id="${sectionId}">
-            <div class="iig-section-toggle" data-section-toggle="${sectionId}">
+        <details class="iig-section" data-section-id="${sectionId}" ${expanded ? 'open' : ''}>
+            <summary class="iig-section-toggle">
+                <i class="fa-solid ${icon}"></i>
                 <span class="iig-section-title">${title}</span>
-                <i class="fa-solid fa-chevron-down iig-section-chevron ${expanded ? '' : 'iig-section-chevron-collapsed'}"></i>
-            </div>
-            <div class="iig-section-body ${expanded ? '' : 'iig-hidden'}" id="${sectionId}">
+            </summary>
+            <div class="iig-section-body" id="${sectionId}">
                 ${bodyHtml}
             </div>
-        </div>
+        </details>
     `;
 }
 
@@ -147,7 +143,8 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
     const profilesHtml = buildConnectionProfilesBlockHtml(settings);
     const bodyHtml = `
         <div class="iig-settings-card">
-            ${profilesHtml}
+            <div class="iig-settings-group">
+                <div class="iig-settings-group-title"><i class="fa-solid fa-toggle-on"></i><span>${t`Extension`}</span></div>
             <label class="checkbox_label">
                 <input type="checkbox" id="iig_enabled" ${settings.enabled ? 'checked' : ''}>
                 <span>${t`Enable image generation`}</span>
@@ -171,7 +168,11 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                 <input type="range" id="iig_image_actions_opacity" class="flex1" min="0" max="100" step="1" value="${Number.isFinite(Number(settings.imageActionsOpacity)) ? Number(settings.imageActionsOpacity) : 80}">
                 <div id="iig_image_actions_opacity_value" style="min-width:42px;text-align:right;">${Number.isFinite(Number(settings.imageActionsOpacity)) ? Number(settings.imageActionsOpacity) : 80}%</div>
             </div>
+            </div>
 
+            <div class="iig-settings-group">
+                <div class="iig-settings-group-title"><i class="fa-solid fa-server"></i><span>${t`Connection`}</span></div>
+            ${profilesHtml}
             <div class="flex-row">
                 <label for="iig_api_type">${t`API type`}</label>
                 <select id="iig_api_type" class="flex1">
@@ -216,7 +217,10 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                     <i class="fa-solid fa-sync"></i>
                 </div>
             </div>
+            </div>
 
+            <div class="iig-settings-group">
+                <div class="iig-settings-group-title"><i class="fa-solid fa-wand-magic-sparkles"></i><span>${t`Generation`}</span></div>
             <div class="flex-row ${settings.apiType !== 'openai' && settings.apiType !== 'electronhub' ? 'iig-hidden' : ''}" id="iig_size_row">
                 <label for="iig_size">${t`Size`}</label>
                 <select id="iig_size" class="flex1">
@@ -461,57 +465,105 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                     <textarea id="iig_a1111_negative" class="text_pole textarea_compact" rows="2" placeholder="${t`(empty)`}">${sanitizeForHtml(settings.a1111NegativePrompt || '')}</textarea>
                 </div>
             </div>
+            </div>
         </div>
     `;
-    return buildSettingsSectionHtml('iig_api_section', t`API settings`, bodyHtml, true);
+    return buildSettingsSectionHtml('iig_api_section', t`API settings`, bodyHtml, false);
 }
 
 // ----- Styles section -----
 
+let selectedStyleId = '';
+let styleSearchQuery = '';
+
+function getSelectedStyle(settings = getSettings()) {
+    const styles = ensureStyles(settings);
+    if (!styles.some((style) => style.id === selectedStyleId)) {
+        selectedStyleId = styles.find((style) => style.id === settings.activeStyleId)?.id || styles[0]?.id || '';
+    }
+    return styles.find((style) => style.id === selectedStyleId) || null;
+}
+
+function getStylePreview(value) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!text) return t`Empty style`;
+    return text.length > 50 ? `${text.slice(0, 50).trimEnd()}...` : text;
+}
+
 function buildStyleListHtml(settings = getSettings()) {
     const styles = ensureStyles(settings);
     const activeId = settings.activeStyleId;
-
-    if (styles.length === 0) {
-        return `<p class="hint">${t`No styles. Add a style and activate it.`}</p>`;
-    }
-
-    return styles.map((style) => `
-        <div class="iig-style-preset-row ${style.id === activeId ? 'iig-style-preset-row-active' : ''}" data-style-id="${style.id}">
-            <div class="menu_button iig-style-preset-select" data-style-activate="${style.id}">
-                <i class="fa-solid ${style.id === activeId ? 'fa-check-circle' : 'fa-palette'}"></i>
-                <span>${sanitizeForHtml(style.name)}</span>
+    getSelectedStyle(settings);
+    const searchHtml = styles.length > 8 ? `
+        <label class="iig-style-search-wrap">
+            <i class="fa-solid fa-magnifying-glass"></i>
+            <input id="iig_style_search" class="text_pole" type="search" value="${sanitizeForHtml(styleSearchQuery)}" placeholder="${t`Search styles`}">
+        </label>` : '';
+    const rowsHtml = styles.map((style) => `
+        <div class="iig-style-item ${style.id === activeId ? 'active' : ''} ${style.id === selectedStyleId ? 'selected' : ''}" data-style-id="${sanitizeForHtml(style.id)}" data-style-search="${sanitizeForHtml(`${style.name} ${style.value}`.toLowerCase())}">
+            <button type="button" class="menu_button iig-style-activation" data-style-activate="${sanitizeForHtml(style.id)}" title="${style.id === activeId ? t`Disable style` : t`Activate style`}">
+                <i class="fa-solid ${style.id === activeId ? 'fa-circle-check' : 'fa-circle'}"></i>
+            </button>
+            <button type="button" class="menu_button iig-style-item-select" data-style-select="${sanitizeForHtml(style.id)}">
+                <strong>${sanitizeForHtml(style.name)}</strong>
+                <small>${sanitizeForHtml(getStylePreview(style.value))}</small>
+            </button>
+            <div class="iig-style-item-actions">
+                <button type="button" class="menu_button" data-style-duplicate="${sanitizeForHtml(style.id)}" title="${t`Duplicate style`}"><i class="fa-solid fa-copy"></i></button>
+                <button type="button" class="menu_button redWarningBG" data-style-remove="${sanitizeForHtml(style.id)}" title="${t`Delete style`}"><i class="fa-solid fa-trash"></i></button>
             </div>
-            <div class="menu_button iig-style-preset-remove" data-style-remove="${style.id}" title="${t`Delete style`}">
-                <i class="fa-solid fa-trash"></i>
-            </div>
-        </div>
-    `).join('');
+        </div>`).join('');
+
+    return `
+        ${searchHtml}
+        <div class="iig-style-list">
+            <button type="button" class="menu_button iig-style-none ${activeId ? '' : 'active'}" data-style-disable>
+                <i class="fa-solid fa-ban"></i>
+                <span>${t`No style`}</span>
+            </button>
+            ${rowsHtml || `<div class="iig-library-empty">${t`No styles created.`}</div>`}
+        </div>`;
 }
 
 function buildStyleEditorHtml(settings = getSettings()) {
-    const activeStyle = getActiveStyle(settings);
-    if (!activeStyle) {
-        return `<p class="hint">${t`Activate a style to edit its value.`}</p>`;
+    const selectedStyle = getSelectedStyle(settings);
+    if (!selectedStyle) {
+        return `<div class="iig-library-empty iig-style-editor-empty">${t`Create a style to start editing.`}</div>`;
     }
+    const isActive = selectedStyle.id === settings.activeStyleId;
 
     return `
-        <div class="iig-settings-card iig-style-editor-card">
-            <h4>${t`Active style`}: ${sanitizeForHtml(activeStyle.name)}</h4>
-            <div class="flex-row">
-                <label for="iig_style_name">${t`Name`}</label>
-                <input type="text" id="iig_style_name" class="text_pole flex1" value="${sanitizeForHtml(activeStyle.name)}">
-                <div id="iig_style_disable" class="menu_button" title="${t`Disable style`}">
-                    <i class="fa-solid fa-power-off"></i>
-                </div>
+        <div class="iig-style-editor-content" data-style-editor-id="${sanitizeForHtml(selectedStyle.id)}">
+            <div class="iig-style-editor-status ${isActive ? 'active' : ''}">
+                <i class="fa-solid ${isActive ? 'fa-circle-check' : 'fa-circle'}"></i>
+                <span>${isActive ? t`Active` : t`Inactive`}</span>
             </div>
-            <div class="flex-row">
-                <label for="iig_style_value">${t`Value`}</label>
-                <textarea id="iig_style_value" class="text_pole flex1 iig-settings-textarea" rows="3" placeholder="masterpiece, cinematic lighting, painterly">${sanitizeForHtml(activeStyle.value)}</textarea>
-                <div></div>
+            <label class="iig-style-field" for="iig_style_name">
+                <span>${t`Name`}</span>
+                <input type="text" id="iig_style_name" class="text_pole" value="${sanitizeForHtml(selectedStyle.name)}">
+            </label>
+            <label class="iig-style-field" for="iig_style_value">
+                <span>${t`Style`}</span>
+                <textarea id="iig_style_value" class="text_pole iig-settings-textarea" rows="6" placeholder="masterpiece, cinematic lighting, painterly">${sanitizeForHtml(selectedStyle.value)}</textarea>
+            </label>
+            <div class="iig-style-editor-actions">
+                <button type="button" id="iig_style_toggle_active" class="menu_button iig-button-inline">
+                    <i class="fa-solid ${isActive ? 'fa-ban' : 'fa-circle-check'}"></i>
+                    <span>${isActive ? t`Disable` : t`Activate`}</span>
+                </button>
+                <button type="button" id="iig_style_duplicate" class="menu_button iig-button-inline"><i class="fa-solid fa-copy"></i><span>${t`Duplicate`}</span></button>
+                <button type="button" id="iig_style_remove" class="menu_button iig-button-inline redWarningBG"><i class="fa-solid fa-trash"></i><span>${t`Delete`}</span></button>
+                <span class="iig-style-autosave"><i class="fa-solid fa-floppy-disk"></i> ${t`Autosave`}</span>
             </div>
         </div>
     `;
+}
+
+function filterStyleList() {
+    const query = styleSearchQuery.trim().toLowerCase();
+    document.querySelectorAll('#iig_style_presets .iig-style-item').forEach((item) => {
+        item.classList.toggle('iig-hidden', Boolean(query) && !String(item.getAttribute('data-style-search') || '').includes(query));
+    });
 }
 
 export function renderStyleSettings() {
@@ -524,260 +576,39 @@ export function renderStyleSettings() {
     if (editorContainer) {
         editorContainer.innerHTML = buildStyleEditorHtml(settings);
     }
+    filterStyleList();
 }
 
 function buildStylesSettingsSectionHtml() {
     const bodyHtml = `
-        <div class="iig-settings-card">
-            <div class="flex-row">
-                <label for="iig_new_style_name">${t`New style`}</label>
-                <input type="text" id="iig_new_style_name" class="text_pole flex1" placeholder="${t`Style name`}">
-                <div id="iig_style_add" class="menu_button" title="${t`Add style`}">
-                    <i class="fa-solid fa-plus"></i>
+        <div class="iig-style-workspace">
+            <div class="iig-settings-group iig-style-library">
+                <div class="iig-settings-group-title iig-style-library-head">
+                    <i class="fa-solid fa-swatchbook"></i>
+                    <span>${t`Style library`}</span>
+                    <button type="button" id="iig_style_add" class="menu_button iig-button-inline"><i class="fa-solid fa-plus"></i><span>${t`New style`}</span></button>
                 </div>
+                <div id="iig_style_presets"></div>
             </div>
-            <div id="iig_style_presets" class="iig-style-presets"></div>
-            <div id="iig_style_editor"></div>
+            <div class="iig-settings-group iig-style-editor-group">
+                <div class="iig-settings-group-title"><i class="fa-solid fa-pen-to-square"></i><span>${t`Editor`}</span></div>
+                <div id="iig_style_editor"></div>
+            </div>
         </div>
     `;
     return buildSettingsSectionHtml('iig_styles_section', t`Styles`, bodyHtml, false);
 }
 
-// ----- Characters section -----
-
-let characterReferenceEventsBound = false;
-let characterReferenceRefreshTimer = null;
-let characterReferencePollTimer = null;
-let characterReferenceLastSignature = '';
-let selectedUserReferenceKey = '';
-let selectedCharacterReferenceKey = '';
-
-function cssEscape(value) {
-    const raw = String(value || '');
-    if (typeof globalThis.CSS?.escape === 'function') {
-        return globalThis.CSS.escape(raw);
-    }
-    return raw.replace(/["\\]/g, '\\$&');
-}
-
-function getCharacterDisplayNameBucket(kind, settings = getSettings()) {
-    const store = getCharacterReferenceDescriptionStore(settings);
-    if (!store.displayNames || typeof store.displayNames !== 'object') {
-        store.displayNames = {};
-    }
-    const bucketName = kind === 'char' ? 'characters' : 'users';
-    if (!store.displayNames[bucketName] || typeof store.displayNames[bucketName] !== 'object') {
-        store.displayNames[bucketName] = {};
-    }
-    return store.displayNames[bucketName];
-}
-
-function getCharacterDisplayName(kind, key, fallbackTitle, settings = getSettings()) {
-    const bucket = getCharacterDisplayNameBucket(kind, settings);
-    const custom = String(bucket[String(key || '')] || '').trim();
-    return custom || String(fallbackTitle || '').trim() || String(key || '').replace(/^(avatar|persona|name|id):/, '');
-}
-
-function setCharacterDisplayName(kind, key, value, settings = getSettings()) {
-    const normalizedKey = String(key || '').trim();
-    if (!normalizedKey) return;
-    const bucket = getCharacterDisplayNameBucket(kind, settings);
-    const normalizedValue = String(value || '').trim();
-    if (normalizedValue) {
-        bucket[normalizedKey] = normalizedValue;
-    } else {
-        delete bucket[normalizedKey];
-    }
-    saveSettings();
-}
-
-function getCurrentCharacterRefMeta() {
-    try {
-        const context = SillyTavern.getContext();
-        const id = context?.characterId;
-        if (id === undefined || id === null) {
-            return {
-                key: 'no-character',
-                title: t`No character selected`,
-                avatarUrl: '',
-                description: '',
-            };
-        }
-        const character = context.characters?.[id] || {};
-        const key = getCharacterReferenceKeyForCharacter(character, id);
-        const fallbackTitle = String(character.name || t`Current character`);
-        return {
-            key,
-            fallbackTitle,
-            title: getCharacterDisplayName('char', key, fallbackTitle),
-            avatarUrl: characterAvatarUrl(character),
-            description: getCharacterReferenceDescription(),
-        };
-    } catch (_error) {
-        return {
-            key: 'no-character',
-            title: t`No character selected`,
-            avatarUrl: '',
-            description: '',
-        };
-    }
-}
-
-function getCharacterRefMetaForKey(key, settings = getSettings()) {
-    const normalizedKey = String(key || '').trim();
-    if (!normalizedKey) return getCurrentCharacterRefMeta();
-
-    const context = SillyTavern.getContext();
-    const characters = Array.isArray(context?.characters) ? context.characters : [];
-    const foundIndex = characters.findIndex((character, index) => getCharacterReferenceKeyForCharacter(character, index) === normalizedKey);
-    const character = foundIndex >= 0 ? characters[foundIndex] : {};
-    const fallbackTitle = String(character.name || normalizedKey.replace(/^(avatar|name|id):/, '') || t`Saved character`);
-
-    return {
-        key: normalizedKey,
-        fallbackTitle,
-        title: getCharacterDisplayName('char', normalizedKey, fallbackTitle, settings),
-        avatarUrl: characterAvatarUrl(character),
-        description: getCharacterReferenceDescriptionStore(settings).characters?.[normalizedKey] || '',
-    };
-}
-
-function getCurrentUserRefMeta(settings = getSettings()) {
-    const avatarFile = String(settings.userAvatarFile || '').trim();
-    const key = getUserReferenceKeyForAvatar(avatarFile);
-    const fallbackTitle = avatarFile || t`Selected user persona`;
-    return {
-        key,
-        fallbackTitle,
-        title: getCharacterDisplayName('user', key, fallbackTitle, settings),
-        avatarUrl: userAvatarUrl(avatarFile),
-        description: '',
-    };
-}
-
-function getUserRefMetaForKey(key, settings = getSettings()) {
-    const normalizedKey = String(key || '').trim();
-    if (!normalizedKey) return getCurrentUserRefMeta(settings);
-
-    const avatarFile = normalizedKey.startsWith('avatar:') || normalizedKey.startsWith('persona:')
-        ? normalizedKey.split(':').slice(1).join(':')
-        : '';
-    const fallbackTitle = avatarFile || normalizedKey || t`Selected user persona`;
-
-    return {
-        key: normalizedKey,
-        fallbackTitle,
-        title: getCharacterDisplayName('user', normalizedKey, fallbackTitle, settings),
-        avatarUrl: userAvatarUrl(avatarFile),
-        description: getCharacterReferenceDescriptionStore(settings).users?.[normalizedKey] || '',
-    };
-}
-
-async function getCurrentUserRefMetaAsync(settings = getSettings()) {
-    const key = await getCurrentUserReferenceKey(settings);
-    const avatarFile = key.startsWith('avatar:') || key.startsWith('persona:')
-        ? key.split(':').slice(1).join(':')
-        : String(settings.userAvatarFile || '').trim();
-    const fallbackTitle = avatarFile || t`Selected user persona`;
-    return {
-        key,
-        fallbackTitle,
-        title: getCharacterDisplayName('user', key, fallbackTitle, settings),
-        avatarUrl: userAvatarUrl(avatarFile),
-        description: '',
-    };
-}
-
-function buildAvatarPreviewHtml(src, iconClass = 'fa-user') {
-    const safeSrc = String(src || '').trim();
-    if (safeSrc) {
-        return `<img src="${sanitizeForHtml(safeSrc)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'iig-character-tile-avatar-placeholder'}))">`;
-    }
-    return `<div class="iig-character-tile-avatar-placeholder"><i class="fa-solid ${iconClass}"></i></div>`;
-}
-
-function buildActiveCharacterEditorsHtml(settings = getSettings(), userMeta = null, charMeta = null) {
-    const char = charMeta || getCurrentCharacterRefMeta();
-    const user = userMeta || getCurrentUserRefMeta(settings);
-    return `
-        <div class="iig-character-active-grid">
-            <div class="iig-character-editor-tile" data-iig-character-kind="user" data-iig-character-key="${sanitizeForHtml(user.key)}">
-                <div class="iig-character-tile-head">
-                    <div class="iig-character-tile-avatar">${buildAvatarPreviewHtml(user.avatarUrl, 'fa-user')}</div>
-                    <div class="iig-character-tile-meta">
-                        <b>{{user}}</b>
-                        <span>${sanitizeForHtml(user.title)}</span>
-                    </div>
-                </div>
-                <label class="iig-character-field-label" for="iig_user_ref_display_name">${t`Display name`}</label>
-                <input
-                    id="iig_user_ref_display_name"
-                    class="text_pole iig-character-display-name-input"
-                    type="text"
-                    value="${sanitizeForHtml(user.title)}"
-                    placeholder="${sanitizeForHtml(user.fallbackTitle || '')}"
-                >
-                <label class="iig-character-field-label" for="iig_user_ref_description">${t`Reference description`}</label>
-                <textarea
-                    id="iig_user_ref_description"
-                    class="text_pole flex1 iig-settings-textarea"
-                    rows="3"
-                    placeholder="${t`Appearance details for the user avatar reference`}"
-                ></textarea>
-            </div>
-            <div class="iig-character-editor-tile" data-iig-character-kind="char" data-iig-character-key="${sanitizeForHtml(char.key)}">
-                <div class="iig-character-tile-head">
-                    <div class="iig-character-tile-avatar">${buildAvatarPreviewHtml(char.avatarUrl, 'fa-user-pen')}</div>
-                    <div class="iig-character-tile-meta">
-                        <b>{{char}}</b>
-                        <span>${sanitizeForHtml(char.title)}</span>
-                    </div>
-                </div>
-                <label class="iig-character-field-label" for="iig_char_ref_display_name">${t`Display name`}</label>
-                <input
-                    id="iig_char_ref_display_name"
-                    class="text_pole iig-character-display-name-input"
-                    type="text"
-                    value="${sanitizeForHtml(char.title)}"
-                    placeholder="${sanitizeForHtml(char.fallbackTitle || '')}"
-                >
-                <label class="iig-character-field-label" for="iig_char_ref_description">${t`Reference description`}</label>
-                <textarea
-                    id="iig_char_ref_description"
-                    class="text_pole flex1 iig-settings-textarea"
-                    rows="3"
-                    placeholder="${t`Appearance details for the character avatar reference`}"
-                >${sanitizeForHtml(char.description)}</textarea>
-            </div>
-        </div>
-    `;
-}
+// ----- Character reference library -----
 
 function buildCharactersSettingsSectionHtml(settings = getSettings()) {
-    const bodyHtml = `
-        <div class="iig-settings-card">
-            <div id="iig_character_active_editors">
-                ${buildActiveCharacterEditorsHtml(settings)}
-            </div>
-            <div class="iig-character-saved-block">
-                <h4>${t`Saved character cards`}</h4>
-                <div id="iig_saved_character_tiles" class="iig-character-tile-grid"></div>
-            </div>
-            <div class="iig-character-saved-block">
-                <h4>${t`Saved user personas`}</h4>
-                <div id="iig_saved_user_tiles" class="iig-character-tile-grid"></div>
-            </div>
-        </div>
-    `;
-    return buildSettingsSectionHtml('iig_characters_section', t`Characters`, bodyHtml, false);
+    return buildSettingsSectionHtml('iig_characters_section', t`Character references`, buildCharacterLibraryBodyHtml(settings), false);
 }
 
 // ----- References section -----
 
 /**
- * Общая разметка одной "avatar references" подсекции.
- * Раньше в buildReferencesSettingsSectionHtml был дубликат этого блока
- * для Gemini и для Naistera. Теперь — одна фабрика.
+ * Shared markup for an avatar reference subsection.
  */
 function buildAvatarReferencesBlockHtml({
     sectionId,
@@ -800,8 +631,8 @@ function buildAvatarReferencesBlockHtml({
     refreshButtonId,
 }) {
     return `
-        <div id="${sectionId}" class="iig-settings-card-nested ${hidden ? hiddenClass : ''}">
-            <h4>${title}</h4>
+        <div id="${sectionId}" class="iig-settings-group ${hidden ? hiddenClass : ''}">
+            <div class="iig-settings-group-title"><i class="fa-solid fa-user-group"></i><span>${title}</span></div>
             <label class="checkbox_label">
                 <input type="checkbox" id="${sendCharCheckboxId}" ${sendCharEnabled ? 'checked' : ''}>
                 <span>${t`Send {{char}} avatar`}</span>
@@ -936,8 +767,8 @@ function buildReferencesSettingsSectionHtml(settings = getSettings()) {
             ${geminiAvatarsBlock}
             ${naisteraAvatarsBlock}
 
-            <div class="iig-settings-card-nested ${refsSectionVisible ? '' : 'iig-hidden'}" id="iig_image_context_section">
-                <h4>${t`Image context`}</h4>
+            <div class="iig-settings-group ${refsSectionVisible ? '' : 'iig-hidden'}" id="iig_image_context_section">
+                <div class="iig-settings-group-title"><i class="fa-solid fa-clock-rotate-left"></i><span>${t`Image context`}</span></div>
                 <label class="checkbox_label">
                     <input type="checkbox" id="iig_image_context_enabled" ${settings.imageContextEnabled ? 'checked' : ''}>
                     <span>${t`Enable image context`}</span>
@@ -951,8 +782,8 @@ function buildReferencesSettingsSectionHtml(settings = getSettings()) {
                 </div>
             </div>
 
-            <div class="iig-settings-card-nested ${refsSectionVisible ? '' : 'iig-hidden'}" id="iig_additional_refs_section">
-                <h4>${t`Additional references`}</h4>
+            <div class="iig-settings-group ${refsSectionVisible ? '' : 'iig-hidden'}" id="iig_additional_refs_section">
+                <div class="iig-settings-group-title"><i class="fa-solid fa-images"></i><span>${t`Additional references`}</span></div>
 
                 ${buildLorebookBarHtml(settings)}
 
@@ -979,8 +810,8 @@ function buildReferencesSettingsSectionHtml(settings = getSettings()) {
                 <div id="iig_additional_refs_list"></div>
             </div>
 
-            <div class="iig-settings-card-nested ${refsSectionVisible ? '' : 'iig-hidden'}" id="iig_ref_instruction_section">
-                <h4>${t`Reference instruction`}</h4>
+            <div class="iig-settings-group ${refsSectionVisible ? '' : 'iig-hidden'}" id="iig_ref_instruction_section">
+                <div class="iig-settings-group-title"><i class="fa-solid fa-terminal"></i><span>${t`Reference instruction`}</span></div>
                 <p class="hint">${t`Prepended to the prompt whenever at least one reference image is sent to the provider. Helps the model copy appearance from refs.`}</p>
                 <label class="checkbox_label">
                     <input type="checkbox" id="iig_ref_instruction_enabled" ${settings.refInstructionEnabled !== false ? 'checked' : ''}>
@@ -1005,7 +836,7 @@ function buildReferencesSettingsSectionHtml(settings = getSettings()) {
             </div>
         </div>
     `;
-    return buildSettingsSectionHtml('iig_references_section', t`References`, bodyHtml, true);
+    return buildSettingsSectionHtml('iig_references_section', t`References`, bodyHtml, false);
 }
 
 // ----- Debug section -----
@@ -1013,7 +844,8 @@ function buildReferencesSettingsSectionHtml(settings = getSettings()) {
 function buildDebugSettingsSectionHtml(settings = getSettings()) {
     const bodyHtml = `
         <div class="iig-settings-card">
-            <div class="iig-settings-card-nested">
+            <div class="iig-settings-group">
+                <div class="iig-settings-group-title"><i class="fa-solid fa-arrows-rotate"></i><span>${t`Retries`}</span></div>
                 <div class="flex-row">
                     <label for="iig_max_retries">${t`Max retries`}</label>
                     <input type="number" id="iig_max_retries" class="text_pole flex1" value="${settings.maxRetries}" min="0" max="5">
@@ -1025,15 +857,23 @@ function buildDebugSettingsSectionHtml(settings = getSettings()) {
                     <div></div>
                 </div>
             </div>
-            <div class="iig-debug-actions">
-                <div id="iig_export_logs" class="menu_button iig-button-inline">
-                    <i class="fa-solid fa-download"></i> ${t`Export logs`}
+            <div class="iig-settings-group">
+                <div class="iig-settings-group-title"><i class="fa-solid fa-magnifying-glass"></i><span>${t`Diagnostics`}</span></div>
+                <div class="iig-debug-actions">
+                    <div id="iig_show_last_request" class="menu_button iig-button-inline" title="${t`View prompt and references sent in the most recent generation`}">
+                        <i class="fa-solid fa-magnifying-glass"></i> ${t`Show last request`}
+                    </div>
+                    <div id="iig_show_book_macro" class="menu_button iig-button-inline" title="${t`Preview the rendered {{iig-book}} macro as the LLM will see it`}">
+                        <i class="fa-solid fa-book"></i> ${t`Show {{iig-book}} preview`}
+                    </div>
                 </div>
-                <div id="iig_show_last_request" class="menu_button iig-button-inline" title="${t`View prompt and references sent in the most recent generation`}">
-                    <i class="fa-solid fa-magnifying-glass"></i> ${t`Show last request`}
-                </div>
-                <div id="iig_show_book_macro" class="menu_button iig-button-inline" title="${t`Preview the rendered {{iig-book}} macro as the LLM will see it`}">
-                    <i class="fa-solid fa-book"></i> ${t`Show {{iig-book}} preview`}
+            </div>
+            <div class="iig-settings-group">
+                <div class="iig-settings-group-title"><i class="fa-solid fa-file-arrow-down"></i><span>${t`Logs`}</span></div>
+                <div class="iig-debug-actions">
+                    <div id="iig_export_logs" class="menu_button iig-button-inline">
+                        <i class="fa-solid fa-download"></i> ${t`Export logs`}
+                    </div>
                 </div>
             </div>
         </div>
@@ -1152,22 +992,6 @@ async function showIigBookPreviewPopup() {
 }
 
 // ----- Section toggles -----
-
-function bindSectionToggles() {
-    document.querySelectorAll('[data-section-toggle]').forEach((toggle) => {
-        toggle.addEventListener('click', () => {
-            const sectionId = toggle.getAttribute('data-section-toggle');
-            const body = sectionId ? document.getElementById(sectionId) : null;
-            const chevron = toggle.querySelector('.iig-section-chevron');
-            if (!body) {
-                return;
-            }
-
-            body.classList.toggle('iig-hidden');
-            chevron?.classList.toggle('iig-section-chevron-collapsed', body.classList.contains('iig-hidden'));
-        });
-    });
-}
 
 // ----- Connection profiles -----
 
@@ -1768,8 +1592,7 @@ function bindApiSectionEvents(settings, updateVisibility) {
 // ----- Avatar section events (общая фабрика для Gemini и Naistera) -----
 
 /**
- * Вешает обработчики на пару аватар-чекбоксов + на refresh.
- * Раньше этот код был продублирован для `iig_*` и `iig_naistera_*`.
+ * Configures one provider-specific avatar reference block.
  */
 function bindAvatarSectionEvents(settings, updateVisibility, config) {
     const {
@@ -1862,81 +1685,124 @@ function bindAvatarDropdownToggles() {
 
 // ----- Styles section events -----
 
+async function createStyleFromPrompt(settings) {
+    const name = await Popup.show.input(t`New style`, t`Style name`);
+    const normalizedName = String(name || '').trim();
+    if (!normalizedName) return;
+    const style = createStyle(normalizedName);
+    selectedStyleId = style.id;
+    saveSettings();
+    renderStyleSettings();
+    iigLog('INFO', `Created style: ${style.name}`);
+}
+
+function duplicateStyleById(styleId, settings) {
+    const source = ensureStyles(settings).find((style) => style.id === styleId);
+    if (!source) return;
+    const copy = createStyle(t`Copy of ${source.name}`);
+    updateStyle(copy.id, { value: source.value });
+    selectedStyleId = copy.id;
+    saveSettings();
+    renderStyleSettings();
+}
+
+async function deleteStyleById(styleId, settings) {
+    const styles = ensureStyles(settings);
+    const index = styles.findIndex((style) => style.id === styleId);
+    const style = styles[index];
+    if (!style) return;
+    const confirmed = await Popup.show.confirm(t`Delete style "${style.name}"?`, t`Confirm`);
+    if (!confirmed) return;
+    removeStyle(styleId);
+    const remaining = ensureStyles(settings);
+    selectedStyleId = remaining[Math.min(index, remaining.length - 1)]?.id || '';
+    saveSettings();
+    renderStyleSettings();
+}
+
 function bindStylesSectionEvents(settings) {
     document.getElementById('iig_style_add')?.addEventListener('click', () => {
-        const input = document.getElementById('iig_new_style_name');
-        const style = createStyle(input?.value || '');
-        if (input) {
-            input.value = '';
-        }
-        saveSettings();
-        renderStyleSettings();
-        iigLog('INFO', `Created style: ${style.name}`);
+        createStyleFromPrompt(settings).catch((error) => console.warn('[IIG] Failed to create style:', error));
     });
 
-    document.getElementById('iig_new_style_name')?.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            document.getElementById('iig_style_add')?.click();
-        }
+    document.getElementById('iig_style_presets')?.addEventListener('input', (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLInputElement) || target.id !== 'iig_style_search') return;
+        styleSearchQuery = target.value;
+        filterStyleList();
     });
 
-    document.getElementById('iig_style_presets')?.addEventListener('click', (e) => {
-        const activateButton = e.target instanceof Element ? e.target.closest('[data-style-activate]') : null;
-        if (activateButton) {
-            settings.activeStyleId = activateButton.getAttribute('data-style-activate') || '';
+    document.getElementById('iig_style_presets')?.addEventListener('click', async (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        if (!target) return;
+        if (target.closest('[data-style-disable]')) {
+            settings.activeStyleId = '';
             saveSettings();
             renderStyleSettings();
             return;
         }
-
-        const removeButton = e.target instanceof Element ? e.target.closest('[data-style-remove]') : null;
-        if (!removeButton) {
-            return;
-        }
-
-        const styleId = removeButton.getAttribute('data-style-remove') || '';
-        removeStyle(styleId);
-        saveSettings();
-        renderStyleSettings();
-    });
-
-    document.getElementById('iig_style_editor')?.addEventListener('input', (e) => {
-        const activeStyle = getActiveStyle(settings);
-        if (!activeStyle) {
-            return;
-        }
-
-        const target = e.target;
-        if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) {
-            return;
-        }
-
-        if (target.id === 'iig_style_name') {
-            updateStyle(activeStyle.id, { name: target.value });
+        const activateButton = target.closest('[data-style-activate]');
+        if (activateButton) {
+            const styleId = String(activateButton.getAttribute('data-style-activate') || '');
+            selectedStyleId = styleId;
+            settings.activeStyleId = settings.activeStyleId === styleId ? '' : styleId;
             saveSettings();
-            const activeButton = document.querySelector(`[data-style-activate="${activeStyle.id}"] span`);
-            if (activeButton) {
-                activeButton.textContent = getActiveStyle(settings)?.name || target.value.trim() || activeStyle.name;
-            }
+            renderStyleSettings();
             return;
         }
-        if (target.id === 'iig_style_value') {
-            updateStyle(activeStyle.id, { value: target.value });
-            saveSettings();
+        const selectButton = target.closest('[data-style-select]');
+        if (selectButton) {
+            selectedStyleId = String(selectButton.getAttribute('data-style-select') || '');
+            renderStyleSettings();
             return;
+        }
+        const duplicateButton = target.closest('[data-style-duplicate]');
+        if (duplicateButton) {
+            duplicateStyleById(String(duplicateButton.getAttribute('data-style-duplicate') || ''), settings);
+            return;
+        }
+        const removeButton = target.closest('[data-style-remove]');
+        if (removeButton) {
+            await deleteStyleById(String(removeButton.getAttribute('data-style-remove') || ''), settings);
         }
     });
 
-    document.getElementById('iig_style_editor')?.addEventListener('click', (e) => {
-        const disableButton = e.target instanceof Element ? e.target.closest('#iig_style_disable') : null;
-        if (!disableButton) {
+    document.getElementById('iig_style_editor')?.addEventListener('input', (event) => {
+        const selectedStyle = getSelectedStyle(settings);
+        const target = event.target;
+        if (!selectedStyle || !(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) return;
+        if (target.id === 'iig_style_name') updateStyle(selectedStyle.id, { name: target.value });
+        if (target.id === 'iig_style_value') updateStyle(selectedStyle.id, { value: target.value });
+        saveSettings();
+        const row = [...document.querySelectorAll('#iig_style_presets .iig-style-item')]
+            .find((item) => item.getAttribute('data-style-id') === selectedStyle.id);
+        const updated = ensureStyles(settings).find((style) => style.id === selectedStyle.id);
+        if (row && updated) {
+            const title = row.querySelector('strong');
+            const preview = row.querySelector('small');
+            if (title) title.textContent = updated.name;
+            if (preview) preview.textContent = getStylePreview(updated.value);
+            row.setAttribute('data-style-search', `${updated.name} ${updated.value}`.toLowerCase());
+        }
+    });
+
+    document.getElementById('iig_style_editor')?.addEventListener('click', async (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        const selectedStyle = getSelectedStyle(settings);
+        if (!target || !selectedStyle) return;
+        if (target.closest('#iig_style_toggle_active')) {
+            settings.activeStyleId = settings.activeStyleId === selectedStyle.id ? '' : selectedStyle.id;
+            saveSettings();
+            renderStyleSettings();
             return;
         }
-
-        settings.activeStyleId = '';
-        saveSettings();
-        renderStyleSettings();
+        if (target.closest('#iig_style_duplicate')) {
+            duplicateStyleById(selectedStyle.id, settings);
+            return;
+        }
+        if (target.closest('#iig_style_remove')) {
+            await deleteStyleById(selectedStyle.id, settings);
+        }
     });
 }
 
@@ -2094,7 +1960,7 @@ function bindAdditionalReferencesEvents(settings) {
     });
 
     document.getElementById('iig_additional_refs_add')?.addEventListener('click', () => {
-        const refs = ensureAdditionalReferencesArray(settings);
+        const refs = getActiveLorebookReferences(settings);
         if (refs.length >= MAX_ADDITIONAL_REFERENCES) {
             toastr.warning(t`Maximum additional references: ${MAX_ADDITIONAL_REFERENCES}`, t`Image Generation`);
             return;
@@ -2180,7 +2046,7 @@ function bindAdditionalReferencesEvents(settings) {
             return;
         }
 
-        const refs = ensureAdditionalReferencesArray(settings);
+        const refs = getActiveLorebookReferences(settings);
         if (!refs[index]) {
             return;
         }
@@ -2208,7 +2074,7 @@ function bindAdditionalReferencesEvents(settings) {
                 return;
             }
 
-            const refs = ensureAdditionalReferencesArray(settings);
+            const refs = getActiveLorebookReferences(settings);
             if (!refs[index]) {
                 return;
             }
@@ -2236,7 +2102,7 @@ function bindAdditionalReferencesEvents(settings) {
             return;
         }
 
-        const refs = ensureAdditionalReferencesArray(settings);
+        const refs = getActiveLorebookReferences(settings);
         if (!refs[index]) {
             target.value = '';
             return;
@@ -2278,7 +2144,7 @@ function bindAdditionalReferencesEvents(settings) {
         const index = Number.parseInt(String(row?.getAttribute('data-ref-index') || ''), 10);
         if (!Number.isInteger(index)) return;
 
-        const refs = ensureAdditionalReferencesArray(settings);
+        const refs = getActiveLorebookReferences(settings);
         if (!refs[index]) return;
 
         if (isAlways) refs[index].matchMode = target.checked ? 'always' : 'match';
@@ -2302,7 +2168,7 @@ function bindAdditionalReferencesEvents(settings) {
         const index = Number.parseInt(String(row?.getAttribute('data-ref-index') || ''), 10);
         if (!Number.isInteger(index)) return;
 
-        const refs = ensureAdditionalReferencesArray(settings);
+        const refs = getActiveLorebookReferences(settings);
         if (urlBtn) {
             if (!refs[index]) return;
             const url = await Popup.show.input(t`Upload image by URL`, t`Paste a direct link to the image:`);
@@ -2342,318 +2208,6 @@ function bindAdditionalReferencesEvents(settings) {
         }
         saveSettings();
         refreshAdditionalReferencesList();
-    });
-}
-
-// ----- Character reference description events -----
-
-function buildSavedCharacterTileHtml(entry) {
-    const safeTitle = sanitizeForHtml(entry.title);
-    return `
-        <div class="iig-character-saved-tile-wrapper">
-            <button type="button" class="menu_button iig-character-saved-tile ${entry.active ? 'iig-character-saved-tile-active' : ''}" data-iig-character-kind="${sanitizeForHtml(entry.kind)}" data-iig-character-key="${sanitizeForHtml(entry.key)}" title="${safeTitle}">
-                <div class="iig-character-tile-avatar">${buildAvatarPreviewHtml(entry.avatarUrl, entry.kind === 'char' ? 'fa-user-pen' : 'fa-user')}</div>
-                <div class="iig-character-tile-meta">
-                    <b>${safeTitle}</b>
-                </div>
-            </button>
-            <button type="button" class="iig-character-saved-tile-delete" data-iig-character-kind="${sanitizeForHtml(entry.kind)}" data-iig-character-key="${sanitizeForHtml(entry.key)}" title="${t`Delete saved description`}" aria-label="${t`Delete saved description`}">
-                <i class="fa-solid fa-xmark"></i>
-            </button>
-        </div>
-    `;
-}
-
-function markSavedTileActive(kind, key) {
-    const section = document.getElementById('iig_characters_section');
-    if (!section) return;
-    const selector = `.iig-character-saved-tile[data-iig-character-kind="${cssEscape(kind)}"]`;
-    for (const tile of section.querySelectorAll(selector)) {
-        tile.classList.toggle('iig-character-saved-tile-active', tile.getAttribute('data-iig-character-key') === key);
-    }
-}
-
-function getSavedCharacterEntries(settings = getSettings()) {
-    const store = getCharacterReferenceDescriptionStore(settings);
-    const currentKey = selectedCharacterReferenceKey || getCurrentCharacterRefMeta().key;
-    const context = SillyTavern.getContext();
-    const characters = Array.isArray(context?.characters) ? context.characters : [];
-    const byKey = new Map();
-    characters.forEach((character, index) => {
-        const key = getCharacterReferenceKeyForCharacter(character, index);
-        byKey.set(key, { character, index });
-    });
-    return Object.entries(store.characters || {})
-        .map(([key, description]) => {
-            const trimmed = String(description || '').trim();
-            if (!trimmed) return null;
-            const found = byKey.get(key);
-            const character = found?.character || {};
-            const fallbackTitle = String(character.name || key.replace(/^(avatar|name|id):/, '') || t`Unknown character`);
-            return {
-                kind: 'char',
-                key,
-                title: getCharacterDisplayName('char', key, fallbackTitle, settings),
-                avatarUrl: characterAvatarUrl(character),
-                description: trimmed,
-                active: key === currentKey,
-            };
-        })
-        .filter(Boolean);
-}
-
-async function getSavedUserEntries(settings = getSettings()) {
-    const store = getCharacterReferenceDescriptionStore(settings);
-    const currentKey = selectedUserReferenceKey || await getCurrentUserReferenceKey(settings);
-    return Object.entries(store.users || {})
-        .map(([key, description]) => {
-            const trimmed = String(description || '').trim();
-            if (!trimmed) return null;
-            const avatarFile = key.startsWith('avatar:') || key.startsWith('persona:')
-                ? key.split(':').slice(1).join(':')
-                : '';
-            const fallbackTitle = avatarFile || key;
-            return {
-                kind: 'user',
-                key,
-                title: getCharacterDisplayName('user', key, fallbackTitle, settings),
-                avatarUrl: userAvatarUrl(avatarFile),
-                description: trimmed,
-                active: key === currentKey,
-            };
-        })
-        .filter(Boolean);
-}
-
-async function renderCharactersSettings(settings = getSettings()) {
-    const active = document.getElementById('iig_character_active_editors');
-    if (active) {
-        const userMeta = selectedUserReferenceKey
-            ? getUserRefMetaForKey(selectedUserReferenceKey, settings)
-            : await getCurrentUserRefMetaAsync(settings);
-        const charMeta = selectedCharacterReferenceKey
-            ? getCharacterRefMetaForKey(selectedCharacterReferenceKey, settings)
-            : getCurrentCharacterRefMeta();
-        active.innerHTML = buildActiveCharacterEditorsHtml(settings, userMeta, charMeta);
-    }
-    await refreshCharacterReferenceDescriptionFields(settings);
-    await renderSavedCharacterTiles(settings);
-    characterReferenceLastSignature = await getCharacterReferenceUiSignature(settings);
-}
-
-async function renderSavedCharacterTiles(settings = getSettings()) {
-    const charTiles = document.getElementById('iig_saved_character_tiles');
-    if (charTiles) {
-        const entries = getSavedCharacterEntries(settings);
-        charTiles.innerHTML = entries.length
-            ? entries.map(buildSavedCharacterTileHtml).join('')
-            : `<p class="hint">${t`No saved character descriptions yet.`}</p>`;
-    }
-
-    const userTiles = document.getElementById('iig_saved_user_tiles');
-    if (userTiles) {
-        const entries = await getSavedUserEntries(settings);
-        userTiles.innerHTML = entries.length
-            ? entries.map(buildSavedCharacterTileHtml).join('')
-            : `<p class="hint">${t`No saved user persona descriptions yet.`}</p>`;
-    }
-}
-
-async function refreshCharacterReferenceDescriptionFields(settings) {
-    const charTextarea = document.getElementById('iig_char_ref_description');
-    if (charTextarea instanceof HTMLTextAreaElement) {
-        charTextarea.value = selectedCharacterReferenceKey
-            ? getCharacterReferenceDescriptionStore(settings).characters?.[selectedCharacterReferenceKey] || ''
-            : getCharacterReferenceDescription(settings);
-    }
-    const charNameInput = document.getElementById('iig_char_ref_display_name');
-    if (charNameInput instanceof HTMLInputElement) {
-        const char = selectedCharacterReferenceKey
-            ? getCharacterRefMetaForKey(selectedCharacterReferenceKey, settings)
-            : getCurrentCharacterRefMeta();
-        charNameInput.value = char.title;
-        charNameInput.placeholder = char.fallbackTitle || '';
-    }
-    const userTextarea = document.getElementById('iig_user_ref_description');
-    if (userTextarea instanceof HTMLTextAreaElement) {
-        userTextarea.value = selectedUserReferenceKey
-            ? getCharacterReferenceDescriptionStore(settings).users?.[selectedUserReferenceKey] || ''
-            : await getUserReferenceDescription(settings);
-    }
-    const userNameInput = document.getElementById('iig_user_ref_display_name');
-    if (userNameInput instanceof HTMLInputElement) {
-        const user = selectedUserReferenceKey
-            ? getUserRefMetaForKey(selectedUserReferenceKey, settings)
-            : await getCurrentUserRefMetaAsync(settings);
-        userNameInput.value = user.title;
-        userNameInput.placeholder = user.fallbackTitle || '';
-    }
-}
-
-async function getCharacterReferenceUiSignature(settings = getSettings()) {
-    let characterId = '';
-    try {
-        const context = SillyTavern.getContext();
-        characterId = String(context?.characterId ?? '');
-    } catch (_error) {
-        characterId = '';
-    }
-    const char = getCurrentCharacterRefMeta();
-    const userKey = await getCurrentUserReferenceKey(settings);
-    return [
-        characterId,
-        char.key,
-        userKey,
-        selectedCharacterReferenceKey,
-        selectedUserReferenceKey,
-        String(settings.userAvatarFile || ''),
-        settings.useActiveUserPersonaAvatar ? 'active-persona' : 'manual-avatar',
-    ].join('|');
-}
-
-async function refreshCharactersSettingsIfContextChanged(settings = getSettings(), { force = false } = {}) {
-    const signature = await getCharacterReferenceUiSignature(settings);
-    const activeElement = document.activeElement;
-    const isEditingCharacterField = activeElement instanceof HTMLElement
-        && Boolean(activeElement.closest('#iig_characters_section'))
-        && (activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement);
-    if (isEditingCharacterField) {
-        await renderSavedCharacterTiles(settings);
-        characterReferenceLastSignature = signature;
-        return;
-    }
-    if (!force && signature === characterReferenceLastSignature) {
-        await renderSavedCharacterTiles(settings);
-        return;
-    }
-    characterReferenceLastSignature = signature;
-    await renderCharactersSettings(settings);
-}
-
-function scheduleCharactersSettingsRefresh(settings = getSettings(), { force = false } = {}) {
-    if (characterReferenceRefreshTimer) {
-        clearTimeout(characterReferenceRefreshTimer);
-    }
-    characterReferenceRefreshTimer = setTimeout(() => {
-        characterReferenceRefreshTimer = null;
-        refreshCharactersSettingsIfContextChanged(settings, { force }).catch((error) => {
-            console.warn('[IIG] Failed to refresh character reference descriptions:', error);
-        });
-    }, 120);
-}
-
-function bindCharacterContextChangeEvents(settings = getSettings()) {
-    if (characterReferenceEventsBound) return;
-    characterReferenceEventsBound = true;
-
-    try {
-        const context = SillyTavern.getContext();
-        const eventSource = context?.eventSource;
-        const eventTypes = context?.event_types || {};
-        const eventNames = [
-            'CHAT_CHANGED',
-            'CHARACTER_SELECTED',
-            'CHARACTER_EDITED',
-            'CHARACTER_DELETED',
-            'CHARACTER_ADDED',
-            'USER_AVATAR_CHANGED',
-            'USER_AVATAR_RENDERED',
-            'PERSONA_CHANGED',
-            'PERSONA_SELECTED',
-            'SETTINGS_UPDATED',
-            'APP_READY',
-        ];
-
-        if (typeof eventSource?.on === 'function') {
-            for (const name of eventNames) {
-                const eventName = eventTypes[name];
-                if (eventName) {
-                    eventSource.on(eventName, () => scheduleCharactersSettingsRefresh(settings, { force: true }));
-                }
-            }
-        }
-    } catch (_error) {
-        // Polling below covers ST builds with different event names.
-    }
-
-    if (!characterReferencePollTimer) {
-        characterReferencePollTimer = setInterval(() => {
-            scheduleCharactersSettingsRefresh(settings);
-        }, 1000);
-    }
-}
-
-async function openCharacterTile(kind, key, settings = getSettings()) {
-    if (kind === 'user') {
-        selectedUserReferenceKey = key;
-        markSavedTileActive(kind, key);
-        await renderCharactersSettings(settings);
-        return;
-    }
-
-    selectedCharacterReferenceKey = key;
-    markSavedTileActive(kind, key);
-    await renderCharactersSettings(settings);
-}
-
-function bindCharacterReferenceDescriptionEvents(settings) {
-    bindCharacterContextChangeEvents(settings);
-
-    document.getElementById('iig_characters_section')?.addEventListener('input', async (e) => {
-        const target = e.target;
-        if (!(target instanceof HTMLTextAreaElement) && !(target instanceof HTMLInputElement)) return;
-        const tile = target.closest('.iig-character-editor-tile');
-        const kind = String(tile?.getAttribute('data-iig-character-kind') || '');
-        const key = String(tile?.getAttribute('data-iig-character-key') || '');
-        if (target.classList.contains('iig-character-display-name-input')) {
-            setCharacterDisplayName(kind, key || (kind === 'char' ? getCurrentCharacterRefMeta().key : await getCurrentUserReferenceKey(settings)), target.value, settings);
-            saveSettings();
-            renderSavedCharacterTiles(settings).catch(() => {});
-            return;
-        }
-        if (kind === 'char') {
-            setCharacterReferenceDescriptionForKey(key || getCurrentCharacterRefMeta().key, target.value, settings);
-        } else if (kind === 'user') {
-            setUserReferenceDescriptionForKey(key || await getCurrentUserReferenceKey(settings), target.value, settings);
-        }
-        saveSettings();
-        renderSavedCharacterTiles(settings).catch(() => {});
-    });
-
-    document.getElementById('iig_characters_section')?.addEventListener('click', async (e) => {
-        const target = e.target instanceof Element ? e.target : null;
-        const deleteBtn = target?.closest('.iig-character-saved-tile-delete');
-        if (deleteBtn) {
-            e.preventDefault();
-            e.stopPropagation();
-            const kind = String(deleteBtn.getAttribute('data-iig-character-kind') || '');
-            const key = String(deleteBtn.getAttribute('data-iig-character-key') || '');
-            if (!kind || !key) return;
-            const confirmed = await Popup.show.confirm(
-                t`Delete saved description for this entry? This will remove its description and display name from the extension.`,
-                t`Confirm`,
-            );
-            if (!confirmed) return;
-            if (kind === 'char') {
-                deleteCharacterReferenceDescriptionForKey(key, settings);
-            } else if (kind === 'user') {
-                deleteUserReferenceDescriptionForKey(key, settings);
-            }
-            await renderSavedCharacterTiles(settings);
-            toastr.success(t`Saved description removed`, t`Image Generation`, { timeOut: 1500 });
-            return;
-        }
-        const tile = target?.closest('.iig-character-saved-tile');
-        if (!tile) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const kind = String(tile.getAttribute('data-iig-character-kind') || '');
-        const key = String(tile.getAttribute('data-iig-character-key') || '');
-        await openCharacterTile(kind, key, settings);
-    });
-
-    refreshCharactersSettingsIfContextChanged(settings, { force: true }).catch((error) => {
-        console.warn('[IIG] Failed to refresh character reference descriptions:', error);
     });
 }
 
@@ -2739,10 +2293,7 @@ function buildUpdateVisibility(settings) {
         const refsSupported = provider ? provider.supportsReferences(settings) : false;
         const naisteraRefsSupported = isNaistera && refsSupported;
 
-        // «Общий» avatar refs блок (char/user аватар с чекбоксами) — теперь
-        // показывается не только для Gemini, но и для любого OpenAI-семейства,
-        // которое поддерживает /edits, и для OpenRouter/Electron Hub. Naistera
-        // использует свой отдельный блок.
+        // Shared avatar controls are visible for providers that accept references.
         const commonAvatarRefsVisible = (isGemini || isOpenAI || isOpenRouter || isElectronHub) && refsSupported;
 
         // Model is used for OpenAI and Gemini; Naistera does not need a model.
@@ -2822,7 +2373,6 @@ function bindSettingsEvents() {
     const settings = getSettings();
     const updateVisibility = buildUpdateVisibility(settings);
 
-    bindSectionToggles();
     bindConnectionProfilesEvents(settings, updateVisibility);
     bindApiSectionEvents(settings, updateVisibility);
 
@@ -2854,7 +2404,7 @@ function bindSettingsEvents() {
     bindStylesSectionEvents(settings);
     bindLorebookBarEvents(settings);
     bindAdditionalReferencesEvents(settings);
-    bindCharacterReferenceDescriptionEvents(settings);
+    bindCharacterLibraryEvents(settings);
     bindRefInstructionEvents(settings);
     bindDebugSectionEvents(settings);
 

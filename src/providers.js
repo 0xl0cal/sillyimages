@@ -39,17 +39,21 @@ import {
 import { buildFinalGenerationPrompt } from './parser.js';
 import { t } from './i18n.js';
 import {
-    getCharacterAvatarBase64,
-    getCharacterAvatarDataUrl,
-    getUserAvatarBase64,
-    getUserAvatarDataUrl,
+    collectCharacterLibraryReferences,
     collectPreviousContextReferences,
-    getCharacterReferenceDescription,
-    getUserReferenceDescription,
     makeReferenceObject,
     getReferenceImage,
     getReferenceDescription,
 } from './references.js';
+
+function appendAvatarReferenceGroups(target, groups) {
+    for (const group of groups) {
+        if (group[0]) target.push(group[0]);
+    }
+    for (const group of groups) {
+        if (group.length > 1) target.push(...group.slice(1));
+    }
+}
 
 // ----- Max references helper -----
 
@@ -535,7 +539,7 @@ function normalizeQualityForModel(userQuality, modelKind) {
         // gpt-image-*: low / medium / high / auto
         const allowed = new Set(['low', 'medium', 'high', 'auto']);
         if (allowed.has(q)) return q;
-        // legacy значения UI: standard/hd → high
+        // UI quality values standard/hd use the provider's high quality mode.
         if (q === 'hd') return 'high';
         if (q === 'standard') return 'medium';
         return 'auto';
@@ -699,14 +703,13 @@ export class OpenAIProvider extends Provider {
         const maxRefs = getOpenAIModelMaxReferences(modelKind) || MAX_GENERATION_REFERENCE_IMAGES;
         const refs = [];
 
-        if (settings.sendCharAvatar) {
-            const charAvatar = await getCharacterAvatarBase64();
-            if (charAvatar) refs.push(makeReferenceObject(charAvatar, getCharacterReferenceDescription(settings), 'char'));
-        }
-        if (settings.sendUserAvatar) {
-            const userAvatar = await getUserAvatarBase64();
-            if (userAvatar) refs.push(makeReferenceObject(userAvatar, await getUserReferenceDescription(settings), 'user'));
-        }
+        const characterRefs = settings.sendCharAvatar
+            ? await collectCharacterLibraryReferences('char', 'base64', settings)
+            : [];
+        const userRefs = settings.sendUserAvatar
+            ? await collectCharacterLibraryReferences('user', 'base64', settings)
+            : [];
+        appendAvatarReferenceGroups(refs, [characterRefs, userRefs]);
 
         for (const ref of matchedAdditionalRefs) {
             if (refs.length >= maxRefs) break;
@@ -924,14 +927,13 @@ export class GeminiProvider extends Provider {
         const maxRefs = caps.maxReferences;
         const refs = [];
 
-        if (settings.sendUserAvatar) {
-            const userAvatar = await getUserAvatarBase64();
-            if (userAvatar) refs.push(makeReferenceObject(userAvatar, await getUserReferenceDescription(settings), 'user'));
-        }
-        if (settings.sendCharAvatar) {
-            const charAvatar = await getCharacterAvatarBase64();
-            if (charAvatar) refs.push(makeReferenceObject(charAvatar, getCharacterReferenceDescription(settings), 'char'));
-        }
+        const userRefs = settings.sendUserAvatar
+            ? await collectCharacterLibraryReferences('user', 'base64', settings)
+            : [];
+        const characterRefs = settings.sendCharAvatar
+            ? await collectCharacterLibraryReferences('char', 'base64', settings)
+            : [];
+        appendAvatarReferenceGroups(refs, [userRefs, characterRefs]);
 
         for (const ref of matchedAdditionalRefs) {
             if (refs.length >= maxRefs) break;
@@ -1203,15 +1205,13 @@ export class OpenRouterProvider extends Provider {
         const maxRefs = caps.maxReferences;
         const refs = [];
 
-        // Референсы в формате dataUrl (OpenRouter принимает base64 data URL в image_url.url).
-        if (settings.sendUserAvatar) {
-            const d = await getUserAvatarDataUrl();
-            if (d) refs.push(makeReferenceObject(d, await getUserReferenceDescription(settings), 'user'));
-        }
-        if (settings.sendCharAvatar) {
-            const d = await getCharacterAvatarDataUrl();
-            if (d) refs.push(makeReferenceObject(d, getCharacterReferenceDescription(settings), 'char'));
-        }
+        const userRefs = settings.sendUserAvatar
+            ? await collectCharacterLibraryReferences('user', 'dataUrl', settings)
+            : [];
+        const characterRefs = settings.sendCharAvatar
+            ? await collectCharacterLibraryReferences('char', 'dataUrl', settings)
+            : [];
+        appendAvatarReferenceGroups(refs, [userRefs, characterRefs]);
 
         for (const ref of matchedAdditionalRefs) {
             if (refs.length >= maxRefs) break;
@@ -1586,14 +1586,13 @@ export class NaisteraProvider extends Provider {
         }
         const refs = [];
 
-        if (settings.naisteraSendUserAvatar) {
-            const d = await getUserAvatarDataUrl();
-            if (d) refs.push(makeReferenceObject(d, await getUserReferenceDescription(settings), 'user'));
-        }
-        if (settings.naisteraSendCharAvatar) {
-            const d = await getCharacterAvatarDataUrl();
-            if (d) refs.push(makeReferenceObject(d, getCharacterReferenceDescription(settings), 'char'));
-        }
+        const userRefs = settings.naisteraSendUserAvatar
+            ? await collectCharacterLibraryReferences('user', 'dataUrl', settings)
+            : [];
+        const characterRefs = settings.naisteraSendCharAvatar
+            ? await collectCharacterLibraryReferences('char', 'dataUrl', settings)
+            : [];
+        appendAvatarReferenceGroups(refs, [userRefs, characterRefs]);
 
         for (const ref of matchedAdditionalRefs) {
             const imagePath = normalizeStoredImagePath(ref.imagePath);
