@@ -292,6 +292,36 @@ export function recordCharacterGeneration(imagePath, prompt = '', settings = get
     return generation;
 }
 
+export function syncCharacterGenerationHistory(key, imagePaths, settings = getSettings()) {
+    const entry = getCharacterLibraryEntry('char', key, settings, { create: false });
+    if (!entry) return [];
+    const existingByPath = new Map(entry.generations.map((generation) => [generation.imagePath, generation]));
+    const seen = new Set();
+    entry.generations = (Array.isArray(imagePaths) ? imagePaths : [])
+        .map(normalizeStoredImagePath)
+        .filter((imagePath) => imagePath && !seen.has(imagePath) && seen.add(imagePath))
+        .map((imagePath, index) => existingByPath.get(imagePath) || {
+            id: makeCharacterLibraryItemId('generation'),
+            imagePath,
+            prompt: '',
+            createdAt: Date.now() - index,
+        })
+        .slice(0, MAX_CHARACTER_GENERATIONS);
+    saveSettings();
+    return entry.generations;
+}
+
+export function removeCharacterGeneration(key, generationId, settings = getSettings()) {
+    const entry = getCharacterLibraryEntry('char', key, settings, { create: false });
+    const normalizedId = String(generationId || '').trim();
+    if (!entry || !normalizedId) return null;
+    const generation = entry.generations.find((item) => item.id === normalizedId) || null;
+    if (!generation) return null;
+    entry.generations = entry.generations.filter((item) => item.id !== normalizedId);
+    saveSettings();
+    return generation;
+}
+
 export function getCharacterLibraryDescription(kind, key, settings = getSettings()) {
     const entry = getCharacterLibraryEntry(kind, key, settings, { create: false });
     if (!entry) return '';

@@ -13,6 +13,7 @@ import {
     getUserReferenceKeyForAvatar,
     removeCharacterLibraryAppearanceItem,
     setTemporaryCharacterPrimary,
+    syncCharacterGenerationHistory,
 } from './references.js';
 import {
     normalizeStoredImagePath,
@@ -20,6 +21,10 @@ import {
     sanitizeForHtml,
     saveImageToFile,
 } from './utils.js';
+import {
+    extractGeneratedImageUrlsFromText,
+    getMessageRenderText,
+} from './parser.js';
 import { t } from './i18n.js';
 import { Popup } from '../../../../popup.js';
 
@@ -32,6 +37,7 @@ let refreshTimer = null;
 let searchRenderTimer = null;
 let lastContextSignature = '';
 let libraryRendered = false;
+const pendingContextSync = { character: false, user: false };
 
 const MAX_RENDERED_ENTITIES = 80;
 
@@ -76,6 +82,7 @@ function getCharacterEntities(settings = getSettings()) {
             title: libraryEntry?.displayName || String(character?.name || character?.avatar || t`Character`),
             fallbackTitle: String(character?.name || character?.avatar || t`Character`),
             avatarUrl: getThumbnailUrl('avatar', character?.avatar),
+            generationFolder: String(character?.name || '').trim(),
             active: key === getCurrentCharacterReferenceKey(),
             configured: Boolean(libraryEntry),
         });
@@ -92,6 +99,7 @@ function getCharacterEntities(settings = getSettings()) {
             title: entry?.displayName || fallbackTitle,
             fallbackTitle,
             avatarUrl: key.startsWith('avatar:') ? getThumbnailUrl('avatar', key.slice('avatar:'.length)) : '',
+            generationFolder: entry?.displayName || fallbackTitle.replace(/\.[^.]+$/, ''),
             active: false,
             configured: true,
         });
@@ -114,6 +122,7 @@ async function getUserEntities(settings = getSettings()) {
             title: libraryEntry?.displayName || fallbackTitle,
             fallbackTitle,
             avatarUrl: getThumbnailUrl('persona', avatarFile),
+            generationFolder: '',
             active: key === activeKey,
             configured: Boolean(libraryEntry),
         });
@@ -131,6 +140,7 @@ async function getUserEntities(settings = getSettings()) {
             title: entry?.displayName || fallbackTitle,
             fallbackTitle,
             avatarUrl: getThumbnailUrl('persona', avatarFile),
+            generationFolder: '',
             active: key === activeKey,
             configured: true,
         });
@@ -195,7 +205,7 @@ function buildAppearanceItemsHtml(entry) {
     }).join('');
 }
 
-function buildGenerationsHtml(entry) {
+function buildGenerationsHtml(entry, key) {
     const generations = Array.isArray(entry.generations) ? entry.generations : [];
     if (generations.length === 0) {
         return `<div class="iig-library-empty">${t`No generations for this character.`}</div>`;
@@ -206,7 +216,7 @@ function buildGenerationsHtml(entry) {
                 const prompt = String(generation.prompt || '').trim();
                 const caption = prompt || t`Generated image`;
                 return `<button type="button" class="iig-library-generation-item" title="${sanitizeForHtml(caption)}">
-                    <img src="${sanitizeForHtml(normalizeStoredImagePath(generation.imagePath))}" alt="${sanitizeForHtml(caption)}" data-iig-lightbox data-iig-lightbox-caption="${sanitizeForHtml(caption)}" loading="lazy" decoding="async">
+                    <img src="${sanitizeForHtml(normalizeStoredImagePath(generation.imagePath))}" alt="${sanitizeForHtml(caption)}" data-iig-lightbox data-iig-lightbox-caption="${sanitizeForHtml(caption)}" data-iig-generation-key="${sanitizeForHtml(key)}" data-iig-generation-id="${sanitizeForHtml(generation.id)}" loading="lazy" decoding="async">
                 </button>`;
             }).join('')}
         </div>`;
@@ -221,7 +231,7 @@ function buildEditorHtml(entity, entry) {
     const temporaryPrimary = getTemporaryCharacterPrimary(entity.kind, entity.key);
     entry.temporaryPrimaryId = temporaryPrimary?.id || '';
     return `
-        <div class="iig-library-editor" data-library-kind="${entity.kind}" data-library-key="${sanitizeForHtml(entity.key)}">
+        <div class="iig-library-editor" data-library-kind="${entity.kind}" data-library-key="${sanitizeForHtml(entity.key)}" data-generation-folder="${sanitizeForHtml(entity.generationFolder || '')}">
             <div class="iig-library-editor-head">
                 <span class="iig-library-editor-avatar">${buildAvatarHtml(primaryPreview, entity.kind === 'char' ? 'fa-user-pen' : 'fa-user')}</span>
                 <label class="iig-library-name-field">
@@ -267,9 +277,12 @@ function buildEditorHtml(entity, entry) {
             ${entity.kind === 'char' ? `<section class="iig-library-editor-section">
                 <div class="iig-library-section-head">
                     <strong>${t`Generations`}</strong>
-                    <span class="iig-library-section-count">${entry.generations.length}</span>
+                    <div class="iig-library-row-actions">
+                        <span class="iig-library-section-count">${entry.generations.length}</span>
+                        <button type="button" class="menu_button iig-library-generations-refresh" title="${t`Refresh generations`}"><i class="fa-solid fa-rotate"></i></button>
+                    </div>
                 </div>
-                ${buildGenerationsHtml(entry)}
+                ${buildGenerationsHtml(entry, entity.key)}
             </section>` : ''}
         </div>`;
 }
@@ -422,6 +435,63 @@ async function handleUrlUpload(target, settings) {
     }
 }
 
+async function refreshCharacterGenerations(state, button, settings) {
+    const folder = String(state.editor.getAttribute('data-generation-folder') || '').trim();
+    if (!folder) {
+        toastr.warning(t`Character image folder is unavailable`, t`Image Generation`);
+        return;
+    }
+    button.disabled = true;
+    button.querySelector('i')?.classList.add('fa-spin');
+    try {
+        const context = getContext();
+        const response = await fetch('/api/images/list', {
+            method: 'POST',
+            headers: context.getRequestHeaders(),
+            body: JSON.stringify({
+                folder,
+                sortField: 'date',
+                sortOrder: 'desc',
+            }),
+        });
+        if (!response.ok) {
+            throw new Error((await response.text().catch(() => '')) || `HTTP ${response.status}`);
+        }
+        const files = await response.json();
+        const folderImagePaths = (Array.isArray(files) ? files : [])
+            .map((file) => String(file || '').trim())
+            .filter((file) => /^iig_/i.test(file))
+            .map((file) => `/user/images/${folder}/${file}`);
+        const contextChatCandidates = state.key === getCurrentCharacterReferenceKey()
+            ? [...new Set([...(Array.isArray(context.chat) ? context.chat : [])]
+                .reverse()
+                .flatMap((message) => extractGeneratedImageUrlsFromText(getMessageRenderText(message, settings)))
+                .filter((path) => /\.(?:png|jpe?g|webp|gif)(?:[?#].*)?$/i.test(path)))]
+            : [];
+        const contextChatPaths = (await Promise.all(contextChatCandidates.map(async (path) => {
+            try {
+                const imageResponse = await fetch(path, { method: 'HEAD' });
+                return imageResponse.ok ? path : '';
+            } catch (_error) {
+                return '';
+            }
+        }))).filter(Boolean);
+        const generations = syncCharacterGenerationHistory(
+            state.key,
+            [...contextChatPaths, ...folderImagePaths],
+            settings,
+        );
+        await renderEditor(settings);
+        toastr.success(t`Generations found: ${generations.length}`, t`Image Generation`);
+    } catch (error) {
+        console.error('[IIG] Failed to refresh character generations:', error);
+        toastr.error(t`Failed to refresh generations: ${error.message || error}`, t`Image Generation`);
+    } finally {
+        button.disabled = false;
+        button.querySelector('i')?.classList.remove('fa-spin');
+    }
+}
+
 async function getContextSignature(settings = getSettings()) {
     const context = getContext();
     const characters = Array.isArray(context?.characters) ? context.characters : [];
@@ -435,7 +505,7 @@ async function getContextSignature(settings = getSettings()) {
     });
 }
 
-async function refreshIfContextChanged(settings = getSettings()) {
+async function refreshIfContextChanged(settings = getSettings(), { force = false } = {}) {
     const details = document.getElementById('iig_characters_section')?.closest('details');
     if (details && !details.open) {
         lastContextSignature = '';
@@ -443,17 +513,43 @@ async function refreshIfContextChanged(settings = getSettings()) {
         return;
     }
     const signature = await getContextSignature(settings);
-    if (signature === lastContextSignature) return;
+    if (!force && signature === lastContextSignature) return;
     const active = document.activeElement;
-    if (active instanceof HTMLElement && active.closest('#iig_characters_section')) return;
+    if (!force && active instanceof HTMLElement && active.closest('#iig_characters_section')) return;
     await renderCharacterLibrary(settings);
 }
 
-function scheduleRefresh(settings = getSettings()) {
+async function syncLibrarySelectionToContext(settings, sync) {
+    if (sync.character) {
+        const characterKey = getCurrentCharacterReferenceKey();
+        selectedKeys.char = characterKey === 'no-character' ? '' : characterKey;
+    }
+    if (sync.user) {
+        selectedKeys.user = await getCurrentUserReferenceKey(settings);
+    }
+}
+
+function scheduleRefresh(settings = getSettings(), sync = {}) {
+    pendingContextSync.character ||= Boolean(sync.character);
+    pendingContextSync.user ||= Boolean(sync.user);
     clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(() => refreshIfContextChanged(settings).catch((error) => {
-        console.warn('[IIG] Failed to refresh character library:', error);
-    }), 120);
+    refreshTimer = setTimeout(async () => {
+        const requestedSync = {
+            character: pendingContextSync.character,
+            user: pendingContextSync.user,
+        };
+        pendingContextSync.character = false;
+        pendingContextSync.user = false;
+        try {
+            await syncLibrarySelectionToContext(settings, requestedSync);
+            await refreshIfContextChanged(settings, {
+                force: (requestedSync.character && selectedKind === 'char')
+                    || (requestedSync.user && selectedKind === 'user'),
+            });
+        } catch (error) {
+            console.warn('[IIG] Failed to refresh character library:', error);
+        }
+    }, 120);
 }
 
 function bindContextRefresh(settings) {
@@ -464,7 +560,12 @@ function bindContextRefresh(settings) {
         contextEventsBound = true;
         for (const name of eventNames) {
             const eventName = context?.event_types?.[name];
-            if (eventName) context.eventSource.on(eventName, () => scheduleRefresh(settings));
+            if (!eventName) continue;
+            const sync = {
+                character: ['CHAT_CHANGED', 'CHARACTER_SELECTED', 'CHARACTER_EDITED'].includes(name),
+                user: ['CHAT_CHANGED', 'USER_AVATAR_CHANGED', 'PERSONA_CHANGED'].includes(name),
+            };
+            context.eventSource.on(eventName, () => scheduleRefresh(settings, sync));
         }
     }
 }
@@ -545,6 +646,11 @@ export function bindCharacterLibraryEvents(settings = getSettings()) {
 
         const state = getActiveEditor(settings);
         if (!state) return;
+        const generationsRefresh = target.closest('.iig-library-generations-refresh');
+        if (generationsRefresh instanceof HTMLButtonElement && state.kind === 'char') {
+            await refreshCharacterGenerations(state, generationsRefresh, settings);
+            return;
+        }
         const addAppearanceButton = target.closest('.iig-library-appearance-add');
         if (addAppearanceButton) {
             const type = addAppearanceButton.getAttribute('data-appearance-type') === 'image' ? 'image' : 'text';

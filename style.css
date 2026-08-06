@@ -2668,6 +2668,18 @@ body.iig-actions-hidden .iig-img-actions {
     background: rgba(255, 255, 255, 0.2);
 }
 
+.iig-lightbox-delete:not([hidden]) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-color: rgba(255, 105, 105, 0.55);
+    background: rgba(160, 30, 30, 0.55);
+}
+
+.iig-lightbox-delete:not([hidden]):hover {
+    background: rgba(190, 35, 35, 0.78);
+}
+
 .iig-lightbox-nav {
     position: absolute;
     top: 50%;

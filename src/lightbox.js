@@ -3,6 +3,8 @@
  */
 
 import { t } from './i18n.js';
+import { removeCharacterGeneration } from './references.js';
+import { Popup } from '../../../../popup.js';
 
 const OVERLAY_ID = 'iig_lightbox';
 const IMG_SELECTOR = 'img[data-iig-instruction]:not(.iig-error-image)';
@@ -33,6 +35,7 @@ export function initLightbox() {
             <button class="iig-lightbox-btn iig-lightbox-zoom-out" type="button" title="${t`Zoom out`}" aria-label="${t`Zoom out`}"><i class="fa-solid fa-magnifying-glass-minus"></i></button>
             <button class="iig-lightbox-btn iig-lightbox-zoom-reset" type="button" title="${t`Reset zoom`}" aria-label="${t`Reset zoom`}"><i class="fa-solid fa-compress"></i></button>
             <button class="iig-lightbox-btn iig-lightbox-zoom-in" type="button" title="${t`Zoom in`}" aria-label="${t`Zoom in`}"><i class="fa-solid fa-magnifying-glass-plus"></i></button>
+            <button class="iig-lightbox-btn iig-lightbox-delete" type="button" title="${t`Delete generation`}" aria-label="${t`Delete generation`}" hidden><i class="fa-solid fa-trash"></i></button>
             <button class="iig-lightbox-btn iig-lightbox-close" type="button" title="${t`Close`}" aria-label="${t`Close`}"><i class="fa-solid fa-xmark"></i></button>
         </div>
         <button class="iig-lightbox-nav iig-lightbox-prev" type="button" title="${t`Previous`}" aria-label="${t`Previous`}"><i class="fa-solid fa-chevron-left"></i></button>
@@ -48,12 +51,14 @@ export function initLightbox() {
     const captionEl = /** @type {HTMLElement} */ (overlay.querySelector('.iig-lightbox-caption'));
     const prevBtn = /** @type {HTMLButtonElement} */ (overlay.querySelector('.iig-lightbox-prev'));
     const nextBtn = /** @type {HTMLButtonElement} */ (overlay.querySelector('.iig-lightbox-next'));
+    const deleteBtn = /** @type {HTMLButtonElement} */ (overlay.querySelector('.iig-lightbox-delete'));
 
     let scale = 1;
     let tx = 0;
     let ty = 0;
     let imageList = [];
     let currentIndex = 0;
+    let currentSourceElement = null;
     const pointers = new Map();
     let pinchStartDist = 0;
     let pinchStartScale = 1;
@@ -256,7 +261,9 @@ export function initLightbox() {
         if (imageList.length === 0) return;
         currentIndex = (idx + imageList.length) % imageList.length;
         const src = imageList[currentIndex];
+        currentSourceElement = src;
         const caption = src.getAttribute('data-iig-lightbox-caption') || src.alt || '';
+        deleteBtn.hidden = !src.getAttribute('data-iig-generation-id');
         geometry.baseWidth = 0;
         geometry.baseHeight = 0;
         imgEl.src = src.src;
@@ -299,12 +306,70 @@ export function initLightbox() {
         document.body.style.overflow = '';
         imgEl.src = '';
         captionEl.textContent = '';
+        currentSourceElement = null;
+        deleteBtn.hidden = true;
         resetZoom(false);
         imageList = [];
     };
 
     overlay.querySelector('.iig-lightbox-backdrop')?.addEventListener('click', close);
     overlay.querySelector('.iig-lightbox-close')?.addEventListener('click', close);
+    deleteBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const source = currentSourceElement;
+        const generationId = String(source?.getAttribute('data-iig-generation-id') || '').trim();
+        const characterKey = String(source?.getAttribute('data-iig-generation-key') || '').trim();
+        if (!source || !generationId || !characterKey) return;
+        const confirmed = await Popup.show.confirm(t`Delete this generation?`, t`Confirm`);
+        if (!confirmed) return;
+        deleteBtn.disabled = true;
+        try {
+            const rawPath = String(source.getAttribute('src') || '').trim();
+            const resolved = new URL(rawPath, window.location.origin);
+            const isLocalGeneration = resolved.origin === window.location.origin
+                && resolved.pathname.startsWith('/user/images/');
+            if (isLocalGeneration) {
+                let localPath = resolved.pathname;
+                try {
+                    localPath = decodeURIComponent(localPath);
+                } catch (_error) {
+                    // The raw pathname is still valid when it has no encoded characters.
+                }
+                const context = SillyTavern.getContext();
+                const response = await fetch('/api/images/delete', {
+                    method: 'POST',
+                    headers: context.getRequestHeaders(),
+                    body: JSON.stringify({ path: localPath }),
+                });
+                if (!response.ok && response.status !== 404) {
+                    throw new Error((await response.text().catch(() => '')) || `HTTP ${response.status}`);
+                }
+            }
+            const removed = removeCharacterGeneration(characterKey, generationId);
+            if (!removed) throw new Error(t`Generation was not found`);
+            const gallery = source.closest('[data-iig-lightbox-gallery]');
+            source.closest('.iig-library-generation-item')?.remove();
+            imageList = gallery
+                ? Array.from(gallery.querySelectorAll(GALLERY_IMG_SELECTOR)).filter((item) => item.getAttribute('src'))
+                : [];
+            const count = gallery?.closest('.iig-library-editor-section')?.querySelector('.iig-library-section-count');
+            if (count) count.textContent = String(imageList.length);
+            if (imageList.length === 0) {
+                close();
+            } else {
+                currentIndex = Math.min(currentIndex, imageList.length - 1);
+                updateNavVisibility();
+                showImage(currentIndex);
+            }
+            toastr.success(t`Generation deleted`, t`Image Generation`);
+        } catch (error) {
+            console.error('[IIG] Failed to delete generation:', error);
+            toastr.error(t`Failed to delete generation: ${error.message || error}`, t`Image Generation`);
+        } finally {
+            deleteBtn.disabled = false;
+        }
+    });
     overlay.querySelector('.iig-lightbox-zoom-in')?.addEventListener('click', (e) => {
         e.stopPropagation();
         clearWheelEndTimer();
