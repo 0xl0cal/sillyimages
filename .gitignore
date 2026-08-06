@@ -1,2 +1,9 @@
 # User logs
 logs_from_users/
+
+# Local development planning
+PLAN.md
+testing.md
+
+# External references for code review
+reference/
