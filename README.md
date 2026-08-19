@@ -2,7 +2,7 @@
 
 Расширение для SillyTavern. Ловит теги генерации в сообщениях ИИ и генерирует картинки через выбранный API.
 
-Поддерживаемые провайдеры: **OpenAI-совместимый**, **Gemini-совместимый**, **OpenRouter**, **Electron Hub**, **Naistera**.
+Поддерживаемые провайдеры: **OpenAI-совместимый**, **xAI Imagine**, **Gemini-совместимый**, **OpenRouter**, **Electron Hub**, **Naistera**.
 
 English version: [README-en.md](./README-en.md)
 
@@ -36,8 +36,8 @@ LLM видит тот же формат, но понимает: есть реа�
 | `style` | Стиль генерации (опционально) | `"anime"`, `"realistic"` |
 | `prompt` | Описание картинки | `"девушка с красными волосами"` |
 | `aspect_ratio` | Соотношение сторон | `"16:9"`, `"9:16"`, `"1:1"` |
-| `image_size` | Разрешение (Gemini / OpenRouter Gemini) | `"1K"`, `"2K"`, `"4K"` |
-| `quality` | Качество (OpenAI / Electron Hub) | `"low"`, `"medium"`, `"high"`, `"hd"` |
+| `image_size` | Разрешение (xAI / Gemini / OpenRouter Gemini) | `"1K"`, `"2K"`, `"4K"` |
+| `quality` | Качество (xAI / OpenAI / Electron Hub) | `"low"`, `"medium"`, `"high"`, `"hd"` |
 
 ## Настройки
 
@@ -50,7 +50,7 @@ LLM видит тот же формат, но понимает: есть реа�
 ### Общие
 
 - **Тип API** — выбор провайдера.
-- **URL эндпоинта** — базовый URL. Для OpenRouter / Electron Hub / Naistera есть дефолты, можно оставить пустым.
+- **URL эндпоинта** — базовый URL. Для xAI / OpenRouter / Electron Hub / Naistera есть дефолты, можно оставить пустым.
 - **Raw endpoint** — использовать URL как есть, не дописывая `/v1/images/generations` / `/chat/completions` и т.п. В этом режиме имя модели вводится вручную.
 - **API ключ** — ключ авторизации.
 - **Модель** — список подтягивается кнопкой 🔄 из `/v1/models` провайдера.
@@ -73,6 +73,7 @@ LLM видит тот же формат, но понимает: есть реа�
 | Модель / семейство | Max refs |
 |--------------------|---------:|
 | OpenAI gpt-image-* | 5 |
+| xAI Grok Imagine Image | 3 |
 | OpenAI / Electron Hub flux-1-kontext-* | 1 |
 | Gemini 2.5 Flash Image (Nano Banana) | 3 |
 | Gemini 3 Pro Image (Nano Banana Pro) | 11 |
@@ -130,6 +131,13 @@ tavern (tavern) — cozy wooden inn
 - Без референсов → `POST /v1/images/generations` (JSON).
 - С референсами → `POST /v1/images/edits` (multipart). Для gpt-image-* несколько референсов отправляются как `image[]`.
 - Поддерживаемые модели: gpt-image-1, gpt-image-1.5, flux-1-kontext-*, dall-e-2, dall-e-3.
+
+### xAI Imagine
+
+- Endpoint: `https://api.x.ai` (дефолт).
+- Без референсов → `POST /v1/images/generations` (JSON).
+- С референсами → `POST /v1/images/edits` (JSON). Поле `image` используется для одного изображения, `images` — для двух или трёх.
+- Для `grok-imagine-image-2.0` доступны соотношение сторон, разрешение `1k` / `2k` и качество `low` / `medium`.
 
 ### Gemini
 
@@ -190,7 +198,7 @@ i18n/*.json        — переводы
 src/
   settings.js      — дефолты, логгер, профили, лорбуки, стили
   utils.js         — data URL / base64 / upload / ProviderError
-  providers.js     — Provider base + OpenAI/Gemini/OpenRouter/ElectronHub/Naistera
+  providers.js     — Provider base + OpenAI/xAI/Gemini/OpenRouter/ElectronHub/Naistera
   references.js    — аватары, previous-context, лорбук UI, макрос, import/export
   parser.js        — парсер тегов, JSON-инструкции, matcher
   pipeline.js      — генерация с retry, обработка сообщения, перегенерация

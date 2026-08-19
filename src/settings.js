@@ -276,7 +276,7 @@ export const defaultSettings = Object.freeze({
     imageActionsOpacity: 80,
     styles: [],
     activeStyleId: '',
-    apiType: 'openai', // 'openai' | 'gemini' | 'openrouter' | 'electronhub' | 'naistera' | 'a1111'
+    apiType: 'openai', // 'openai' | 'xai' | 'gemini' | 'openrouter' | 'electronhub' | 'naistera' | 'a1111'
     endpoint: '',
     /**
      * Если true — endpoint используется «как есть» для генерации (никаких
@@ -298,6 +298,10 @@ export const defaultSettings = Object.freeze({
     userAvatarFile: '', // Selected user avatar filename from /User Avatars/
     aspectRatio: '1:1', // "1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"
     imageSize: '1K', // "1K", "2K", "4K"
+    // xAI Imagine
+    xaiAspectRatio: '1:1',
+    xaiResolution: '1k',
+    xaiQuality: 'medium',
     // Naistera specific
     naisteraAspectRatio: '1:1',
     naisteraModel: 'grok', // 'grok' | 'grok-pro' | 'nano banana 2' | 'novelai'
@@ -374,6 +378,9 @@ export const CONNECTION_FIELDS = Object.freeze([
     'quality',
     'aspectRatio',
     'imageSize',
+    'xaiAspectRatio',
+    'xaiResolution',
+    'xaiQuality',
     'sendCharAvatar',
     'sendUserAvatar',
     'useActiveUserPersonaAvatar',
@@ -552,6 +559,7 @@ export const VIDEO_MODEL_KEYWORDS = [
 export const NAISTERA_MODELS = Object.freeze(['grok', 'grok-pro', 'nano banana 2', 'novelai']);
 
 export const DEFAULT_ENDPOINTS = Object.freeze({
+    xai: 'https://api.x.ai',
     naistera: 'https://naistera.org',
     openrouter: 'https://openrouter.ai/api/v1',
     electronhub: 'https://api.electronhub.ai',
@@ -560,6 +568,7 @@ export const DEFAULT_ENDPOINTS = Object.freeze({
 
 export const ENDPOINT_PLACEHOLDERS = Object.freeze({
     openai: 'https://api.openai.com',
+    xai: 'https://api.x.ai',
     gemini: 'https://generativelanguage.googleapis.com',
     openrouter: 'https://openrouter.ai/api/v1',
     electronhub: 'https://api.electronhub.ai',
@@ -685,6 +694,7 @@ export function getEndpointPlaceholder(apiType) {
 export function normalizeConfiguredEndpoint(apiType, endpoint) {
     const trimmed = String(endpoint || '').trim().replace(/\/+$/, '');
     if (!trimmed) {
+        if (apiType === 'xai') return DEFAULT_ENDPOINTS.xai;
         if (apiType === 'naistera') return DEFAULT_ENDPOINTS.naistera;
         if (apiType === 'openrouter') return DEFAULT_ENDPOINTS.openrouter;
         if (apiType === 'electronhub') return DEFAULT_ENDPOINTS.electronhub;
@@ -693,6 +703,9 @@ export function normalizeConfiguredEndpoint(apiType, endpoint) {
     }
     if (apiType === 'naistera') {
         return trimmed.replace(/\/api\/generate$/i, '');
+    }
+    if (apiType === 'xai') {
+        return trimmed.replace(/\/v1$/i, '');
     }
     return trimmed;
 }

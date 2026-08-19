@@ -66,6 +66,9 @@ function appendAvatarReferenceGroups(target, groups) {
  */
 export function getActiveProviderMaxReferences(settings = getSettings()) {
     const apiType = settings.apiType;
+    if (apiType === 'xai') {
+        return 3;
+    }
     if (apiType === 'openai' || apiType === 'electronhub') {
         const kind = classifyOpenAIModel(settings.model);
         return getOpenAIModelMaxReferences(kind) || 0;
@@ -665,7 +668,7 @@ function extractOpenRouterImage(message) {
     return null;
 }
 
-function extractImageFromResult(result) {
+function extractImageFromResult(result, base64MimeType = 'image/png') {
     const dataList = Array.isArray(result?.data) ? result.data : [];
     if (dataList.length === 0) {
         if (result?.url) return result.url;
@@ -674,13 +677,47 @@ function extractImageFromResult(result) {
     }
     const imageObj = dataList[0];
     if (imageObj?.b64_json) {
-        return `data:image/png;base64,${imageObj.b64_json}`;
+        return `data:${base64MimeType};base64,${imageObj.b64_json}`;
     }
     if (imageObj?.url) {
         return imageObj.url;
     }
     iigLog('ERROR', 'OpenAI data[0] has no b64_json/url:', result);
     throw new Error(`Response data[0] has no b64_json or url. data[0] keys: ${Object.keys(imageObj || {}).join(',')}`);
+}
+
+async function collectImageEditReferences({ messageId, matchedAdditionalRefs = [] }, maxRefs, format = 'base64') {
+    const settings = getSettings();
+    const refs = [];
+
+    const characterRefs = settings.sendCharAvatar
+        ? await collectCharacterLibraryReferences('char', format, settings)
+        : [];
+    const userRefs = settings.sendUserAvatar
+        ? await collectCharacterLibraryReferences('user', format, settings)
+        : [];
+    appendAvatarReferenceGroups(refs, [characterRefs, userRefs]);
+
+    for (const ref of matchedAdditionalRefs) {
+        if (refs.length >= maxRefs) break;
+        const imagePath = normalizeStoredImagePath(ref.imagePath);
+        if (!imagePath) continue;
+        const image = format === 'dataUrl'
+            ? await imageUrlToDataUrl(imagePath)
+            : await imageUrlToBase64(imagePath);
+        if (image) refs.push(makeReferenceObject(image, additionalReferenceDescription(ref, settings), 'additional'));
+    }
+
+    if (settings.imageContextEnabled) {
+        const contextCount = normalizeImageContextCount(settings.imageContextCount);
+        const contextRefs = await collectPreviousContextReferences(messageId, format, contextCount);
+        refs.push(...contextRefs.map((ref) => makeReferenceObject(ref, '', 'context')));
+    }
+
+    if (refs.length > maxRefs) {
+        refs.length = maxRefs;
+    }
+    return refs;
 }
 
 export class OpenAIProvider extends Provider {
@@ -697,38 +734,10 @@ export class OpenAIProvider extends Provider {
     }
 
     async collectReferences({ prompt: _prompt, messageId, matchedAdditionalRefs = [] }) {
-        const settings = getSettings();
-        const modelKind = classifyOpenAIModel(settings.model);
+        const modelKind = classifyOpenAIModel(getSettings().model);
         // Flux Kontext принимает только 1 reference; gpt-image-* — до MAX.
         const maxRefs = getOpenAIModelMaxReferences(modelKind) || MAX_GENERATION_REFERENCE_IMAGES;
-        const refs = [];
-
-        const characterRefs = settings.sendCharAvatar
-            ? await collectCharacterLibraryReferences('char', 'base64', settings)
-            : [];
-        const userRefs = settings.sendUserAvatar
-            ? await collectCharacterLibraryReferences('user', 'base64', settings)
-            : [];
-        appendAvatarReferenceGroups(refs, [characterRefs, userRefs]);
-
-        for (const ref of matchedAdditionalRefs) {
-            if (refs.length >= maxRefs) break;
-            const imagePath = normalizeStoredImagePath(ref.imagePath);
-            if (!imagePath) continue;
-            const b64 = await imageUrlToBase64(imagePath);
-            if (b64) refs.push(makeReferenceObject(b64, additionalReferenceDescription(ref, settings), 'additional'));
-        }
-
-        if (settings.imageContextEnabled) {
-            const contextCount = normalizeImageContextCount(settings.imageContextCount);
-            const contextRefs = await collectPreviousContextReferences(messageId, 'base64', contextCount);
-            refs.push(...contextRefs.map((ref) => makeReferenceObject(ref, '', 'context')));
-        }
-
-        if (refs.length > maxRefs) {
-            refs.length = maxRefs;
-        }
-        return refs;
+        return collectImageEditReferences({ messageId, matchedAdditionalRefs }, maxRefs, 'base64');
     }
 
     async generate({ prompt, style, references = [], options = {} }) {
@@ -892,6 +901,120 @@ export class OpenAIProvider extends Provider {
 
         const result = await response.json();
         return extractImageFromResult(result);
+    }
+}
+
+// ----- xAI Imagine -----
+
+const XAI_MAX_REFERENCE_IMAGES = 3;
+const XAI_ASPECT_RATIOS = new Set([
+    'auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3',
+    '2:1', '1:2', '19.5:9', '9:19.5', '20:9', '9:20',
+]);
+
+function normalizeXAIAspectRatio(value) {
+    const normalized = String(value || '').trim();
+    return XAI_ASPECT_RATIOS.has(normalized) ? normalized : '1:1';
+}
+
+function normalizeXAIResolution(value) {
+    return String(value || '').trim().toLowerCase() === '2k' ? '2k' : '1k';
+}
+
+function normalizeXAIQuality(value) {
+    return String(value || '').trim().toLowerCase() === 'low' ? 'low' : 'medium';
+}
+
+function makeXAIImageInput(reference) {
+    const source = getReferenceImage(reference);
+    const url = source.startsWith('data:') ? source : `data:image/png;base64,${source}`;
+    return { type: 'image_url', url };
+}
+
+export class XAIProvider extends Provider {
+    get id() { return 'xai'; }
+    get displayName() { return 'xAI'; }
+
+    get capabilities() {
+        return {
+            endpointPlaceholder: ENDPOINT_PLACEHOLDERS.xai,
+            requiresApiKey: true,
+            referencesMaxCount: XAI_MAX_REFERENCE_IMAGES,
+            referencesFormat: 'dataUrl',
+        };
+    }
+
+    supportsReferences(settings) {
+        return String(settings.model || '').toLowerCase().includes('grok-imagine-image');
+    }
+
+    async collectReferences({ prompt: _prompt, messageId, matchedAdditionalRefs = [] }) {
+        return collectImageEditReferences(
+            { messageId, matchedAdditionalRefs },
+            XAI_MAX_REFERENCE_IMAGES,
+            'dataUrl',
+        );
+    }
+
+    async generate({ prompt, style, references = [], options = {} }) {
+        const settings = getSettings();
+        let fullPrompt = buildFinalGenerationPrompt(prompt, style, options.matchedAdditionalRefs || [], settings);
+        fullPrompt = appendPromptBlock(fullPrompt, buildAvatarReferencePromptBlock(references, settings));
+
+        if (references.length > 0) {
+            const refInstruction = getEffectiveRefInstruction(settings);
+            if (refInstruction) fullPrompt = `${refInstruction}\n\n${fullPrompt}`;
+        }
+
+        const body = {
+            model: settings.model,
+            prompt: fullPrompt,
+            n: 1,
+            response_format: 'b64_json',
+            aspect_ratio: normalizeXAIAspectRatio(options.aspectRatio || settings.xaiAspectRatio),
+            resolution: normalizeXAIResolution(options.imageSize || settings.xaiResolution),
+        };
+        if (String(settings.model || '').toLowerCase().includes('grok-imagine-image-2.0')) {
+            body.quality = normalizeXAIQuality(options.quality || settings.xaiQuality);
+        }
+
+        if (references.length === 1) {
+            body.image = makeXAIImageInput(references[0]);
+        } else if (references.length > 1) {
+            body.images = references.slice(0, XAI_MAX_REFERENCE_IMAGES).map(makeXAIImageInput);
+        }
+
+        const path = references.length > 0 ? '/v1/images/edits' : '/v1/images/generations';
+        const url = buildGenerationUrl(settings, path);
+        const signal = options.signal || null;
+        iigLog('INFO', `xAI generate: model=${settings.model} refs=${references.length} aspect=${body.aspect_ratio} resolution=${body.resolution} quality=${body.quality}`);
+
+        let response;
+        try {
+            response = await fetchWithTimeout(url, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${settings.apiKey}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(body),
+            }, OPENAI_REQUEST_TIMEOUT_MS, signal);
+        } catch (error) {
+            throwAsProviderError(error, `xAI ${path} (${url})`, 'xai', signal);
+        }
+
+        if (!response.ok) {
+            const { message, code, status } = await parseOpenAIError(response);
+            throw new ProviderError({
+                message: `xAI ${path} ${status} ${code}: ${message}`,
+                code,
+                status,
+                retryable: isRetryableHttpStatus(status),
+                providerId: 'xai',
+            });
+        }
+
+        return extractImageFromResult(await response.json(), 'image/jpeg');
     }
 }
 
@@ -2016,6 +2139,7 @@ export function resolveActiveProvider(settings = getSettings()) {
 
 // Default registration.
 registerProvider(new OpenAIProvider());
+registerProvider(new XAIProvider());
 registerProvider(new GeminiProvider());
 registerProvider(new OpenRouterProvider());
 registerProvider(new ElectronHubProvider());

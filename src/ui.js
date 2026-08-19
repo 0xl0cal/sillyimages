@@ -176,6 +176,7 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                 <label for="iig_api_type">${t`API type`}</label>
                 <select id="iig_api_type" class="flex1">
                     <option value="openai" ${settings.apiType === 'openai' ? 'selected' : ''}>${t`OpenAI-compatible (/v1/images/generations)`}</option>
+                    <option value="xai" ${settings.apiType === 'xai' ? 'selected' : ''}>xAI Imagine</option>
                     <option value="gemini" ${settings.apiType === 'gemini' ? 'selected' : ''}>${t`Gemini-compatible (nano-banana)`}</option>
                     <option value="openrouter" ${settings.apiType === 'openrouter' ? 'selected' : ''}>${t`OpenRouter (chat/completions)`}</option>
                     <option value="electronhub" ${settings.apiType === 'electronhub' ? 'selected' : ''}>${t`Electron Hub (/v1/images/*)`}</option>
@@ -238,6 +239,45 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                     <option value="hd" ${settings.quality === 'hd' ? 'selected' : ''}>${t`HD`}</option>
                 </select>
                 <div></div>
+            </div>
+
+            <div id="iig_xai_options" class="iig-settings-card-nested ${settings.apiType === 'xai' ? '' : 'iig-hidden'}">
+                <div class="flex-row">
+                    <label for="iig_xai_aspect_ratio">${t`Aspect ratio`}</label>
+                    <select id="iig_xai_aspect_ratio" class="flex1">
+                        <option value="auto" ${settings.xaiAspectRatio === 'auto' ? 'selected' : ''}>Auto</option>
+                        <option value="1:1" ${settings.xaiAspectRatio === '1:1' ? 'selected' : ''}>1:1</option>
+                        <option value="16:9" ${settings.xaiAspectRatio === '16:9' ? 'selected' : ''}>16:9</option>
+                        <option value="9:16" ${settings.xaiAspectRatio === '9:16' ? 'selected' : ''}>9:16</option>
+                        <option value="4:3" ${settings.xaiAspectRatio === '4:3' ? 'selected' : ''}>4:3</option>
+                        <option value="3:4" ${settings.xaiAspectRatio === '3:4' ? 'selected' : ''}>3:4</option>
+                        <option value="3:2" ${settings.xaiAspectRatio === '3:2' ? 'selected' : ''}>3:2</option>
+                        <option value="2:3" ${settings.xaiAspectRatio === '2:3' ? 'selected' : ''}>2:3</option>
+                        <option value="2:1" ${settings.xaiAspectRatio === '2:1' ? 'selected' : ''}>2:1</option>
+                        <option value="1:2" ${settings.xaiAspectRatio === '1:2' ? 'selected' : ''}>1:2</option>
+                        <option value="19.5:9" ${settings.xaiAspectRatio === '19.5:9' ? 'selected' : ''}>19.5:9</option>
+                        <option value="9:19.5" ${settings.xaiAspectRatio === '9:19.5' ? 'selected' : ''}>9:19.5</option>
+                        <option value="20:9" ${settings.xaiAspectRatio === '20:9' ? 'selected' : ''}>20:9</option>
+                        <option value="9:20" ${settings.xaiAspectRatio === '9:20' ? 'selected' : ''}>9:20</option>
+                    </select>
+                    <div></div>
+                </div>
+                <div class="flex-row">
+                    <label for="iig_xai_resolution">${t`Resolution`}</label>
+                    <select id="iig_xai_resolution" class="flex1">
+                        <option value="1k" ${settings.xaiResolution === '1k' ? 'selected' : ''}>1K</option>
+                        <option value="2k" ${settings.xaiResolution === '2k' ? 'selected' : ''}>2K</option>
+                    </select>
+                    <div></div>
+                </div>
+                <div class="flex-row">
+                    <label for="iig_xai_quality">${t`Quality`}</label>
+                    <select id="iig_xai_quality" class="flex1">
+                        <option value="medium" ${settings.xaiQuality === 'medium' ? 'selected' : ''}>${t`Medium`}</option>
+                        <option value="low" ${settings.xaiQuality === 'low' ? 'selected' : ''}>${t`Low`}</option>
+                    </select>
+                    <div></div>
+                </div>
             </div>
 
             <div class="flex-row ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}" id="iig_naistera_model_row">
@@ -704,9 +744,10 @@ function buildReferencesSettingsSectionHtml(settings = getSettings()) {
     const refsSupported = provider ? provider.supportsReferences(settings) : false;
     const isGemini = settings.apiType === 'gemini';
     const isOpenAI = settings.apiType === 'openai';
+    const isXAI = settings.apiType === 'xai';
     const isOpenRouter = settings.apiType === 'openrouter';
     const isElectronHub = settings.apiType === 'electronhub';
-    const commonAvatarRefsVisible = (isGemini || isOpenAI || isOpenRouter || isElectronHub) && refsSupported;
+    const commonAvatarRefsVisible = (isGemini || isOpenAI || isXAI || isOpenRouter || isElectronHub) && refsSupported;
     const naisteraRefsVisible = settings.apiType === 'naistera' && refsSupported;
 
     // Заголовок секции аватаров — по активному провайдеру. Provider-brand
@@ -714,6 +755,7 @@ function buildReferencesSettingsSectionHtml(settings = getSettings()) {
     let avatarRefsTitle;
     if (isOpenRouter) avatarRefsTitle = 'OpenRouter';
     else if (isElectronHub) avatarRefsTitle = 'Electron Hub';
+    else if (isXAI) avatarRefsTitle = 'xAI Imagine';
     else if (isOpenAI) avatarRefsTitle = 'OpenAI / GPT Image';
     else avatarRefsTitle = 'Gemini / nano-banana';
 
@@ -1038,6 +1080,9 @@ function applyProfileValuesToInputs(settings) {
     setVal('iig_quality', settings.quality);
     setVal('iig_aspect_ratio', settings.aspectRatio);
     setVal('iig_image_size', settings.imageSize);
+    setVal('iig_xai_aspect_ratio', settings.xaiAspectRatio);
+    setVal('iig_xai_resolution', settings.xaiResolution);
+    setVal('iig_xai_quality', settings.xaiQuality);
     setVal('iig_naistera_model', normalizeNaisteraModel(settings.naisteraModel));
     setVal('iig_naistera_aspect_ratio', settings.naisteraAspectRatio);
     setChk('iig_naistera_video_test', settings.naisteraVideoTest);
@@ -1344,6 +1389,21 @@ function bindApiSectionEvents(settings, updateVisibility) {
 
     document.getElementById('iig_image_size')?.addEventListener('change', (e) => {
         settings.imageSize = e.target.value;
+        saveSettings();
+    });
+
+    document.getElementById('iig_xai_aspect_ratio')?.addEventListener('change', (e) => {
+        settings.xaiAspectRatio = e.target.value;
+        saveSettings();
+    });
+
+    document.getElementById('iig_xai_resolution')?.addEventListener('change', (e) => {
+        settings.xaiResolution = e.target.value;
+        saveSettings();
+    });
+
+    document.getElementById('iig_xai_quality')?.addEventListener('change', (e) => {
+        settings.xaiQuality = e.target.value;
         saveSettings();
     });
 
@@ -2349,6 +2409,7 @@ function buildUpdateVisibility(settings) {
         const isNaistera = apiType === 'naistera';
         const isGemini = apiType === 'gemini';
         const isOpenAI = apiType === 'openai';
+        const isXAI = apiType === 'xai';
         const isOpenRouter = apiType === 'openrouter';
         const isElectronHub = apiType === 'electronhub';
         const isA1111 = apiType === 'a1111';
@@ -2359,7 +2420,7 @@ function buildUpdateVisibility(settings) {
         const naisteraRefsSupported = isNaistera && refsSupported;
 
         // Shared avatar controls are visible for providers that accept references.
-        const commonAvatarRefsVisible = (isGemini || isOpenAI || isOpenRouter || isElectronHub) && refsSupported;
+        const commonAvatarRefsVisible = (isGemini || isOpenAI || isXAI || isOpenRouter || isElectronHub) && refsSupported;
 
         // Model is used for OpenAI and Gemini; Naistera does not need a model.
         document.getElementById('iig_model_row')?.classList.toggle('iig-hidden', isNaistera);
@@ -2376,6 +2437,7 @@ function buildUpdateVisibility(settings) {
         // принимает тот же формат JSON на /v1/images/{generations,edits}.
         document.getElementById('iig_size_row')?.classList.toggle('iig-hidden', !(isOpenAI || isElectronHub));
         document.getElementById('iig_quality_row')?.classList.toggle('iig-hidden', !(isOpenAI || isElectronHub));
+        document.getElementById('iig_xai_options')?.classList.toggle('iig-hidden', !isXAI);
 
         // Naistera-only params
         document.getElementById('iig_naistera_model_row')?.classList.toggle('iig-hidden', !isNaistera);
@@ -2417,6 +2479,7 @@ function buildUpdateVisibility(settings) {
             if (titleEl) {
                 if (isOpenRouter) titleEl.textContent = 'OpenRouter';
                 else if (isElectronHub) titleEl.textContent = 'Electron Hub';
+                else if (isXAI) titleEl.textContent = 'xAI Imagine';
                 else if (isOpenAI) titleEl.textContent = 'OpenAI / GPT Image';
                 else titleEl.textContent = 'Gemini / nano-banana';
             }

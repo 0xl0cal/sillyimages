@@ -179,7 +179,7 @@ function formatProviderError(error) {
  * reference images — OpenAI / ElectronHub (/v1/images/edits), Gemini,
  * OpenRouter, Naistera.
  */
-const REF_INSTRUCTION_PROVIDERS = new Set(['openai', 'electronhub', 'gemini', 'openrouter', 'naistera']);
+const REF_INSTRUCTION_PROVIDERS = new Set(['openai', 'xai', 'electronhub', 'gemini', 'openrouter', 'naistera']);
 
 /**
  * Приводит любой представление референса (base64 строка или data URL)
@@ -230,7 +230,7 @@ function buildAvatarReferenceSnapshotBlock(references = [], settings = getSettin
  */
 function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs, options, provider, settings }) {
     let snapshotPrompt = buildFinalGenerationPrompt(prompt, style, matchedAdditionalRefs || [], settings);
-    if (settings.apiType === 'openai' || settings.apiType === 'electronhub') {
+    if (settings.apiType === 'openai' || settings.apiType === 'xai' || settings.apiType === 'electronhub') {
         const avatarDescriptions = buildAvatarReferenceSnapshotBlock(references, settings);
         if (avatarDescriptions) {
             snapshotPrompt = `${snapshotPrompt}\n\n${avatarDescriptions}`.trim();
@@ -252,7 +252,9 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
 
     const aspectRatio = settings.apiType === 'naistera'
         ? (options?.aspectRatio || settings.naisteraAspectRatio)
-        : (options?.aspectRatio || settings.aspectRatio);
+        : settings.apiType === 'xai'
+            ? (options?.aspectRatio || settings.xaiAspectRatio)
+            : (options?.aspectRatio || settings.aspectRatio);
 
     const matchedRefsInfo = (Array.isArray(matchedAdditionalRefs) ? matchedAdditionalRefs : []).map((ref) => ({
         name: String(ref?.name || ''),
@@ -277,9 +279,13 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
             apiType: settings.apiType,
             model,
             aspectRatio,
-            imageSize: options?.imageSize || settings.imageSize || '',
+            imageSize: settings.apiType === 'xai'
+                ? (options?.imageSize || settings.xaiResolution || '')
+                : (options?.imageSize || settings.imageSize || ''),
             size: settings.size || '',
-            quality: options?.quality || settings.quality || '',
+            quality: settings.apiType === 'xai'
+                ? (options?.quality || settings.xaiQuality || '')
+                : (options?.quality || settings.quality || ''),
             refInstructionApplied,
         },
     };

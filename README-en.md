@@ -2,7 +2,7 @@
 
 A SillyTavern extension that catches generation tags in AI messages and renders images through your chosen API.
 
-Supported providers: **OpenAI-compatible**, **Gemini-compatible**, **OpenRouter**, **Electron Hub**, **Naistera**.
+Supported providers: **OpenAI-compatible**, **xAI Imagine**, **Gemini-compatible**, **OpenRouter**, **Electron Hub**, **Naistera**.
 
 Russian version: [README.md](./README.md)
 
@@ -36,8 +36,8 @@ After a successful generation the legacy tag is automatically converted into the
 | `style` | Style hint (optional) | `"anime"`, `"realistic"` |
 | `prompt` | Image description | `"girl with red hair"` |
 | `aspect_ratio` | Aspect ratio | `"16:9"`, `"9:16"`, `"1:1"` |
-| `image_size` | Resolution (Gemini / OpenRouter Gemini) | `"1K"`, `"2K"`, `"4K"` |
-| `quality` | Quality (OpenAI / Electron Hub) | `"low"`, `"medium"`, `"high"`, `"hd"` |
+| `image_size` | Resolution (xAI / Gemini / OpenRouter Gemini) | `"1K"`, `"2K"`, `"4K"` |
+| `quality` | Quality (xAI / OpenAI / Electron Hub) | `"low"`, `"medium"`, `"high"`, `"hd"` |
 
 ## Settings
 
@@ -50,7 +50,7 @@ At the top of the settings there is a profile dropdown. Each profile is a snapsh
 ### General
 
 - **API type** — provider selector.
-- **Endpoint URL** — base URL. OpenRouter / Electron Hub / Naistera have defaults, the field can be empty.
+- **Endpoint URL** — base URL. xAI / OpenRouter / Electron Hub / Naistera have defaults, the field can be empty.
 - **Raw endpoint** — use the URL as-is, do not append `/v1/images/generations` / `/chat/completions` and so on. In this mode the model name is typed in by hand.
 - **API key** — authorization key.
 - **Model** — list is fetched via the 🔄 button from the provider's `/v1/models`.
@@ -73,6 +73,7 @@ Per-request reference limits depend on the model:
 | Model / family | Max refs |
 |----------------|---------:|
 | OpenAI gpt-image-* | 5 |
+| xAI Grok Imagine Image | 3 |
 | OpenAI / Electron Hub flux-1-kontext-* | 1 |
 | Gemini 2.5 Flash Image (Nano Banana) | 3 |
 | Gemini 3 Pro Image (Nano Banana Pro) | 11 |
@@ -130,6 +131,13 @@ Line format: `full-name (primary-trigger) — description`. If only one lorebook
 - Without references → `POST /v1/images/generations` (JSON).
 - With references → `POST /v1/images/edits` (multipart). For gpt-image-* several references are sent as `image[]`.
 - Supported models: gpt-image-1, gpt-image-1.5, flux-1-kontext-*, dall-e-2, dall-e-3.
+
+### xAI Imagine
+
+- Endpoint: `https://api.x.ai` (default).
+- Without references → `POST /v1/images/generations` (JSON).
+- With references → `POST /v1/images/edits` (JSON). The `image` field is used for one image and `images` for two or three.
+- `grok-imagine-image-2.0` supports aspect ratio, `1k` / `2k` resolution, and `low` / `medium` quality.
 
 ### Gemini
 
@@ -190,7 +198,7 @@ i18n/*.json        — translations
 src/
   settings.js      — defaults, logger, profiles, lorebooks, styles
   utils.js         — data URL / base64 / upload / ProviderError
-  providers.js     — Provider base + OpenAI/Gemini/OpenRouter/ElectronHub/Naistera
+  providers.js     — Provider base + OpenAI/xAI/Gemini/OpenRouter/ElectronHub/Naistera
   references.js    — avatars, previous context, lorebook UI, macro, import/export
   parser.js        — tag parser, JSON instructions, matcher
   pipeline.js      — generation with retry, message processing, regeneration
