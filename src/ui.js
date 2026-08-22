@@ -205,7 +205,7 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                 </div>
             </div>
 
-            <p id="iig_naistera_hint" class="hint ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}">${t`For Naistera: paste the token from the Telegram bot and pick a model (grok / grok-pro / nano banana 2 / novelai).`}</p>
+            <p id="iig_naistera_hint" class="hint ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}">${t`For Naistera: paste the token from the Telegram bot. Available models are loaded from the API.`}</p>
 
             <div class="flex-row ${settings.apiType === 'naistera' ? 'iig-hidden' : ''}" id="iig_model_row">
                 <label for="iig_model_select">${t`Model`}</label>
@@ -283,12 +283,13 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
             <div class="flex-row ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}" id="iig_naistera_model_row">
                 <label for="iig_naistera_model">${t`Model`}</label>
                 <select id="iig_naistera_model" class="flex1">
-                    <option value="grok" ${normalizeNaisteraModel(settings.naisteraModel) === 'grok' ? 'selected' : ''}>grok</option>
-                    <option value="grok-pro" ${normalizeNaisteraModel(settings.naisteraModel) === 'grok-pro' ? 'selected' : ''}>grok-pro</option>
-                    <option value="nano banana 2" ${normalizeNaisteraModel(settings.naisteraModel) === 'nano banana 2' ? 'selected' : ''}>nano banana 2</option>
-                    <option value="novelai" ${normalizeNaisteraModel(settings.naisteraModel) === 'novelai' ? 'selected' : ''}>novelai</option>
+                    ${settings.naisteraModel
+                        ? `<option value="${sanitizeForHtml(settings.naisteraModel)}" selected>${sanitizeForHtml(settings.naisteraModel)}</option>`
+                        : `<option value="" selected disabled>${t`-- Select a model --`}</option>`}
                 </select>
-                <div></div>
+                <div id="iig_refresh_naistera_models" class="menu_button iig-refresh-btn" title="${t`Refresh list`}">
+                    <i class="fa-solid fa-sync"></i>
+                </div>
             </div>
 
             <div class="flex-row ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}" id="iig_naistera_aspect_row">
@@ -1083,7 +1084,13 @@ function applyProfileValuesToInputs(settings) {
     setVal('iig_xai_aspect_ratio', settings.xaiAspectRatio);
     setVal('iig_xai_resolution', settings.xaiResolution);
     setVal('iig_xai_quality', settings.xaiQuality);
-    setVal('iig_naistera_model', normalizeNaisteraModel(settings.naisteraModel));
+    const naisteraModel = normalizeNaisteraModel(settings.naisteraModel);
+    const naisteraSelect = document.getElementById('iig_naistera_model');
+    if (naisteraSelect instanceof HTMLSelectElement && naisteraModel
+        && !Array.from(naisteraSelect.options).some((option) => option.value === naisteraModel)) {
+        naisteraSelect.add(new Option(naisteraModel, naisteraModel));
+    }
+    setVal('iig_naistera_model', naisteraModel);
     setVal('iig_naistera_aspect_ratio', settings.naisteraAspectRatio);
     setChk('iig_naistera_video_test', settings.naisteraVideoTest);
     setVal('iig_naistera_video_every_n', settings.naisteraVideoEveryN);
@@ -1242,10 +1249,9 @@ function bindApiSectionEvents(settings, updateVisibility) {
         saveSettings();
         updateVisibility();
 
-        // Switching providers → модель из прошлого провайдера скорее всего
-        // невалидна. Подтягиваем список нового провайдера, если это не raw
-        // и не Naistera (там свой селектор).
-        if (!settings.rawEndpoint && nextApiType !== 'naistera') {
+        // Load the selected provider's catalog. Naistera keeps its own picker,
+        // while other providers use the shared model selector.
+        if (!settings.rawEndpoint || nextApiType === 'naistera') {
             reloadModelList({ announce: false }).catch(() => { /* silent */ });
         }
     });
@@ -1258,6 +1264,12 @@ function bindApiSectionEvents(settings, updateVisibility) {
     document.getElementById('iig_api_key')?.addEventListener('input', (e) => {
         settings.apiKey = e.target.value;
         saveSettings();
+    });
+
+    document.getElementById('iig_api_key')?.addEventListener('change', () => {
+        if (settings.apiType === 'naistera') {
+            reloadModelList({ announce: false }).catch(() => { /* handled by fetchModels */ });
+        }
     });
 
     document.getElementById('iig_key_toggle')?.addEventListener('click', () => {
@@ -1315,23 +1327,37 @@ function bindApiSectionEvents(settings, updateVisibility) {
      * announce=true shows a toastr with model count / error.
      */
     async function reloadModelList({ announce = false } = {}) {
-        const select = /** @type {HTMLSelectElement|null} */ (document.getElementById('iig_model_select'));
-        const btn = document.getElementById('iig_refresh_models');
+        const isNaistera = settings.apiType === 'naistera';
+        const select = /** @type {HTMLSelectElement|null} */ (document.getElementById(
+            isNaistera ? 'iig_naistera_model' : 'iig_model_select',
+        ));
+        const btn = document.getElementById(isNaistera ? 'iig_refresh_naistera_models' : 'iig_refresh_models');
         btn?.classList.add('loading');
         try {
             const models = await fetchModels();
             if (select) {
-                const current = settings.model || '';
+                let current = isNaistera ? normalizeNaisteraModel(settings.naisteraModel) : (settings.model || '');
+                if (isNaistera && models.length > 0 && !models.includes(current)) {
+                    current = models[0];
+                    settings.naisteraModel = current;
+                    saveSettings();
+                }
+                const provider = resolveActiveProvider(settings);
                 const inList = current && models.includes(current);
                 const optionsHtml = [
-                    ...models.map((m) => `<option value="${sanitizeForHtml(m)}" ${m === current ? 'selected' : ''}>${sanitizeForHtml(m)}</option>`),
-                    ...(!inList && current ? [`<option value="${sanitizeForHtml(current)}" selected>${sanitizeForHtml(current)} ${t`(custom)`}</option>`] : []),
+                    ...models.map((m) => `<option value="${sanitizeForHtml(m)}" ${m === current ? 'selected' : ''}>${sanitizeForHtml(provider?.getModelLabel(m) || m)}</option>`),
+                    ...(!inList && current ? [`<option value="${sanitizeForHtml(current)}" selected>${sanitizeForHtml(current)}${isNaistera ? '' : ` ${t`(custom)`}`}</option>`] : []),
                     ...(models.length === 0 && !current ? [`<option value="" selected disabled>${t`-- Select a model --`}</option>`] : []),
                 ];
                 select.innerHTML = optionsHtml.join('');
             }
+            updateVisibility();
             if (announce && models.length > 0) {
                 toastr.success(t`Models found: ${models.length}`, t`Image Generation`);
+                const provider = resolveActiveProvider(settings);
+                if (isNaistera && settings.apiKey && provider?.getModelCatalogStatus?.().authenticated !== true) {
+                    toastr.warning(t`Models were loaded from the public catalog. Account-specific models may be unavailable.`, t`Image Generation`);
+                }
             } else if (announce && models.length === 0) {
                 toastr.warning(t`No models returned by endpoint`, t`Image Generation`);
             }
@@ -1347,6 +1373,10 @@ function bindApiSectionEvents(settings, updateVisibility) {
     }
 
     document.getElementById('iig_refresh_models')?.addEventListener('click', () => {
+        reloadModelList({ announce: true });
+    });
+
+    document.getElementById('iig_refresh_naistera_models')?.addEventListener('click', () => {
         reloadModelList({ announce: true });
     });
 
@@ -1644,11 +1674,8 @@ function bindApiSectionEvents(settings, updateVisibility) {
         }
     });
 
-    // Auto-populate model list on init so the <select> isn't empty when the
-    // user first opens settings. In raw mode the select is hidden anyway,
-    // and for Naistera the whole row is hidden — fetchModels still tolerates
-    // those cases and returns [].
-    if (!settings.rawEndpoint && settings.apiType !== 'naistera') {
+    // Auto-populate the active provider's model picker on init.
+    if (!settings.rawEndpoint || settings.apiType === 'naistera') {
         reloadModelList({ announce: false }).catch(() => { /* silent on init */ });
     }
 

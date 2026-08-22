@@ -53,7 +53,7 @@ At the top of the settings there is a profile dropdown. Each profile is a snapsh
 - **Endpoint URL** — base URL. xAI / OpenRouter / Electron Hub / Naistera have defaults, the field can be empty.
 - **Raw endpoint** — use the URL as-is, do not append `/v1/images/generations` / `/chat/completions` and so on. In this mode the model name is typed in by hand.
 - **API key** — authorization key.
-- **Model** — list is fetched via the 🔄 button from the provider's `/v1/models`.
+- **Model** — the 🔄 button loads the catalog exposed by the selected provider.
 
 ### References
 
@@ -167,7 +167,7 @@ Line format: `full-name (primary-trigger) — description`. If only one lorebook
 - `POST /api/generate`, body: `{ prompt, model, aspect_ratio, preset?, reference_images? }`.
 - Can use polling: send `sync: false`, receive `job_id`, then read
   `GET /api/generate/jobs/{job_id}` with the same Bearer token.
-- Models: `grok`, `grok-pro`, `nano banana 2`, `novelai`. References supported by `grok` and `nano banana 2`.
+- Available models are loaded from `GET /api/models` using the configured token. Model names and reference support come from the API response.
 - Can return video (`media_kind: "video"`) — the "Enable video generation" option.
 
 ## How generation works

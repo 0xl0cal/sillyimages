@@ -15,12 +15,10 @@ import {
     iigLog,
     IMAGE_MODEL_KEYWORDS,
     VIDEO_MODEL_KEYWORDS,
-    NAISTERA_MODELS,
     ENDPOINT_PLACEHOLDERS,
     MAX_GENERATION_REFERENCE_IMAGES,
     MAX_ADDITIONAL_REFERENCES,
     normalizeNaisteraModel,
-    naisteraModelSupportsReferences,
     normalizeImageContextCount,
     normalizeNaisteraVideoFrequency,
     getEffectiveEndpoint,
@@ -406,6 +404,10 @@ export class Provider {
      */
     async generate(_request) {
         throw new Error(`Provider[${this.id}].generate() not implemented`);
+    }
+
+    getModelLabel(modelId) {
+        return String(modelId || '');
     }
 
     /**
@@ -1604,6 +1606,12 @@ export class ElectronHubProvider extends OpenAIProvider {
 // ----- Naistera (custom / grok / nano banana 2 / novelai proxy) -----
 
 export class NaisteraProvider extends Provider {
+    constructor() {
+        super();
+        this.modelCatalog = new Map();
+        this.modelCatalogStatus = { authenticated: false, tier: null, publicFallback: false };
+    }
+
     get id() { return 'naistera'; }
     get displayName() { return 'Naistera'; }
 
@@ -1620,14 +1628,70 @@ export class NaisteraProvider extends Provider {
             errors.push(t`API key is not configured`);
         }
         const m = normalizeNaisteraModel(settings.naisteraModel);
-        if (!NAISTERA_MODELS.includes(m)) {
-            errors.push(t`For Naistera, select a model: grok / grok-pro / nano banana 2 / novelai`);
+        if (!m) {
+            errors.push(t`Model is not selected`);
         }
         return errors;
     }
 
     supportsReferences(settings) {
-        return naisteraModelSupportsReferences(settings.naisteraModel);
+        const model = this.modelCatalog.get(normalizeNaisteraModel(settings.naisteraModel));
+        return model ? model.references !== false : true;
+    }
+
+    getModelLabel(modelId) {
+        return this.modelCatalog.get(String(modelId || ''))?.name || super.getModelLabel(modelId);
+    }
+
+    getModelCatalogStatus() {
+        return { ...this.modelCatalogStatus };
+    }
+
+    async fetchModels() {
+        const settings = getSettings();
+        const endpoint = getEffectiveEndpoint(settings).replace(/\/$/, '');
+        const url = `${endpoint}/api/models`;
+        const request = async (authenticated) => {
+            const headers = { 'Accept': 'application/json' };
+            if (authenticated && settings.apiKey) {
+                headers.Authorization = `Bearer ${settings.apiKey}`;
+            }
+            return await fetch(url, { method: 'GET', headers });
+        };
+
+        let response;
+        let publicFallback = false;
+        try {
+            response = await request(true);
+        } catch (error) {
+            if (!settings.apiKey || error?.name !== 'TypeError') throw error;
+            iigLog('WARN', 'Naistera authenticated model discovery was blocked; retrying the public catalog');
+            publicFallback = true;
+            response = await request(false);
+        }
+
+        if (!response.ok) {
+            const detail = await response.text().catch(() => '');
+            throw new Error(`Naistera /api/models ${response.status}: ${String(detail).slice(0, 500)}`);
+        }
+
+        const payload = await response.json();
+        const models = (Array.isArray(payload?.models) ? payload.models : [])
+            .filter((model) => model?.id && model.visible !== false && model.deprecated !== true)
+            .map((model) => ({
+                id: String(model.id),
+                name: String(model.name || model.id),
+                references: model.references !== false,
+            }));
+
+        this.modelCatalog = new Map(models.map((model) => [model.id, model]));
+        this.modelCatalogStatus = {
+            authenticated: payload?.authenticated === true,
+            tier: payload?.tier || null,
+            publicFallback,
+        };
+        iigLog('INFO', `Naistera models loaded: ${models.length}; authenticated=${payload?.authenticated === true}; tier=${payload?.tier || 'public'}`);
+        return models.map((model) => model.id);
     }
 
     async pollJob(endpoint, jobId, settings, signal = null) {
@@ -1704,7 +1768,12 @@ export class NaisteraProvider extends Provider {
     async collectReferences({ prompt: _prompt, messageId, matchedAdditionalRefs = [], providerOptions = {} }) {
         const settings = getSettings();
         const normalizedModel = normalizeNaisteraModel(providerOptions.model || settings.naisteraModel);
-        if (!naisteraModelSupportsReferences(normalizedModel)) {
+        if (!this.modelCatalog.has(normalizedModel)) {
+            await this.fetchModels().catch((error) => {
+                iigLog('WARN', `Naistera model metadata unavailable: ${error?.message || error}`);
+            });
+        }
+        if (!this.supportsReferences({ ...settings, naisteraModel: normalizedModel })) {
             return [];
         }
         const refs = [];
@@ -1740,7 +1809,7 @@ export class NaisteraProvider extends Provider {
         const url = endpoint.endsWith('/api/generate') ? endpoint : `${endpoint}/api/generate`;
 
         const aspectRatio = options.aspectRatio || settings.naisteraAspectRatio || '1:1';
-        const model = normalizeNaisteraModel(options.model || settings.naisteraModel || 'grok');
+        const model = normalizeNaisteraModel(options.model || settings.naisteraModel);
         const preset = options.preset || null;
         const wantsVideoTest = Boolean(options.videoTestMode);
         const videoEveryN = normalizeNaisteraVideoFrequency(options.videoEveryN ?? settings.naisteraVideoEveryN);
@@ -2158,7 +2227,7 @@ export async function fetchModels() {
 
     // Raw endpoint mode: юзер дал полный URL генерации; дискавери моделей
     // не производится — юзер вводит имя модели вручную.
-    if (settings.rawEndpoint) {
+    if (settings.rawEndpoint && settings.apiType !== 'naistera') {
         iigLog('INFO', 'fetchModels skipped: raw endpoint mode (enter model name manually)');
         toastr.info(t`Raw endpoint mode: enter model name manually`, t`Image Generation`, { timeOut: 3000 });
         return [];

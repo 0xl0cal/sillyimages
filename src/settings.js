@@ -304,7 +304,7 @@ export const defaultSettings = Object.freeze({
     xaiQuality: 'medium',
     // Naistera specific
     naisteraAspectRatio: '1:1',
-    naisteraModel: 'grok', // 'grok' | 'grok-pro' | 'nano banana 2' | 'novelai'
+    naisteraModel: '',
     naisteraSendCharAvatar: false,
     naisteraSendUserAvatar: false,
     naisteraVideoTest: false,
@@ -556,8 +556,6 @@ export const VIDEO_MODEL_KEYWORDS = [
 
 // ----- Endpoint constants (UI + provider helpers) -----
 
-export const NAISTERA_MODELS = Object.freeze(['grok', 'grok-pro', 'nano banana 2', 'novelai']);
-
 export const DEFAULT_ENDPOINTS = Object.freeze({
     xai: 'https://api.x.ai',
     naistera: 'https://naistera.org',
@@ -620,33 +618,7 @@ export function saveSettings() {
 // ----- Naistera helpers (знают про настройки, но не про провайдеров) -----
 
 export function normalizeNaisteraModel(model) {
-    const raw = String(model || '').trim().toLowerCase();
-    if (!raw) return 'grok';
-    if (raw === 'grok pro') return 'grok-pro';
-    if (raw === 'grok-pro') return 'grok-pro';
-    if (raw === 'grok-imagine-pro') return 'grok-pro';
-    if (raw === 'imagine-pro') return 'grok-pro';
-    if (raw === 'nano-banana') return 'nano banana 2';
-    if (raw === 'nano banana') return 'nano banana 2';
-    // Normalize the retired model label to the supported Naistera model.
-    if (raw === 'nano-banana-pro') return 'nano banana 2';
-    if (raw === 'nano banana pro') return 'nano banana 2';
-    if (raw === 'nano-banana-2') return 'nano banana 2';
-    if (raw === 'nano banana 2') return 'nano banana 2';
-    if (raw === 'novel ai') return 'novelai';
-    if (raw === 'novelai') return 'novelai';
-    if (NAISTERA_MODELS.includes(raw)) return raw;
-    return 'grok';
-}
-
-export function naisteraModelSupportsReferences(model) {
-    const normalized = normalizeNaisteraModel(model);
-    return normalized !== 'novelai' && normalized !== 'grok-pro';
-}
-
-export function shouldUseNaisteraVideoTest(model) {
-    const normalized = normalizeNaisteraModel(model);
-    return normalized === 'grok' || normalized === 'grok-pro' || normalized.startsWith('nano banana');
+    return String(model || '').trim();
 }
 
 export function normalizeNaisteraVideoFrequency(value) {
@@ -702,7 +674,7 @@ export function normalizeConfiguredEndpoint(apiType, endpoint) {
         return '';
     }
     if (apiType === 'naistera') {
-        return trimmed.replace(/\/api\/generate$/i, '');
+        return trimmed.replace(/\/api\/(?:generate|models)$/i, '');
     }
     if (apiType === 'xai') {
         return trimmed.replace(/\/v1$/i, '');
