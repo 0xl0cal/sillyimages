@@ -42,6 +42,7 @@ import {
     makeReferenceObject,
     getReferenceImage,
     getReferenceDescription,
+    buildMissingCharacterDescriptionPromptBlock,
 } from './references.js';
 
 function appendAvatarReferenceGroups(target, groups) {
@@ -1814,6 +1815,13 @@ export class NaisteraProvider extends Provider {
         const wantsVideoTest = Boolean(options.videoTestMode);
         const videoEveryN = normalizeNaisteraVideoFrequency(options.videoEveryN ?? settings.naisteraVideoEveryN);
         let fullPrompt = buildFinalGenerationPrompt(prompt, style, options.matchedAdditionalRefs || [], settings);
+        const missingDescriptionBlock = options.missingCharacterDescriptionBlock
+            ?? await buildMissingCharacterDescriptionPromptBlock({
+                includeChar: true,
+                includeUser: true,
+                references,
+            }, settings);
+        fullPrompt = appendPromptBlock(fullPrompt, missingDescriptionBlock);
 
         if (references.length > 0) {
             const refInstruction = getEffectiveRefInstruction(settings);

@@ -331,6 +331,35 @@ export function getCharacterLibraryDescription(kind, key, settings = getSettings
     ].map(normalizeReferenceDescription).filter(Boolean).join(' ');
 }
 
+export async function buildMissingCharacterDescriptionPromptBlock({
+    includeChar = false,
+    includeUser = false,
+    references = [],
+} = {}, settings = getSettings()) {
+    if (settings.sendRefDescriptions === false) return '';
+
+    const sentSources = new Set((Array.isArray(references) ? references : [])
+        .map(getReferenceSource)
+        .filter(Boolean));
+    const lines = [];
+
+    if (includeChar && !sentSources.has('char')) {
+        const key = getCurrentCharacterReferenceKey();
+        const description = getCharacterLibraryDescription('char', key, settings);
+        if (description) lines.push(`- {{char}}: ${description}`);
+    }
+
+    if (includeUser && !sentSources.has('user')) {
+        const key = await getCurrentUserReferenceKey(settings);
+        const description = getCharacterLibraryDescription('user', key, settings);
+        if (description) lines.push(`- {{user}}: ${description}`);
+    }
+
+    return lines.length > 0
+        ? `Character descriptions:\n${lines.join('\n')}`
+        : '';
+}
+
 // ----- Загрузка модуля personas (для активного user persona avatar) -----
 
 export async function loadPersonasModule() {

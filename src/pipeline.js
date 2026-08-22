@@ -47,6 +47,7 @@ import {
     getReferenceDescription,
     getReferenceImage,
     recordCharacterGeneration,
+    buildMissingCharacterDescriptionPromptBlock,
 } from './references.js';
 import { t } from './i18n.js';
 
@@ -228,13 +229,16 @@ function buildAvatarReferenceSnapshotBlock(references = [], settings = getSettin
  * Воспроизводит apiType-зависимую логику сборки prompt'а (refInstruction
  * префикс только для провайдеров из REF_INSTRUCTION_PROVIDERS).
  */
-function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs, options, provider, settings }) {
+function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs, options, provider, settings, missingCharacterDescriptionBlock = '' }) {
     let snapshotPrompt = buildFinalGenerationPrompt(prompt, style, matchedAdditionalRefs || [], settings);
     if (settings.apiType === 'openai' || settings.apiType === 'xai' || settings.apiType === 'electronhub') {
         const avatarDescriptions = buildAvatarReferenceSnapshotBlock(references, settings);
         if (avatarDescriptions) {
             snapshotPrompt = `${snapshotPrompt}\n\n${avatarDescriptions}`.trim();
         }
+    }
+    if (missingCharacterDescriptionBlock) {
+        snapshotPrompt = `${snapshotPrompt}\n\n${missingCharacterDescriptionBlock}`.trim();
     }
     let refInstructionApplied = false;
 
@@ -484,6 +488,13 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
         matchedAdditionalRefs,
         providerOptions: options,
     });
+    const missingCharacterDescriptionBlock = settings.apiType === 'naistera'
+        ? await buildMissingCharacterDescriptionPromptBlock({
+            includeChar: true,
+            includeUser: true,
+            references,
+        }, settings)
+        : '';
 
     iigLog('INFO', `References collected for ${settings.apiType}: ${references.length} ref(s)`);
     for (let i = 0; i < references.length; i++) {
@@ -519,6 +530,7 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
         options,
         provider,
         settings,
+        missingCharacterDescriptionBlock,
     }));
 
     let lastError;
@@ -546,6 +558,7 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
                 options: {
                     ...options,
                     matchedAdditionalRefs,
+                    missingCharacterDescriptionBlock,
                     signal: externalSignal,
                 },
             });
