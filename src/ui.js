@@ -292,6 +292,11 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                 </div>
             </div>
 
+            <label id="iig_naistera_character_descriptions_row" class="checkbox_label ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}">
+                <input type="checkbox" id="iig_naistera_send_character_descriptions" ${settings.naisteraSendCharacterDescriptions !== false ? 'checked' : ''}>
+                <span>${t`Send character descriptions`}</span>
+            </label>
+
             <div class="flex-row ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}" id="iig_naistera_aspect_row">
                 <label for="iig_naistera_aspect_ratio">${t`Aspect ratio`}</label>
                 <select id="iig_naistera_aspect_ratio" class="flex1">
@@ -1106,6 +1111,7 @@ function applyProfileValuesToInputs(settings) {
         naisteraSelect.add(new Option(naisteraModel, naisteraModel));
     }
     setVal('iig_naistera_model', naisteraModel);
+    setChk('iig_naistera_send_character_descriptions', settings.naisteraSendCharacterDescriptions !== false);
     setVal('iig_naistera_aspect_ratio', settings.naisteraAspectRatio);
     setChk('iig_naistera_video_test', settings.naisteraVideoTest);
     setVal('iig_naistera_video_every_n', settings.naisteraVideoEveryN);
@@ -1456,6 +1462,11 @@ function bindApiSectionEvents(settings, updateVisibility) {
         settings.naisteraModel = normalizeNaisteraModel(e.target.value);
         saveSettings();
         updateVisibility();
+    });
+
+    document.getElementById('iig_naistera_send_character_descriptions')?.addEventListener('change', (e) => {
+        settings.naisteraSendCharacterDescriptions = e.target.checked;
+        saveSettings();
     });
 
     document.getElementById('iig_naistera_aspect_ratio')?.addEventListener('change', (e) => {
@@ -2486,6 +2497,7 @@ function buildUpdateVisibility(settings) {
 
         // Naistera-only params
         document.getElementById('iig_naistera_model_row')?.classList.toggle('iig-hidden', !isNaistera);
+        document.getElementById('iig_naistera_character_descriptions_row')?.classList.toggle('iig-hidden', !isNaistera);
         document.getElementById('iig_naistera_aspect_row')?.classList.toggle('iig-hidden', !isNaistera);
         document.getElementById('iig_naistera_video_section')?.classList.toggle('iig-hidden', !isNaistera);
         document.getElementById('iig_naistera_polling_row')?.classList.toggle('iig-hidden', !(isNaistera && settings.naisteraPolling));

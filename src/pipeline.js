@@ -496,6 +496,7 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
         providerOptions: options,
     });
     const missingCharacterDescriptionBlock = settings.apiType === 'naistera'
+        && settings.naisteraSendCharacterDescriptions !== false
         ? await buildMissingCharacterDescriptionPromptBlock({
             includeChar: true,
             includeUser: true,

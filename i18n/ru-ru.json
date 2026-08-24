@@ -63,6 +63,7 @@
     "Use endpoint URL as-is: do not append /v1/images/generations, /chat/completions, etc. Model list refresh is disabled — enter model name manually.": "Использовать URL как есть: не дописывать /v1/images/generations, /chat/completions и т.д. Обновление списка моделей отключено — имя модели вводите вручную.",
     "Raw endpoint mode: enter model name manually": "Режим сырого эндпоинта: имя модели вводите вручную",
     "Model": "Модель",
+    "Send character descriptions": "Отправлять описания персонажей",
     "-- Select or type a model --": "-- Выберите или введите модель --",
     "-- Select a model --": "-- Выберите модель --",
     "Enter model name": "Введите имя модели",

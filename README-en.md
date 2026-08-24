@@ -168,7 +168,7 @@ Line format: `full-name (primary-trigger) — description`. If only one lorebook
 - Can use polling: send `sync: false`, receive `job_id`, then read
   `GET /api/generate/jobs/{job_id}` with the same Bearer token.
 - Available models are loaded from `GET /api/models` using the configured token. Model names and reference support come from the API response.
-- Enabled descriptions for the current character and persona are added to the prompt. Images are sent only to models that support references.
+- **Send character descriptions** adds enabled descriptions for the current character and persona to the prompt. Images are sent only to models that support references.
 - For NovelAI models, the selected style is added as a plain prefix without the `[STYLE: ...]` wrapper.
 - Can return video (`media_kind: "video"`) — the "Enable video generation" option.
 

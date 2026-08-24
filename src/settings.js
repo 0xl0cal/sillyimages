@@ -305,6 +305,7 @@ export const defaultSettings = Object.freeze({
     // Naistera specific
     naisteraAspectRatio: '1:1',
     naisteraModel: '',
+    naisteraSendCharacterDescriptions: true,
     naisteraSendCharAvatar: false,
     naisteraSendUserAvatar: false,
     naisteraVideoTest: false,
@@ -387,6 +388,7 @@ export const CONNECTION_FIELDS = Object.freeze([
     'userAvatarFile',
     'naisteraAspectRatio',
     'naisteraModel',
+    'naisteraSendCharacterDescriptions',
     'naisteraSendCharAvatar',
     'naisteraSendUserAvatar',
     'naisteraVideoTest',

@@ -1802,6 +1802,14 @@ export class NaisteraProvider extends Provider {
             refs.push(...contextRefs.map((ref) => makeReferenceObject(ref, '', 'context')));
         }
 
+        if (settings.naisteraSendCharacterDescriptions === false) {
+            return refs.map((ref) => {
+                const source = referenceSource(ref);
+                return source === 'char' || source === 'user'
+                    ? makeReferenceObject(getReferenceImage(ref), '', source)
+                    : ref;
+            });
+        }
         return refs;
     }
 
@@ -1823,12 +1831,14 @@ export class NaisteraProvider extends Provider {
             settings,
             { wrapStyle },
         );
-        const missingDescriptionBlock = options.missingCharacterDescriptionBlock
-            ?? await buildMissingCharacterDescriptionPromptBlock({
-                includeChar: true,
-                includeUser: true,
-                references,
-            }, settings);
+        const missingDescriptionBlock = settings.naisteraSendCharacterDescriptions !== false
+            ? (options.missingCharacterDescriptionBlock
+                ?? await buildMissingCharacterDescriptionPromptBlock({
+                    includeChar: true,
+                    includeUser: true,
+                    references,
+                }, settings))
+            : '';
         fullPrompt = appendPromptBlock(fullPrompt, missingDescriptionBlock);
 
         if (references.length > 0) {
