@@ -413,6 +413,7 @@ export function initLightbox() {
     }, { passive: false });
 
     imgEl.addEventListener('pointerdown', (e) => {
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
         if (!pointers.has(e.pointerId) && pointers.size >= 2) return;
         e.preventDefault();
         rememberZoomPoint(e.clientX, e.clientY);
@@ -560,6 +561,11 @@ export function initLightbox() {
 
     imgEl.addEventListener('pointerup', onPointerUp);
     imgEl.addEventListener('pointercancel', onPointerUp);
+    imgEl.addEventListener('contextmenu', (e) => {
+        clearTapCloseTimer();
+        lastTapTime = 0;
+        e.stopPropagation();
+    });
 
     imgEl.addEventListener('load', () => {
         refreshGeometry();
