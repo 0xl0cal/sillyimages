@@ -606,10 +606,21 @@ function filterStyleList() {
     });
 }
 
+function renderSelectedStyleEditor(settings = getSettings()) {
+    document.querySelectorAll('#iig_style_presets .iig-style-item').forEach((item) => {
+        item.classList.toggle('selected', item.getAttribute('data-style-id') === selectedStyleId);
+    });
+    const editorContainer = document.getElementById('iig_style_editor');
+    if (editorContainer) {
+        editorContainer.innerHTML = buildStyleEditorHtml(settings);
+    }
+}
+
 export function renderStyleSettings() {
     const settings = getSettings();
     const listContainer = document.getElementById('iig_style_presets');
     const editorContainer = document.getElementById('iig_style_editor');
+    const previousScrollTop = listContainer?.querySelector('.iig-style-list')?.scrollTop || 0;
     if (listContainer) {
         listContainer.innerHTML = buildStyleListHtml(settings);
     }
@@ -617,6 +628,10 @@ export function renderStyleSettings() {
         editorContainer.innerHTML = buildStyleEditorHtml(settings);
     }
     filterStyleList();
+    const nextList = listContainer?.querySelector('.iig-style-list');
+    if (nextList) {
+        nextList.scrollTop = previousScrollTop;
+    }
 }
 
 function buildStylesSettingsSectionHtml() {
@@ -1844,8 +1859,11 @@ function bindStylesSectionEvents(settings) {
         }
         const selectButton = target.closest('[data-style-select]');
         if (selectButton) {
-            selectedStyleId = String(selectButton.getAttribute('data-style-select') || '');
-            renderStyleSettings();
+            const nextStyleId = String(selectButton.getAttribute('data-style-select') || '');
+            if (nextStyleId && nextStyleId !== selectedStyleId) {
+                selectedStyleId = nextStyleId;
+                renderSelectedStyleEditor(settings);
+            }
             return;
         }
         const duplicateButton = target.closest('[data-style-duplicate]');
