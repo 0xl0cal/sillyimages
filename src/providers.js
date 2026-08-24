@@ -20,6 +20,7 @@ import {
     MAX_ADDITIONAL_REFERENCES,
     normalizeNaisteraModel,
     isNaisteraNovelAIModel,
+    normalizeNaisteraCharacterDescriptionsMode,
     normalizeImageContextCount,
     normalizeNaisteraVideoFrequency,
     getEffectiveEndpoint,
@@ -43,7 +44,7 @@ import {
     makeReferenceObject,
     getReferenceImage,
     getReferenceDescription,
-    buildMissingCharacterDescriptionPromptBlock,
+    buildCharacterDescriptionPromptBlock,
 } from './references.js';
 
 function appendAvatarReferenceGroups(target, groups) {
@@ -1802,7 +1803,8 @@ export class NaisteraProvider extends Provider {
             refs.push(...contextRefs.map((ref) => makeReferenceObject(ref, '', 'context')));
         }
 
-        if (settings.naisteraSendCharacterDescriptions === false) {
+        const descriptionMode = normalizeNaisteraCharacterDescriptionsMode(settings.naisteraCharacterDescriptionsMode);
+        if (descriptionMode !== 'as-is') {
             return refs.map((ref) => {
                 const source = referenceSource(ref);
                 return source === 'char' || source === 'user'
@@ -1831,15 +1833,15 @@ export class NaisteraProvider extends Provider {
             settings,
             { wrapStyle },
         );
-        const missingDescriptionBlock = settings.naisteraSendCharacterDescriptions !== false
-            ? (options.missingCharacterDescriptionBlock
-                ?? await buildMissingCharacterDescriptionPromptBlock({
-                    includeChar: true,
-                    includeUser: true,
-                    references,
-                }, settings))
-            : '';
-        fullPrompt = appendPromptBlock(fullPrompt, missingDescriptionBlock);
+        const descriptionMode = normalizeNaisteraCharacterDescriptionsMode(settings.naisteraCharacterDescriptionsMode);
+        const characterDescriptionPromptBlock = options.characterDescriptionPromptBlock
+            ?? await buildCharacterDescriptionPromptBlock({
+                includeChar: true,
+                includeUser: true,
+                references,
+                mode: descriptionMode,
+            }, settings);
+        fullPrompt = appendPromptBlock(fullPrompt, characterDescriptionPromptBlock);
 
         if (references.length > 0) {
             const refInstruction = getEffectiveRefInstruction(settings);

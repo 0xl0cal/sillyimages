@@ -292,10 +292,15 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                 </div>
             </div>
 
-            <label id="iig_naistera_character_descriptions_row" class="checkbox_label ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}">
-                <input type="checkbox" id="iig_naistera_send_character_descriptions" ${settings.naisteraSendCharacterDescriptions !== false ? 'checked' : ''}>
-                <span>${t`Send character descriptions`}</span>
-            </label>
+            <div id="iig_naistera_character_descriptions_row" class="flex-row ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}">
+                <label for="iig_naistera_character_descriptions_mode">${t`Send character descriptions`}</label>
+                <select id="iig_naistera_character_descriptions_mode" class="flex1">
+                    <option value="none" ${settings.naisteraCharacterDescriptionsMode === 'none' ? 'selected' : ''}>${t`Do not send`}</option>
+                    <option value="as-is" ${settings.naisteraCharacterDescriptionsMode === 'as-is' ? 'selected' : ''}>${t`Send as-is`}</option>
+                    <option value="character-prompt" ${settings.naisteraCharacterDescriptionsMode === 'character-prompt' ? 'selected' : ''}>${t`Send as character prompt`}</option>
+                </select>
+                <div></div>
+            </div>
 
             <div class="flex-row ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}" id="iig_naistera_aspect_row">
                 <label for="iig_naistera_aspect_ratio">${t`Aspect ratio`}</label>
@@ -1111,7 +1116,7 @@ function applyProfileValuesToInputs(settings) {
         naisteraSelect.add(new Option(naisteraModel, naisteraModel));
     }
     setVal('iig_naistera_model', naisteraModel);
-    setChk('iig_naistera_send_character_descriptions', settings.naisteraSendCharacterDescriptions !== false);
+    setVal('iig_naistera_character_descriptions_mode', settings.naisteraCharacterDescriptionsMode);
     setVal('iig_naistera_aspect_ratio', settings.naisteraAspectRatio);
     setChk('iig_naistera_video_test', settings.naisteraVideoTest);
     setVal('iig_naistera_video_every_n', settings.naisteraVideoEveryN);
@@ -1464,8 +1469,8 @@ function bindApiSectionEvents(settings, updateVisibility) {
         updateVisibility();
     });
 
-    document.getElementById('iig_naistera_send_character_descriptions')?.addEventListener('change', (e) => {
-        settings.naisteraSendCharacterDescriptions = e.target.checked;
+    document.getElementById('iig_naistera_character_descriptions_mode')?.addEventListener('change', (e) => {
+        settings.naisteraCharacterDescriptionsMode = e.target.value;
         saveSettings();
     });
 

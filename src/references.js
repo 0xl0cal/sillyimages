@@ -331,30 +331,41 @@ export function getCharacterLibraryDescription(kind, key, settings = getSettings
     ].map(normalizeReferenceDescription).filter(Boolean).join(' ');
 }
 
-export async function buildMissingCharacterDescriptionPromptBlock({
+export async function buildCharacterDescriptionPromptBlock({
     includeChar = false,
     includeUser = false,
     references = [],
+    mode = 'as-is',
 } = {}, settings = getSettings()) {
-    if (settings.sendRefDescriptions === false) return '';
+    if (settings.sendRefDescriptions === false || mode === 'none') return '';
 
     const sentSources = new Set((Array.isArray(references) ? references : [])
         .map(getReferenceSource)
         .filter(Boolean));
-    const lines = [];
+    const includeSentSources = mode === 'character-prompt';
+    let charDescription = '';
+    let userDescription = '';
 
-    if (includeChar && !sentSources.has('char')) {
+    if (includeChar && (includeSentSources || !sentSources.has('char'))) {
         const key = getCurrentCharacterReferenceKey();
-        const description = getCharacterLibraryDescription('char', key, settings);
-        if (description) lines.push(`- {{char}}: ${description}`);
+        charDescription = getCharacterLibraryDescription('char', key, settings);
     }
 
-    if (includeUser && !sentSources.has('user')) {
+    if (includeUser && (includeSentSources || !sentSources.has('user'))) {
         const key = await getCurrentUserReferenceKey(settings);
-        const description = getCharacterLibraryDescription('user', key, settings);
-        if (description) lines.push(`- {{user}}: ${description}`);
+        userDescription = getCharacterLibraryDescription('user', key, settings);
     }
 
+    if (mode === 'character-prompt') {
+        const lines = [userDescription, charDescription]
+            .filter(Boolean)
+            .map((description) => `\\| ${description}`);
+        return lines.join('\n');
+    }
+
+    const lines = [];
+    if (charDescription) lines.push(`- {{char}}: ${charDescription}`);
+    if (userDescription) lines.push(`- {{user}}: ${userDescription}`);
     return lines.length > 0
         ? `Character descriptions:\n${lines.join('\n')}`
         : '';

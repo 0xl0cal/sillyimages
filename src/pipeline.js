@@ -16,6 +16,7 @@ import {
     setLastRequestSnapshot,
     normalizeNaisteraModel,
     isNaisteraNovelAIModel,
+    normalizeNaisteraCharacterDescriptionsMode,
 } from './settings.js';
 import {
     saveImageToFile,
@@ -48,7 +49,7 @@ import {
     getReferenceDescription,
     getReferenceImage,
     recordCharacterGeneration,
-    buildMissingCharacterDescriptionPromptBlock,
+    buildCharacterDescriptionPromptBlock,
 } from './references.js';
 import { t } from './i18n.js';
 
@@ -230,7 +231,7 @@ function buildAvatarReferenceSnapshotBlock(references = [], settings = getSettin
  * Воспроизводит apiType-зависимую логику сборки prompt'а (refInstruction
  * префикс только для провайдеров из REF_INSTRUCTION_PROVIDERS).
  */
-function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs, options, provider, settings, missingCharacterDescriptionBlock = '', wrapStyle = true }) {
+function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs, options, provider, settings, characterDescriptionPromptBlock = '', wrapStyle = true }) {
     let snapshotPrompt = buildFinalGenerationPrompt(
         prompt,
         style,
@@ -244,8 +245,8 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
             snapshotPrompt = `${snapshotPrompt}\n\n${avatarDescriptions}`.trim();
         }
     }
-    if (missingCharacterDescriptionBlock) {
-        snapshotPrompt = `${snapshotPrompt}\n\n${missingCharacterDescriptionBlock}`.trim();
+    if (characterDescriptionPromptBlock) {
+        snapshotPrompt = `${snapshotPrompt}\n\n${characterDescriptionPromptBlock}`.trim();
     }
     let refInstructionApplied = false;
 
@@ -495,12 +496,13 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
         matchedAdditionalRefs,
         providerOptions: options,
     });
-    const missingCharacterDescriptionBlock = settings.apiType === 'naistera'
-        && settings.naisteraSendCharacterDescriptions !== false
-        ? await buildMissingCharacterDescriptionPromptBlock({
+    const naisteraDescriptionMode = normalizeNaisteraCharacterDescriptionsMode(settings.naisteraCharacterDescriptionsMode);
+    const characterDescriptionPromptBlock = settings.apiType === 'naistera'
+        ? await buildCharacterDescriptionPromptBlock({
             includeChar: true,
             includeUser: true,
             references,
+            mode: naisteraDescriptionMode,
         }, settings)
         : '';
     const wrapStyle = !(settings.apiType === 'naistera' && isNaisteraNovelAIModel(settings.naisteraModel));
@@ -539,7 +541,7 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
         options,
         provider,
         settings,
-        missingCharacterDescriptionBlock,
+        characterDescriptionPromptBlock,
         wrapStyle,
     }));
 
@@ -568,7 +570,7 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
                 options: {
                     ...options,
                     matchedAdditionalRefs,
-                    missingCharacterDescriptionBlock,
+                    characterDescriptionPromptBlock,
                     wrapStyle,
                     signal: externalSignal,
                 },

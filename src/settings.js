@@ -23,6 +23,7 @@ export const DEFAULT_REF_INSTRUCTION = '[CRITICAL: The reference image(s) above 
 const NON_SCHEMA_SETTING_KEYS = Object.freeze([
     'additionalReferences',
     'stylePresets',
+    'naisteraSendCharacterDescriptions',
 ]);
 
 function migratedAppearanceItemId(type, bucket, key, index) {
@@ -305,7 +306,7 @@ export const defaultSettings = Object.freeze({
     // Naistera specific
     naisteraAspectRatio: '1:1',
     naisteraModel: '',
-    naisteraSendCharacterDescriptions: true,
+    naisteraCharacterDescriptionsMode: 'as-is',
     naisteraSendCharAvatar: false,
     naisteraSendUserAvatar: false,
     naisteraVideoTest: false,
@@ -388,7 +389,7 @@ export const CONNECTION_FIELDS = Object.freeze([
     'userAvatarFile',
     'naisteraAspectRatio',
     'naisteraModel',
-    'naisteraSendCharacterDescriptions',
+    'naisteraCharacterDescriptionsMode',
     'naisteraSendCharAvatar',
     'naisteraSendUserAvatar',
     'naisteraVideoTest',
@@ -625,6 +626,10 @@ export function normalizeNaisteraModel(model) {
 
 export function isNaisteraNovelAIModel(model) {
     return /^novelai(?:-|$)/i.test(normalizeNaisteraModel(model));
+}
+
+export function normalizeNaisteraCharacterDescriptionsMode(value) {
+    return ['none', 'as-is', 'character-prompt'].includes(value) ? value : 'as-is';
 }
 
 export function normalizeNaisteraVideoFrequency(value) {
