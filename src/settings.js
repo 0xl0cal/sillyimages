@@ -621,6 +621,10 @@ export function normalizeNaisteraModel(model) {
     return String(model || '').trim();
 }
 
+export function isNaisteraNovelAIModel(model) {
+    return /^novelai(?:-|$)/i.test(normalizeNaisteraModel(model));
+}
+
 export function normalizeNaisteraVideoFrequency(value) {
     const numeric = Number.parseInt(String(value ?? '').trim(), 10);
     if (!Number.isFinite(numeric) || numeric < 1) return 1;

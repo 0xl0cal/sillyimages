@@ -19,6 +19,7 @@ import {
     MAX_GENERATION_REFERENCE_IMAGES,
     MAX_ADDITIONAL_REFERENCES,
     normalizeNaisteraModel,
+    isNaisteraNovelAIModel,
     normalizeImageContextCount,
     normalizeNaisteraVideoFrequency,
     getEffectiveEndpoint,
@@ -1814,7 +1815,14 @@ export class NaisteraProvider extends Provider {
         const preset = options.preset || null;
         const wantsVideoTest = Boolean(options.videoTestMode);
         const videoEveryN = normalizeNaisteraVideoFrequency(options.videoEveryN ?? settings.naisteraVideoEveryN);
-        let fullPrompt = buildFinalGenerationPrompt(prompt, style, options.matchedAdditionalRefs || [], settings);
+        const wrapStyle = options.wrapStyle ?? !isNaisteraNovelAIModel(model);
+        let fullPrompt = buildFinalGenerationPrompt(
+            prompt,
+            style,
+            options.matchedAdditionalRefs || [],
+            settings,
+            { wrapStyle },
+        );
         const missingDescriptionBlock = options.missingCharacterDescriptionBlock
             ?? await buildMissingCharacterDescriptionPromptBlock({
                 includeChar: true,

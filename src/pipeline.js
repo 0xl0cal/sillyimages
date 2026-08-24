@@ -15,6 +15,7 @@ import {
     getEffectiveRefInstruction,
     setLastRequestSnapshot,
     normalizeNaisteraModel,
+    isNaisteraNovelAIModel,
 } from './settings.js';
 import {
     saveImageToFile,
@@ -229,8 +230,14 @@ function buildAvatarReferenceSnapshotBlock(references = [], settings = getSettin
  * Воспроизводит apiType-зависимую логику сборки prompt'а (refInstruction
  * префикс только для провайдеров из REF_INSTRUCTION_PROVIDERS).
  */
-function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs, options, provider, settings, missingCharacterDescriptionBlock = '' }) {
-    let snapshotPrompt = buildFinalGenerationPrompt(prompt, style, matchedAdditionalRefs || [], settings);
+function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs, options, provider, settings, missingCharacterDescriptionBlock = '', wrapStyle = true }) {
+    let snapshotPrompt = buildFinalGenerationPrompt(
+        prompt,
+        style,
+        matchedAdditionalRefs || [],
+        settings,
+        { wrapStyle },
+    );
     if (settings.apiType === 'openai' || settings.apiType === 'xai' || settings.apiType === 'electronhub') {
         const avatarDescriptions = buildAvatarReferenceSnapshotBlock(references, settings);
         if (avatarDescriptions) {
@@ -495,6 +502,7 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
             references,
         }, settings)
         : '';
+    const wrapStyle = !(settings.apiType === 'naistera' && isNaisteraNovelAIModel(settings.naisteraModel));
 
     iigLog('INFO', `References collected for ${settings.apiType}: ${references.length} ref(s)`);
     for (let i = 0; i < references.length; i++) {
@@ -531,6 +539,7 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
         provider,
         settings,
         missingCharacterDescriptionBlock,
+        wrapStyle,
     }));
 
     let lastError;
@@ -559,6 +568,7 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
                     ...options,
                     matchedAdditionalRefs,
                     missingCharacterDescriptionBlock,
+                    wrapStyle,
                     signal: externalSignal,
                 },
             });

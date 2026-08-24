@@ -243,6 +243,15 @@ export function injectStyleBlock(prompt, styleValue) {
     return `${styleBlock}\n\n${normalizedPrompt}`.trim();
 }
 
+export function injectPlainStyle(prompt, styleValue) {
+    const normalizedStyle = String(styleValue || '').trim();
+    STYLE_BLOCK_RE.lastIndex = 0;
+    const normalizedPrompt = String(prompt || '').replace(STYLE_BLOCK_RE, '').trim();
+    if (!normalizedStyle) return normalizedPrompt;
+    if (!normalizedPrompt) return normalizedStyle;
+    return `${normalizedStyle}\n\n${normalizedPrompt}`;
+}
+
 export function resolveEffectiveStyle(tagStyle = '', settings = getSettings()) {
     const activeStyle = getActiveStyle(settings);
     const extensionStyleValue = String(activeStyle?.value || '').trim();
@@ -267,9 +276,17 @@ export function buildAdditionalReferencesPromptBlock(matchedRefs = []) {
     return `Reference descriptions (use these to keep characters and items visually consistent):\n${items.map((item) => `- ${item}`).join('\n')}`;
 }
 
-export function buildFinalGenerationPrompt(prompt, style, matchedAdditionalRefs = [], settings = getSettings()) {
+export function buildFinalGenerationPrompt(
+    prompt,
+    style,
+    matchedAdditionalRefs = [],
+    settings = getSettings(),
+    { wrapStyle = true } = {},
+) {
     const effectiveStyle = resolveEffectiveStyle(style, settings);
-    let fullPrompt = injectStyleBlock(prompt, effectiveStyle);
+    let fullPrompt = wrapStyle
+        ? injectStyleBlock(prompt, effectiveStyle)
+        : injectPlainStyle(prompt, effectiveStyle);
 
     if (settings.sendRefDescriptions !== false) {
         const additionalReferencesBlock = buildAdditionalReferencesPromptBlock(matchedAdditionalRefs);
