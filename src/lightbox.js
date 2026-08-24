@@ -225,6 +225,12 @@ export function initLightbox() {
         lastZoomPointY = y;
     };
 
+    const getImageSource = (img) => String(
+        img?.getAttribute('data-iig-full-src')
+        || img?.getAttribute('src')
+        || '',
+    ).trim();
+
     const zoomAtPreferredPoint = (newScale) => {
         refreshGeometry();
         const pointX = lastZoomPointX ?? geometry.centerX + tx;
@@ -246,7 +252,7 @@ export function initLightbox() {
         const gallery = img.closest('[data-iig-lightbox-gallery]');
         if (gallery) {
             return Array.from(gallery.querySelectorAll(GALLERY_IMG_SELECTOR))
-                .filter((item) => item.getAttribute('src'));
+                .filter(getImageSource);
         }
         return collectImagesFromChat();
     };
@@ -266,7 +272,7 @@ export function initLightbox() {
         deleteBtn.hidden = !src.getAttribute('data-iig-generation-id');
         geometry.baseWidth = 0;
         geometry.baseHeight = 0;
-        imgEl.src = src.src;
+        imgEl.src = getImageSource(src);
         imgEl.alt = caption;
         captionEl.textContent = caption;
         pointers.clear();
@@ -325,7 +331,7 @@ export function initLightbox() {
         if (!confirmed) return;
         deleteBtn.disabled = true;
         try {
-            const rawPath = String(source.getAttribute('src') || '').trim();
+            const rawPath = getImageSource(source);
             const resolved = new URL(rawPath, window.location.origin);
             const isLocalGeneration = resolved.origin === window.location.origin
                 && resolved.pathname.startsWith('/user/images/');
@@ -351,7 +357,7 @@ export function initLightbox() {
             const gallery = source.closest('[data-iig-lightbox-gallery]');
             source.closest('.iig-library-generation-item')?.remove();
             imageList = gallery
-                ? Array.from(gallery.querySelectorAll(GALLERY_IMG_SELECTOR)).filter((item) => item.getAttribute('src'))
+                ? Array.from(gallery.querySelectorAll(GALLERY_IMG_SELECTOR)).filter(getImageSource)
                 : [];
             const count = gallery?.closest('.iig-library-editor-section')?.querySelector('.iig-library-section-count');
             if (count) count.textContent = String(imageList.length);
@@ -624,7 +630,7 @@ export function initLightbox() {
         if (!img) return;
         if (!img.closest('#chat') && !img.closest('[data-iig-lightbox-gallery]')) return;
         if (img.classList.contains('iig-error-image')) return;
-        const rawSrc = img.getAttribute('src') || '';
+        const rawSrc = getImageSource(img);
         if (!rawSrc || rawSrc.endsWith('[IMG:GEN]')) return;
         e.preventDefault();
         e.stopPropagation();

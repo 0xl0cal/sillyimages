@@ -37,9 +37,11 @@ let refreshTimer = null;
 let searchRenderTimer = null;
 let lastContextSignature = '';
 let libraryRendered = false;
+let libraryImageObserver = null;
 const pendingContextSync = { character: false, user: false };
 
 const MAX_RENDERED_ENTITIES = 80;
+const LIBRARY_IMAGE_ROOT_MARGIN = '320px 0px';
 
 function emptyLibraryEntry() {
     return {
@@ -152,12 +154,38 @@ async function getEntities(kind = selectedKind, settings = getSettings()) {
     return kind === 'user' ? await getUserEntities(settings) : getCharacterEntities(settings);
 }
 
+function loadLibraryImage(image) {
+    const src = String(image?.getAttribute('data-iig-library-src') || '').trim();
+    if (!src) return;
+    image.src = src;
+    image.removeAttribute('data-iig-library-src');
+}
+
+function observeLibraryImages() {
+    const images = Array.from(document.querySelectorAll('.iig-character-library img[data-iig-library-src]'));
+    if (typeof IntersectionObserver !== 'function') {
+        images.forEach(loadLibraryImage);
+        return;
+    }
+    if (!libraryImageObserver) {
+        libraryImageObserver = new IntersectionObserver((entries) => {
+            entries.forEach((entry) => {
+                if (!entry.isIntersecting) return;
+                loadLibraryImage(entry.target);
+                libraryImageObserver?.unobserve(entry.target);
+            });
+        }, { rootMargin: LIBRARY_IMAGE_ROOT_MARGIN });
+    }
+    libraryImageObserver.disconnect();
+    images.forEach((image) => libraryImageObserver.observe(image));
+}
+
 function buildAvatarHtml(src, fallbackIcon = 'fa-user') {
     const safeSrc = normalizeStoredImagePath(src);
     if (!safeSrc) {
         return `<span class="iig-library-avatar-placeholder"><i class="fa-solid ${fallbackIcon}"></i></span>`;
     }
-    return `<img src="${sanitizeForHtml(safeSrc)}" alt="" loading="lazy" decoding="async">`;
+    return `<img data-iig-library-src="${sanitizeForHtml(safeSrc)}" alt="" loading="lazy" decoding="async" fetchpriority="low">`;
 }
 
 function buildEntityOptionHtml(entity, selectedKey) {
@@ -215,8 +243,9 @@ function buildGenerationsHtml(entry, key) {
             ${generations.map((generation) => {
                 const prompt = String(generation.prompt || '').trim();
                 const caption = prompt || t`Generated image`;
+                const imagePath = normalizeStoredImagePath(generation.imagePath);
                 return `<button type="button" class="iig-library-generation-item" title="${sanitizeForHtml(caption)}">
-                    <img src="${sanitizeForHtml(normalizeStoredImagePath(generation.imagePath))}" alt="${sanitizeForHtml(caption)}" data-iig-lightbox data-iig-lightbox-caption="${sanitizeForHtml(caption)}" data-iig-generation-key="${sanitizeForHtml(key)}" data-iig-generation-id="${sanitizeForHtml(generation.id)}" loading="lazy" decoding="async">
+                    <img data-iig-library-src="${sanitizeForHtml(imagePath)}" data-iig-full-src="${sanitizeForHtml(imagePath)}" alt="" data-iig-lightbox data-iig-lightbox-caption="${sanitizeForHtml(caption)}" data-iig-generation-key="${sanitizeForHtml(key)}" data-iig-generation-id="${sanitizeForHtml(generation.id)}" loading="lazy" decoding="async" fetchpriority="low">
                 </button>`;
             }).join('')}
         </div>`;
@@ -326,6 +355,7 @@ async function renderEntityList(settings = getSettings()) {
     host.innerHTML = visibleEntities.length
         ? visibleEntities.map((entity) => buildEntityOptionHtml(entity, selectedKeys[selectedKind])).join('') + limitNote
         : `<div class="iig-library-empty">${selectedKind === 'char' ? t`No characters found.` : t`No personas found.`}</div>`;
+    observeLibraryImages();
     return entities;
 }
 
@@ -345,6 +375,7 @@ async function renderEditor(settings = getSettings(), entities = null) {
         ? getCharacterLibraryEntry(selectedKind, entity.key, settings, { create: false }) || emptyLibraryEntry()
         : emptyLibraryEntry();
     host.innerHTML = buildEditorHtml(entity, entry);
+    observeLibraryImages();
 }
 
 export async function renderCharacterLibrary(settings = getSettings()) {
