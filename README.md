@@ -164,10 +164,10 @@ tavern (tavern) — cozy wooden inn
 ### Naistera
 
 - Endpoint: `https://naistera.org` (дефолт). Токен — из Telegram-бота.
-- `POST /api/generate`, тело: `{ prompt, model, aspect_ratio, preset?, reference_images? }`.
+- `POST /api/generate`, тело: `{ prompt, negative_prompt?, model, aspect_ratio, preset?, reference_images? }`.
 - Может работать через polling: отправляет `sync: false`, получает `job_id`,
   затем читает `GET /api/generate/jobs/{job_id}` с тем же Bearer-токеном.
-- Список доступных моделей загружается из `GET /api/models` с учётом токена. Названия моделей и поддержка референсов определяются ответом API.
+- Список доступных моделей загружается из `GET /api/models` с учётом токена. Названия моделей, поддержка референсов и негативного промпта определяются ответом API.
 - **Send character descriptions** поддерживает три режима: не отправлять описания, добавить обычный блок описаний или дописать persona и character в конец prompt строками `\| описание`. Изображения отправляются только моделям с поддержкой референсов.
 - Для моделей NovelAI значение выбранного стиля добавляется как обычный префикс без обёртки `[STYLE: ...]`.
 - Умеет возвращать видео (`media_kind: "video"`) — опция «Включить генерацию видео».

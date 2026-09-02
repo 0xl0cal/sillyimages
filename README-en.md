@@ -164,10 +164,10 @@ Line format: `full-name (primary-trigger) — description`. If only one lorebook
 ### Naistera
 
 - Endpoint: `https://naistera.org` (default). Token comes from the Telegram bot.
-- `POST /api/generate`, body: `{ prompt, model, aspect_ratio, preset?, reference_images? }`.
+- `POST /api/generate`, body: `{ prompt, negative_prompt?, model, aspect_ratio, preset?, reference_images? }`.
 - Can use polling: send `sync: false`, receive `job_id`, then read
   `GET /api/generate/jobs/{job_id}` with the same Bearer token.
-- Available models are loaded from `GET /api/models` using the configured token. Model names and reference support come from the API response.
+- Available models are loaded from `GET /api/models` using the configured token. Model names, reference support, and negative prompt support come from the API response.
 - **Send character descriptions** can omit descriptions, add the regular description block, or append persona and character to the end of the prompt as `\| description` lines. Images are sent only to models that support references.
 - For NovelAI models, the selected style is added as a plain prefix without the `[STYLE: ...]` wrapper.
 - Can return video (`media_kind: "video"`) — the "Enable video generation" option.

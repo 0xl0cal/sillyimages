@@ -275,10 +275,14 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
         lorebookName: String(ref?._lorebookName || ''),
         reason: ref?._matchReason || null,
     }));
+    const negativePrompt = settings.apiType === 'naistera' && provider?.supportsNegativePrompt(settings)
+        ? String(options?.negativePrompt ?? settings.naisteraNegativePrompt ?? '').trim()
+        : '';
 
     return {
         timestamp: Date.now(),
         prompt: snapshotPrompt,
+        negativePrompt,
         references: references.map((ref, index) => ({
             dataUrl: refToPreviewDataUrl(ref),
             label: `ref ${index + 1}`,

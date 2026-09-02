@@ -51,7 +51,7 @@
     "VAEs/upscalers updated": "VAE и апскейлеры обновлены",
     "Failed to fetch VAEs/upscalers": "Не удалось загрузить VAE/апскейлеры",
     "Seed (-1 = random)": "Seed (-1 = случайный)",
-    "Negative prompt": "Negative prompt",
+    "Negative prompt": "Негативный промпт",
     "(empty)": "(пусто)",
     "Samplers/schedulers updated": "Сэмплеры/шедулеры обновлены",
     "Failed to fetch samplers": "Не удалось получить список сэмплеров",

@@ -306,6 +306,7 @@ export const defaultSettings = Object.freeze({
     // Naistera specific
     naisteraAspectRatio: '1:1',
     naisteraModel: '',
+    naisteraNegativePrompt: '',
     naisteraCharacterDescriptionsMode: 'as-is',
     naisteraSendCharAvatar: false,
     naisteraSendUserAvatar: false,
@@ -389,6 +390,7 @@ export const CONNECTION_FIELDS = Object.freeze([
     'userAvatarFile',
     'naisteraAspectRatio',
     'naisteraModel',
+    'naisteraNegativePrompt',
     'naisteraCharacterDescriptionsMode',
     'naisteraSendCharAvatar',
     'naisteraSendUserAvatar',
@@ -800,6 +802,7 @@ export function removeStyle(styleId) {
  * @type {null | {
  *   timestamp: number,
  *   prompt: string,
+ *   negativePrompt?: string,
  *   references: Array<{ dataUrl: string, label: string }>,
  *   metadata: {
  *     provider: string,

@@ -387,6 +387,10 @@ export class Provider {
         return true;
     }
 
+    supportsNegativePrompt(_settings) {
+        return false;
+    }
+
     /**
      * Собирает referenceImages в формате, который ожидает `generate`.
      * На этапе 1 возвращаемое значение отдаётся `generate` как-есть,
@@ -1642,6 +1646,11 @@ export class NaisteraProvider extends Provider {
         return model ? model.references !== false : true;
     }
 
+    supportsNegativePrompt(settings) {
+        const model = this.modelCatalog.get(normalizeNaisteraModel(settings.naisteraModel));
+        return model?.negativePrompt === true;
+    }
+
     getModelLabel(modelId) {
         return this.modelCatalog.get(String(modelId || ''))?.name || super.getModelLabel(modelId);
     }
@@ -1685,6 +1694,7 @@ export class NaisteraProvider extends Provider {
                 id: String(model.id),
                 name: String(model.name || model.id),
                 references: model.references !== false,
+                negativePrompt: model.negative_prompt === true,
             }));
 
         this.modelCatalog = new Map(models.map((model) => [model.id, model]));
@@ -1855,6 +1865,10 @@ export class NaisteraProvider extends Provider {
             aspect_ratio: aspectRatio,
             model,
         };
+        const negativePrompt = String(options.negativePrompt ?? settings.naisteraNegativePrompt ?? '').trim();
+        if (negativePrompt && this.supportsNegativePrompt({ ...settings, naisteraModel: model })) {
+            body.negative_prompt = negativePrompt;
+        }
         if (preset) body.preset = preset;
         if (references.length > 0) {
             body.reference_objects = references

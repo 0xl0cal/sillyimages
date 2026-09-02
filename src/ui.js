@@ -314,6 +314,12 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                 <div></div>
             </div>
 
+            <div class="flex-row iig-hidden" id="iig_naistera_negative_prompt_row">
+                <label for="iig_naistera_negative_prompt">${t`Negative prompt`}</label>
+                <textarea id="iig_naistera_negative_prompt" class="text_pole textarea_compact flex1" rows="2" placeholder="${t`(empty)`}">${sanitizeForHtml(settings.naisteraNegativePrompt || '')}</textarea>
+                <div></div>
+            </div>
+
             <div id="iig_avatar_section" class="iig-settings-card-nested ${settings.apiType !== 'gemini' && settings.apiType !== 'openrouter' ? 'iig-hidden' : ''}">
                 <div class="flex-row">
                     <label for="iig_aspect_ratio">${t`Aspect ratio`}</label>
@@ -1037,6 +1043,7 @@ function buildLastRequestPopupHtml(snapshot) {
             ${buildMatchedRefsSectionHtml(snapshot.matchedRefs || [])}
             <h4>${t`Final prompt sent to provider`}</h4>
             <pre class="iig-last-req-prompt">${sanitizeForHtml(snapshot.prompt || '')}</pre>
+            ${snapshot.negativePrompt ? `<h4>${t`Negative prompt`}</h4><pre class="iig-last-req-prompt">${sanitizeForHtml(snapshot.negativePrompt)}</pre>` : ''}
             <h4>${t`References`} (${Array.isArray(snapshot.references) ? snapshot.references.length : 0})</h4>
             <div class="iig-last-req-refs">${refsHtml}</div>
         </div>
@@ -1116,6 +1123,7 @@ function applyProfileValuesToInputs(settings) {
         naisteraSelect.add(new Option(naisteraModel, naisteraModel));
     }
     setVal('iig_naistera_model', naisteraModel);
+    setVal('iig_naistera_negative_prompt', settings.naisteraNegativePrompt);
     setVal('iig_naistera_character_descriptions_mode', settings.naisteraCharacterDescriptionsMode);
     setVal('iig_naistera_aspect_ratio', settings.naisteraAspectRatio);
     setChk('iig_naistera_video_test', settings.naisteraVideoTest);
@@ -1467,6 +1475,11 @@ function bindApiSectionEvents(settings, updateVisibility) {
         settings.naisteraModel = normalizeNaisteraModel(e.target.value);
         saveSettings();
         updateVisibility();
+    });
+
+    document.getElementById('iig_naistera_negative_prompt')?.addEventListener('input', (e) => {
+        settings.naisteraNegativePrompt = e.target.value;
+        saveSettings();
     });
 
     document.getElementById('iig_naistera_character_descriptions_mode')?.addEventListener('change', (e) => {
@@ -2479,6 +2492,7 @@ function buildUpdateVisibility(settings) {
         const provider = resolveActiveProvider(settings);
         const refsSupported = provider ? provider.supportsReferences(settings) : false;
         const naisteraRefsSupported = isNaistera && refsSupported;
+        const naisteraNegativePromptSupported = isNaistera && provider?.supportsNegativePrompt(settings) === true;
 
         // Shared avatar controls are visible for providers that accept references.
         const commonAvatarRefsVisible = (isGemini || isOpenAI || isXAI || isOpenRouter || isElectronHub) && refsSupported;
@@ -2502,6 +2516,7 @@ function buildUpdateVisibility(settings) {
 
         // Naistera-only params
         document.getElementById('iig_naistera_model_row')?.classList.toggle('iig-hidden', !isNaistera);
+        document.getElementById('iig_naistera_negative_prompt_row')?.classList.toggle('iig-hidden', !naisteraNegativePromptSupported);
         document.getElementById('iig_naistera_character_descriptions_row')?.classList.toggle('iig-hidden', !isNaistera);
         document.getElementById('iig_naistera_aspect_row')?.classList.toggle('iig-hidden', !isNaistera);
         document.getElementById('iig_naistera_video_section')?.classList.toggle('iig-hidden', !isNaistera);
