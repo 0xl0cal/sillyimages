@@ -245,7 +245,7 @@ export async function saveImageToFile(dataUrl, debugMeta = {}) {
 
     const result = await response.json();
     console.log('[IIG] Image saved to:', result.path);
-    return result.path;
+    return encodeLocalMediaPath(result.path);
 }
 
 export async function saveNaisteraMediaToFile(dataUrl, mediaKind = 'video', debugMeta = {}) {
@@ -284,10 +284,43 @@ export async function saveNaisteraMediaToFile(dataUrl, mediaKind = 'video', debu
     if (!result?.path) {
         throw new Error('No path in media upload response');
     }
-    return result.path;
+    return encodeLocalMediaPath(result.path);
 }
 
 // ----- Small helpers -----
+
+// Accept raw server filesystem paths only; stored URLs are already encoded.
+export function encodeLocalMediaPath(path) {
+    if (typeof path !== 'string' || !path) throw new Error('No path in media upload response');
+    const encoded = path.split('/').map(encodeURIComponent).join('/');
+    return encoded.startsWith('/') ? encoded : `/${encoded}`;
+}
+
+export async function listCharacterGenerationPaths(characterName) {
+    const context = SillyTavern.getContext();
+    const sanitizedResponse = await fetch('/api/files/sanitize-filename', {
+        method: 'POST',
+        headers: context.getRequestHeaders(),
+        body: JSON.stringify({ fileName: characterName }),
+    });
+    if (!sanitizedResponse.ok) {
+        throw new Error((await sanitizedResponse.text()) || `HTTP ${sanitizedResponse.status}`);
+    }
+    const { fileName: folder } = await sanitizedResponse.json();
+    if (typeof folder !== 'string' || !folder) throw new Error('Character image folder is empty');
+    const response = await fetch('/api/images/list', {
+        method: 'POST',
+        headers: context.getRequestHeaders(),
+        body: JSON.stringify({ folder, sortField: 'date', sortOrder: 'desc' }),
+    });
+    if (!response.ok) {
+        throw new Error((await response.text()) || `HTTP ${response.status}`);
+    }
+    const files = await response.json();
+    return (Array.isArray(files) ? files : [])
+        .filter((file) => typeof file === 'string' && /^iig_/i.test(file))
+        .map((file) => `/user/images/${encodeURIComponent(folder)}/${encodeURIComponent(file)}`);
+}
 
 export async function checkFileExists(path) {
     try {

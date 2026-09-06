@@ -5,15 +5,16 @@ const vm = require('node:vm');
 const { test } = require('node:test');
 
 // Run the extension modules with an in-memory Tavern context and HTTP transport.
-async function loadExtension() {
+async function loadExtension({ respond } = {}) {
     const requests = [];
-    const tavern = { extensionSettings: {}, saveSettingsDebounced() {} };
+    const tavern = { extensionSettings: {}, saveSettingsDebounced() {}, getRequestHeaders: () => ({ 'Content-Type': 'application/json' }) };
     const context = vm.createContext({
         console, URL, Blob, FormData, AbortController, setTimeout, clearTimeout,
         structuredClone, atob, btoa,
         SillyTavern: { getContext: () => tavern },
         fetch: async (url, init = {}) => {
             requests.push({ url, ...init });
+            if (respond) return respond(url, init);
             if (init.method === 'POST') {
                 return Response.json({ data_url: 'data:image/png;base64,AA==', data: [{ b64_json: 'AA==' }] });
             }
@@ -49,12 +50,73 @@ async function loadExtension() {
         requests, settings, settingsModule, providers: providers.namespace,
         parser: moduleFor(path.join(sourceDir, 'parser.js')).namespace,
         references: moduleFor(path.join(sourceDir, 'references.js')).namespace,
+        utils: moduleFor(path.join(sourceDir, 'utils.js')).namespace,
     };
 }
 
 function setReferences(settings, refs) {
     settings.lorebooks = [{ id: 'book', name: 'Book', enabled: true, refs }];
 }
+
+test('media paths encode filenames and round-trip through URL decoding', async () => {
+    const { utils } = await loadExtension();
+    for (const raw of [
+        '/user/images/Nora Ashford #1/image 01.png',
+        '/user/images/Демьян & friends/iig_100%.png',
+        '/user/images/Literal %20/iig_%23.png',
+        '/user/images/Aria/iig_what?x=1&y=2.png',
+    ]) {
+        const encoded = utils.encodeLocalMediaPath(raw);
+        const parsed = new URL(encoded, 'https://example.test');
+        assert.equal(parsed.search, '');
+        assert.equal(parsed.hash, '');
+        assert.equal(decodeURIComponent(parsed.pathname), raw);
+        assert.equal(utils.normalizeStoredImagePath(encoded), encoded);
+    }
+    assert.equal(utils.encodeLocalMediaPath('/user/images/Nora Ashford #1/image 01.png'),
+        '/user/images/Nora%20Ashford%20%231/image%2001.png');
+    assert.equal(utils.encodeLocalMediaPath('user/images/Literal %20/iig_%23.png'),
+        '/user/images/Literal%20%2520/iig_%2523.png');
+    assert.throws(() => utils.encodeLocalMediaPath(undefined), /No path/);
+});
+
+test('stored URLs preserve query parameters, fragments and existing escapes', async () => {
+    const { utils } = await loadExtension();
+    for (const url of [
+        '/thumbnail?type=avatar&file=Nora%20Ashford%20%231.png',
+        'https://example.test/a%20b.png?signature=a%2Fb%3D#preview',
+        '//example.test/a%20b.png?size=80',
+        'data:image/png;base64,AA==',
+    ]) assert.equal(utils.normalizeStoredImagePath(url), url);
+});
+
+test('image uploads return encoded URLs for prompt tags and references', async () => {
+    const { utils, requests } = await loadExtension({
+        respond: () => Response.json({ path: '/user/images/Nora #1 100%/iig_01.png' }),
+    });
+    const stored = await utils.saveImageToFile('data:image/png;base64,AA==');
+    assert.equal(stored, '/user/images/Nora%20%231%20100%25/iig_01.png');
+    assert.equal(utils.normalizeStoredImagePath(stored), stored);
+    assert.equal(requests[0].url, '/api/images/upload');
+});
+
+test('gallery uses the server-sanitized folder and encodes raw filenames', async () => {
+    const { utils, requests } = await loadExtension({
+        respond: (url) => url === '/api/files/sanitize-filename'
+            ? Response.json({ fileName: 'NoraAshford #1 %20' })
+            : Response.json(['iig_image #1 %.png', 'unrelated.png']),
+    });
+    const paths = await utils.listCharacterGenerationPaths('Nora/Ashford?: #1 %20');
+    assert.equal(JSON.parse(requests[0].body).fileName, 'Nora/Ashford?: #1 %20');
+    assert.equal(JSON.parse(requests[1].body).folder, 'NoraAshford #1 %20');
+    assert.deepEqual(Array.from(paths), ['/user/images/NoraAshford%20%231%20%2520/iig_image%20%231%20%25.png']);
+});
+
+test('gallery stops when the server cannot resolve its folder', async () => {
+    const { utils, requests } = await loadExtension({ respond: () => new Response('Unavailable', { status: 503 }) });
+    await assert.rejects(utils.listCharacterGenerationPaths('Nora'), /Unavailable/);
+    assert.equal(requests.length, 1);
+});
 
 test('literal names, aliases, Unicode and word boundaries', async () => {
     const { parser } = await loadExtension();

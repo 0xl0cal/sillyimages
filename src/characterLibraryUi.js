@@ -17,6 +17,7 @@ import {
 } from './references.js';
 import {
     normalizeStoredImagePath,
+    listCharacterGenerationPaths,
     readFileAsDataUrl,
     sanitizeForHtml,
     saveImageToFile,
@@ -476,23 +477,7 @@ async function refreshCharacterGenerations(state, button, settings) {
     button.querySelector('i')?.classList.add('fa-spin');
     try {
         const context = getContext();
-        const response = await fetch('/api/images/list', {
-            method: 'POST',
-            headers: context.getRequestHeaders(),
-            body: JSON.stringify({
-                folder,
-                sortField: 'date',
-                sortOrder: 'desc',
-            }),
-        });
-        if (!response.ok) {
-            throw new Error((await response.text().catch(() => '')) || `HTTP ${response.status}`);
-        }
-        const files = await response.json();
-        const folderImagePaths = (Array.isArray(files) ? files : [])
-            .map((file) => String(file || '').trim())
-            .filter((file) => /^iig_/i.test(file))
-            .map((file) => `/user/images/${folder}/${file}`);
+        const folderImagePaths = await listCharacterGenerationPaths(folder);
         const contextChatCandidates = state.key === getCurrentCharacterReferenceKey()
             ? [...new Set([...(Array.isArray(context.chat) ? context.chat : [])]
                 .reverse()
