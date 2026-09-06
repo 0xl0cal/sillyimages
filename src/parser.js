@@ -315,7 +315,7 @@ export function getMatchedAdditionalReferences(prompt) {
             secondaryKeys: String(ref?.secondaryKeys || ''),
             _lorebookName: String(ref?._lorebookName || ''),
         }))
-        .filter((ref) => ref.enabled && ref.name && ref.imagePath);
+        .filter((ref) => ref.enabled && ref.name && (ref.imagePath || ref.description));
 
     const matched = [];
     const seenKeys = new Set();
@@ -336,7 +336,7 @@ export function getMatchedAdditionalReferences(prompt) {
             continue;
         }
 
-        const dedupeKey = `${ref.name}::${ref.imagePath}`;
+        const dedupeKey = JSON.stringify([ref.name, ref.imagePath, ref.description]);
         if (seenKeys.has(dedupeKey)) continue;
         seenKeys.add(dedupeKey);
         matched.push({ ...ref, _matchReason: matchReason });

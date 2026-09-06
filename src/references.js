@@ -912,14 +912,17 @@ export function renderAdditionalReferencesStatus(providerMaxRefs = 0) {
     const status = document.getElementById('iig_additional_refs_status');
     if (!status) return;
 
-    const refs = getActiveLorebookReferences().filter((ref) => String(ref?.name || '').trim() && String(ref?.imagePath || '').trim());
+    const refs = getActiveLorebookReferences().filter((ref) =>
+        String(ref?.name || '').trim()
+        && (String(ref?.imagePath || '').trim() || String(ref?.description || '').trim()));
     const enabledRefs = refs.filter((ref) => ref.enabled !== false);
+    const enabledImageCount = enabledRefs.filter((ref) => String(ref.imagePath || '').trim()).length;
     const alwaysCount = enabledRefs.filter((ref) => ref.matchMode === 'always').length;
     const parts = [];
     if (refs.length > 0) {
         parts.push(t`Active additional references: ${enabledRefs.length}/${refs.length}. Always sent: ${alwaysCount}.`);
     }
-    if (providerMaxRefs > 0 && enabledRefs.length > providerMaxRefs) {
+    if (providerMaxRefs > 0 && enabledImageCount > providerMaxRefs) {
         parts.push(t`Provider accepts up to ${providerMaxRefs} refs per request — extras will be dropped by priority.`);
     }
     status.textContent = parts.join(' ');

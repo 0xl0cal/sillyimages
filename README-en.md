@@ -66,6 +66,10 @@ Available for providers and models that support image-to-image:
 
 A ref entry has: name (or a comma-separated list of aliases), description, image (file / URL), mode `Always send` or `Send on match`, group, numeric priority, regex flag (name as a JS regex), secondary keys (AND-list of extra conditions).
 
+Matching checks the image-generation prompt. Names match whole words regardless of case; secondary keys must all occur in that prompt. Enabled entries can contain an image, a description, or both. **Send reference descriptions from lorebook** controls inclusion of descriptions in the final prompt; image attachments depend on the selected model's reference support and image limit.
+
+Run matching and request tests with `node --experimental-vm-modules --test tests/reference-matching.test.cjs`. Tests use an in-memory configuration and simulated HTTP responses.
+
 Matched refs are sorted by `priority desc`. If there are more matches than the provider accepts — the surplus is dropped, a warning is shown in the status line.
 
 Per-request reference limits depend on the model:
