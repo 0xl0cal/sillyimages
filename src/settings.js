@@ -802,8 +802,6 @@ export function removeStyle(styleId) {
  * @type {null | {
  *   timestamp: number,
  *   prompt: string,
- *   matchingPrompt: string,
- *   excludedRefs: Array<{ name: string, lorebookName: string, reason: { kind: string, detail: string } }>,
  *   negativePrompt?: string,
  *   references: Array<{ dataUrl: string, label: string }>,
  *   metadata: {
@@ -973,25 +971,12 @@ export function getActiveLorebookReferences(settings = getSettings()) {
     return active.refs;
 }
 
-/**
- * Все refs из всех enabled лорбуков в один плоский массив. Matcher использует
- * это для поиска совпадений по prompt. Порядок сохраняет: refs внутри лорбука
- * в исходном порядке, лорбуки — в порядке массива `settings.lorebooks`.
- *
- * К каждому ref добавляется «невидимое» поле `_lorebookName` (underscore-
- * префикс, чтобы не путали с persisted-полями). UI/debug используют это
- * чтобы показать, из какого лорбука пришёл сматченный ref.
- */
-export function getAllEnabledLorebookReferences(settings = getSettings()) {
+// Book switches apply in power mode; simple mode searches the whole library.
+export function getMatchingLorebooks(settings = getSettings()) {
     const lorebooks = ensureLorebooks(settings);
-    const result = [];
-    for (const lb of lorebooks) {
-        if (!lb.enabled) continue;
-        for (const ref of lb.refs) {
-            result.push({ ...ref, _lorebookName: lb.name });
-        }
-    }
-    return result;
+    return settings.additionalReferencesMode === 'power'
+        ? lorebooks.filter((book) => book.enabled)
+        : lorebooks;
 }
 
 /**

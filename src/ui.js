@@ -729,10 +729,11 @@ function buildAvatarReferencesBlockHtml({
 
 function buildLorebookBarHtml(settings = getSettings()) {
     const lorebooks = ensureLorebooks(settings);
+    const isPowerMode = settings.additionalReferencesMode === 'power';
     const activeId = settings.activeLorebookId;
     const active = getActiveLorebook(settings);
     const optionsHtml = lorebooks.map((lb) =>
-        `<option value="${sanitizeForHtml(lb.id)}" ${lb.id === activeId ? 'selected' : ''}>${sanitizeForHtml(lb.name)}${lb.enabled === false ? ' ' + t`(off)` : ''}</option>`,
+        `<option value="${sanitizeForHtml(lb.id)}" ${lb.id === activeId ? 'selected' : ''}>${sanitizeForHtml(lb.name)}${isPowerMode && lb.enabled === false ? ' ' + t`(off)` : ''}</option>`,
     ).join('');
     return `
         <div class="iig-lorebook-bar">
@@ -742,10 +743,10 @@ function buildLorebookBarHtml(settings = getSettings()) {
                     ${optionsHtml}
                 </select>
                 <div class="iig-lorebook-buttons">
-                    <label class="checkbox_label" title="${t`Include this lorebook in matching`}">
+                    ${isPowerMode ? `<label class="checkbox_label" title="${t`Include this lorebook in matching`}">
                         <input type="checkbox" id="iig_lorebook_enabled" ${active?.enabled !== false ? 'checked' : ''}>
                         <span>${t`On`}</span>
-                    </label>
+                    </label>` : ''}
                     <div id="iig_lorebook_add" class="menu_button" title="${t`Create new lorebook`}">
                         <i class="fa-solid fa-plus"></i>
                     </div>
@@ -1035,30 +1036,12 @@ function buildLastRequestPopupHtml(snapshot) {
         : `<p class="hint">${t`No references were sent.`}</p>`;
 
     const matchedCount = Array.isArray(snapshot.matchedRefs) ? snapshot.matchedRefs.length : 0;
-    const exclusionLabels = {
-        'book-disabled': t`Lorebook is disabled`,
-        'reference-disabled': t`Reference is disabled`,
-        'missing-name': t`Reference name is empty`,
-        'empty-reference': t`Add an image or description`,
-        'name-miss': t`No alias found in the image prompt`,
-        'regex-miss': t`Regular expression did not match`,
-        'secondary-miss': t`Secondary keys did not all match`,
-        'duplicate': t`Identical reference already included`,
-    };
-    const excluded = Array.isArray(snapshot.excludedRefs) ? snapshot.excludedRefs : [];
-    const exclusionsHtml = excluded.map((ref) => `<div class="iig-matched-ref-row">
-        <strong>${sanitizeForHtml(ref.name || t`Untitled reference`)}</strong>
-        <span>${sanitizeForHtml(ref.lorebookName || '')}</span>
-        <span>${sanitizeForHtml(exclusionLabels[ref.reason?.kind] || '')}${ref.reason?.detail ? `: ${sanitizeForHtml(ref.reason.detail)}` : ''}</span>
-    </div>`).join('');
 
     return `
         <div class="iig-last-req">
             <div class="iig-last-req-meta">${rows.join('')}</div>
             <h4>${t`Matched references`} (${matchedCount})</h4>
             ${buildMatchedRefsSectionHtml(snapshot.matchedRefs || [])}
-            ${excluded.length ? `<details><summary>${t`Excluded references`} (${excluded.length})</summary><div class="iig-matched-refs">${exclusionsHtml}</div></details>` : ''}
-            ${snapshot.matchingPrompt !== undefined ? `<details><summary>${t`Prompt used for matching`}</summary><pre class="iig-last-req-prompt">${sanitizeForHtml(snapshot.matchingPrompt)}</pre></details>` : ''}
             <h4>${t`Final prompt sent to provider`}</h4>
             <pre class="iig-last-req-prompt">${sanitizeForHtml(snapshot.prompt || '')}</pre>
             ${snapshot.negativePrompt ? `<h4>${t`Negative prompt`}</h4><pre class="iig-last-req-prompt">${sanitizeForHtml(snapshot.negativePrompt)}</pre>` : ''}
@@ -1990,7 +1973,6 @@ function bindLorebookBarEvents(settings) {
         setLorebookEnabled(active.id, e.target.checked, settings);
         saveSettings();
         refreshLorebookBar(settings);
-        renderAdditionalReferencesStatus(getActiveProviderMaxReferences(settings));
     });
 
     document.getElementById('iig_lorebook_add')?.addEventListener('click', async () => {
@@ -2162,6 +2144,7 @@ function bindAdditionalReferencesEvents(settings) {
             if (!(e.target instanceof HTMLInputElement) || !e.target.checked) return;
             settings.additionalReferencesMode = e.target.value === 'power' ? 'power' : 'simple';
             saveSettings();
+            refreshLorebookBar(settings);
             refreshAdditionalReferencesList();
         });
     });

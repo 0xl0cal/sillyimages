@@ -61,16 +61,18 @@ Available for providers and models that support image-to-image:
 
 - **{{char}} avatar** / **{{user}} avatar** — character and user avatars (active persona or manual choice).
 - **Image context** — the last N previously generated images in the chat.
-- **Lorebooks** — named collections of additional references. Create / Rename / Delete / Enable-toggle next to the dropdown. The matcher aggregates refs across all enabled lorebooks.
+- **Lorebooks** — named collections of additional references. Create, rename, import, or delete collections next to the dropdown.
 - **Reference instruction** — prompt prefix that tells the model to precisely copy appearance from the reference images. Sent only when at least one ref is actually passed to the provider. Can be disabled or edited.
 
 A ref entry has: name (or a comma-separated list of aliases), description, image (file / URL), mode `Always send` or `Send on match`, group, numeric priority, regex flag (name as a JS regex), secondary keys (AND-list of extra conditions).
 
-Matching checks the image-generation prompt. Names match whole words regardless of case; secondary keys must all occur in that prompt. Enabled entries can contain an image, a description, or both. **Send reference descriptions from lorebook** controls inclusion of descriptions in the final prompt; image attachments depend on the selected model's reference support and image limit.
+**Simple** searches all lorebooks using names and comma-separated aliases as whole words, regardless of case. Each card has its own enable switch and sending mode. **Power** applies lorebook switches, regex, secondary keys, and priority. All secondary keys must occur in the image-generation prompt.
+
+Enabled entries can contain an image, a description, or both. **Send reference descriptions from lorebook** adds descriptions to the final prompt. Image attachments depend on the selected model's reference support and image limit.
 
 Run matching and request tests with `node --experimental-vm-modules --test tests/reference-matching.test.cjs`. Tests use an in-memory configuration and simulated HTTP responses.
 
-Matched refs are sorted by `priority desc`. If there are more matches than the provider accepts — the surplus is dropped, a warning is shown in the status line.
+Simple mode uses library order; power mode uses descending priority. Image attachments are selected within the provider's reference limit.
 
 Per-request reference limits depend on the model:
 
@@ -124,7 +126,6 @@ Line format: `full-name (primary-trigger) — description`. If only one lorebook
 ### Debug
 
 - **Show last request** — popup with the final prompt, matched refs (which alias/regex fired, which lorebook it came from), previews of the sent images and request metadata.
-- **Excluded references** lists each excluded entry and its reason. **Prompt used for matching** shows the exact text checked against reference names and conditions.
 - **Show `{{iig-book}}` preview** — current render of the macro.
 - **Export logs** — download the extension's log file.
 
