@@ -7,11 +7,13 @@ const { test } = require('node:test');
 // Run the extension modules with an in-memory Tavern context and HTTP transport.
 async function loadExtension() {
     const requests = [];
+    const referenceStatus = { textContent: '' };
     const tavern = { extensionSettings: {}, saveSettingsDebounced() {} };
     const context = vm.createContext({
         console, URL, Blob, FormData, AbortController, setTimeout, clearTimeout,
         structuredClone, atob, btoa,
         SillyTavern: { getContext: () => tavern },
+        document: { getElementById: (id) => id === 'iig_additional_refs_status' ? referenceStatus : null },
         fetch: async (url, init = {}) => {
             requests.push({ url, ...init });
             if (init.method === 'POST') {
@@ -48,12 +50,61 @@ async function loadExtension() {
     return {
         requests, settings, settingsModule, providers: providers.namespace,
         parser: moduleFor(path.join(sourceDir, 'parser.js')).namespace,
+        references: moduleFor(path.join(sourceDir, 'references.js')).namespace,
+        referenceStatus,
     };
 }
 
 function setReferences(settings, refs) {
     settings.lorebooks = [{ id: 'book', name: 'Book', enabled: true, refs }];
 }
+
+test('Daniel aliases from the reference editor match the pictured scene', async () => {
+    const { settings, parser } = await loadExtension();
+    setReferences(settings, [{
+        name: 'Daniel Mercer, Daniel, Dan', description: 'Dark blond hair', imagePath: '/daniel.png',
+    }]);
+    const prompt = 'Attractively well-built and handsome Daniel in a dark denim jacket, slouching back into the booth corner, looking away toward the noisy bar.';
+    const matches = parser.getMatchedAdditionalReferences(prompt);
+    assert.equal(matches.length, 1);
+    assert.equal(matches[0]._matchReason.detail, 'daniel');
+});
+
+test('Daniel exclusions identify disabled books and hidden matching conditions', async () => {
+    const { settings, parser } = await loadExtension();
+    const ref = { name: 'Daniel Mercer, Daniel, Dan', imagePath: '/daniel.png', enabled: true };
+    const prompt = 'Attractively well-built and handsome Daniel in a dark denim jacket';
+    for (const [bookEnabled, fields, reason] of [
+        [false, {}, 'book-disabled'],
+        [true, { enabled: false }, 'reference-disabled'],
+        [true, { useRegex: true }, 'regex-miss'],
+        [true, { secondaryKeys: 'night' }, 'secondary-miss'],
+        [true, { name: 'Nora' }, 'name-miss'],
+        [true, { name: '' }, 'missing-name'],
+        [true, { imagePath: '' }, 'empty-reference'],
+    ]) {
+        setReferences(settings, [{ ...ref, ...fields }]);
+        settings.lorebooks[0].enabled = bookEnabled;
+        const excluded = [];
+        assert.equal(parser.getMatchedAdditionalReferences(prompt, { excluded }).length, 0);
+        assert.equal(excluded.length, 1);
+        assert.equal(excluded[0].reason.kind, reason);
+        assert.equal(excluded[0].lorebookName, 'Book');
+    }
+});
+
+test('active reference count follows the lorebook toggle', async () => {
+    const { settings, references, referenceStatus, settingsModule } = await loadExtension();
+    setReferences(settings, [{ name: 'Daniel', imagePath: '/daniel.png', enabled: true }]);
+    settingsModule.setLorebookEnabled('book', false, settings);
+    references.renderAdditionalReferencesStatus(5);
+    assert.match(referenceStatus.textContent, /Lorebook is disabled/);
+    assert.match(referenceStatus.textContent, /0\/1/);
+    settingsModule.setLorebookEnabled('book', true, settings);
+    references.renderAdditionalReferencesStatus(5);
+    assert.doesNotMatch(referenceStatus.textContent, /Lorebook is disabled/);
+    assert.match(referenceStatus.textContent, /1\/1/);
+});
 
 test('literal names, aliases, Unicode and word boundaries', async () => {
     const { parser } = await loadExtension();

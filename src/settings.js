@@ -802,6 +802,8 @@ export function removeStyle(styleId) {
  * @type {null | {
  *   timestamp: number,
  *   prompt: string,
+ *   matchingPrompt: string,
+ *   excludedRefs: Array<{ name: string, lorebookName: string, reason: { kind: string, detail: string } }>,
  *   negativePrompt?: string,
  *   references: Array<{ dataUrl: string, label: string }>,
  *   metadata: {

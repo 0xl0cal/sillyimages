@@ -231,7 +231,7 @@ function buildAvatarReferenceSnapshotBlock(references = [], settings = getSettin
  * Воспроизводит apiType-зависимую логику сборки prompt'а (refInstruction
  * префикс только для провайдеров из REF_INSTRUCTION_PROVIDERS).
  */
-function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs, options, provider, settings, characterDescriptionPromptBlock = '', wrapStyle = true }) {
+function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs, excludedRefs = [], options, provider, settings, characterDescriptionPromptBlock = '', wrapStyle = true }) {
     let snapshotPrompt = buildFinalGenerationPrompt(
         prompt,
         style,
@@ -282,6 +282,8 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
     return {
         timestamp: Date.now(),
         prompt: snapshotPrompt,
+        matchingPrompt: prompt,
+        excludedRefs,
         negativePrompt,
         references: references.map((ref, index) => ({
             dataUrl: refToPreviewDataUrl(ref),
@@ -485,7 +487,8 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
     const maxRetries = settings.maxRetries;
     const baseDelay = settings.retryDelay;
 
-    const matchedAdditionalRefs = getMatchedAdditionalReferences(prompt);
+    const excludedRefs = [];
+    const matchedAdditionalRefs = getMatchedAdditionalReferences(prompt, { excluded: excludedRefs });
     if (matchedAdditionalRefs.length > 0) {
         iigLog(
             'INFO',
@@ -545,6 +548,7 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
         options,
         provider,
         settings,
+        excludedRefs,
         characterDescriptionPromptBlock,
         wrapStyle,
     }));

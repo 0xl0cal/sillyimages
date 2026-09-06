@@ -124,6 +124,7 @@ Line format: `full-name (primary-trigger) — description`. If only one lorebook
 ### Debug
 
 - **Show last request** — popup with the final prompt, matched refs (which alias/regex fired, which lorebook it came from), previews of the sent images and request metadata.
+- **Excluded references** lists each excluded entry and its reason. **Prompt used for matching** shows the exact text checked against reference names and conditions.
 - **Show `{{iig-book}}` preview** — current render of the macro.
 - **Export logs** — download the extension's log file.
 

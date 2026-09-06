@@ -12,6 +12,7 @@ import {
     getSettings,
     saveSettings,
     getActiveLorebookReferences,
+    getActiveLorebook,
     ensureLorebooks,
     createLorebook,
     normalizeImageContextCount,
@@ -912,13 +913,15 @@ export function renderAdditionalReferencesStatus(providerMaxRefs = 0) {
     const status = document.getElementById('iig_additional_refs_status');
     if (!status) return;
 
-    const refs = getActiveLorebookReferences().filter((ref) =>
+    const activeBook = getActiveLorebook();
+    const refs = activeBook.refs.filter((ref) =>
         String(ref?.name || '').trim()
         && (String(ref?.imagePath || '').trim() || String(ref?.description || '').trim()));
-    const enabledRefs = refs.filter((ref) => ref.enabled !== false);
+    const enabledRefs = activeBook.enabled ? refs.filter((ref) => ref.enabled !== false) : [];
     const enabledImageCount = enabledRefs.filter((ref) => String(ref.imagePath || '').trim()).length;
     const alwaysCount = enabledRefs.filter((ref) => ref.matchMode === 'always').length;
     const parts = [];
+    if (!activeBook.enabled) parts.push(t`Lorebook is disabled`);
     if (refs.length > 0) {
         parts.push(t`Active additional references: ${enabledRefs.length}/${refs.length}. Always sent: ${alwaysCount}.`);
     }

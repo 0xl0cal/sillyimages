@@ -14,7 +14,7 @@
 import {
     getSettings,
     getActiveStyle,
-    getAllEnabledLorebookReferences,
+    ensureLorebooks,
     normalizeGroupName,
     iigLog,
 } from './settings.js';
@@ -298,10 +298,12 @@ export function buildFinalGenerationPrompt(
     return fullPrompt;
 }
 
-export function getMatchedAdditionalReferences(prompt) {
-    // Итерируем все enabled лорбуки — refs всех enabled лорбуков
-    // объединяются в один пул и матчатся по prompt.
-    const refs = getAllEnabledLorebookReferences()
+export function getMatchedAdditionalReferences(prompt, { excluded = [] } = {}) {
+    const refs = ensureLorebooks().flatMap((book) => book.refs.map((ref) => ({
+        ...ref,
+        _lorebookName: book.name,
+        _lorebookEnabled: book.enabled,
+    })))
         .map((ref) => ({
             id: String(ref?.id || '').trim(),
             name: String(ref?.name || '').trim(),
@@ -314,30 +316,54 @@ export function getMatchedAdditionalReferences(prompt) {
             useRegex: ref?.useRegex === true,
             secondaryKeys: String(ref?.secondaryKeys || ''),
             _lorebookName: String(ref?._lorebookName || ''),
-        }))
-        .filter((ref) => ref.enabled && ref.name && (ref.imagePath || ref.description));
+            _lorebookEnabled: ref._lorebookEnabled,
+        }));
 
     const matched = [];
     const seenKeys = new Set();
 
     for (const ref of refs) {
+        const exclude = (kind, detail = '') => excluded.push({
+            name: ref.name,
+            lorebookName: ref._lorebookName,
+            reason: { kind, detail },
+        });
+        if (!ref._lorebookEnabled) {
+            exclude('book-disabled');
+            continue;
+        }
+        if (!ref.enabled) {
+            exclude('reference-disabled');
+            continue;
+        }
+        if (!ref.name || !(ref.imagePath || ref.description)) {
+            exclude(!ref.name ? 'missing-name' : 'empty-reference');
+            continue;
+        }
         let matchReason = null;
         if (ref.matchMode === 'always') {
             matchReason = { kind: 'always', detail: '' };
         } else {
             matchReason = findPrimaryKeyMatch(prompt, ref.name, ref.useRegex);
         }
-        if (!matchReason) continue;
+        if (!matchReason) {
+            exclude(ref.useRegex ? 'regex-miss' : 'name-miss', ref.name);
+            continue;
+        }
 
         // Secondary keys — AND-фильтр (все ключи должны встретиться). Для
         // режима 'always' тоже применяем — позволяет делать условно-always
         // записи вида «отправляй всегда, но только если в промпте есть X».
         if (!promptMatchesAllSecondaryKeys(prompt, ref.secondaryKeys)) {
+            exclude('secondary-miss', ref.secondaryKeys);
             continue;
         }
 
         const dedupeKey = JSON.stringify([ref.name, ref.imagePath, ref.description]);
-        if (seenKeys.has(dedupeKey)) continue;
+        if (seenKeys.has(dedupeKey)) {
+            exclude('duplicate');
+            continue;
+        }
         seenKeys.add(dedupeKey);
         matched.push({ ...ref, _matchReason: matchReason });
     }
