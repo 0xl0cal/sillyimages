@@ -371,13 +371,13 @@
     text-align: left;
 }
 
-.iig-style-item-select strong,
-.iig-style-item-select small {
+.iig-settings .iig-style-item-select strong,
+.iig-settings .iig-style-item-select small {
     display: block;
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
+    white-space: nowrap !important;
 }
 
 .iig-style-item-select small {

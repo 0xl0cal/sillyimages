@@ -76,6 +76,7 @@ const server = createServer((req, res) => {
         for (const library of ['styles', 'negativePrompts']) {
             await page.locator(`[data-style-library="${library}"]`).click();
             const none = page.locator('[data-style-disable]');
+            assert.equal((await none.textContent()).trim(), library === 'styles' ? 'No style' : 'Value from API settings');
             assert.equal(await none.getAttribute('aria-pressed'), 'true');
             for (const [theme, body, tint, quote] of [
                 ['dark', '#eeeeee', '#302c35', '#c7b89f'],
@@ -117,6 +118,60 @@ const server = createServer((req, res) => {
             app.ui.renderStyleSettings();
         }, savedStyles);
         checks.push('empty libraries: readable selected/hover state in light/dark themes and centered editor text');
+        // Cover zero/partial results, clearing, tab isolation and wrapping in a narrow panel.
+        const libraryState = await page.evaluate(() => {
+            const saved = structuredClone({styles: app.settings.styles, negativePrompts: app.settings.negativePrompts});
+            const longText = 'a long preview with enough words to exceed the narrow list width '.repeat(3);
+            app.settings.styles[2].name = 'A long style title that exceeds the narrow list width';
+            app.settings.styles[2].value = longText;
+            app.settings.negativePrompts = Array.from({length: 10}, (_, i) => ({id: 'negative-'+i, name: 'Negative '+i, value: longText}));
+            app.ui.renderStyleSettings();
+            return saved;
+        });
+        for (const library of ['styles', 'negativePrompts']) {
+            await page.locator(`[data-style-library="${library}"]`).click();
+            await page.locator('#iig_style_search').fill('unmatched-search-key');
+            assert.equal(await page.locator('.iig-style-item:visible').count(), 0);
+            assert.equal(await page.locator('.iig-style-search-empty').isVisible(), true);
+            assert.equal((await page.locator('.iig-style-search-empty').textContent()).trim(), 'Nothing found.');
+            assert.equal(await page.locator('#iig_style_search').evaluate(e => document.activeElement === e), true);
+            await page.locator('#iig_styles_section').screenshot({path: path.join(artifacts, `search-empty-${library}.png`)});
+            await page.locator(`[data-style-library="${library === 'styles' ? 'negativePrompts' : 'styles'}"]`).click();
+            assert.equal(await page.locator('#iig_style_search').inputValue(), '');
+            await page.locator(`[data-style-library="${library}"]`).click();
+            assert.equal(await page.locator('#iig_style_search').inputValue(), 'unmatched-search-key');
+            assert.equal(await page.locator('.iig-style-search-empty').isVisible(), true);
+            await page.locator('#iig_style_search').fill(library === 'styles' ? 'Style 19' : 'Negative 9');
+            assert.equal(await page.locator('.iig-style-item:visible').count(), 1);
+            assert.equal(await page.locator('.iig-style-search-empty').isVisible(), false);
+            await page.locator(`[data-style-select="${library === 'styles' ? 'style-19' : 'negative-9'}"]`).click();
+            await page.locator('#iig_style_name').fill('Changed entry');
+            assert.equal(await page.locator('.iig-style-item:visible').count(), 0);
+            assert.equal(await page.locator('.iig-style-search-empty').isVisible(), true);
+            assert.equal(await page.locator('#iig_style_name').evaluate(e => document.activeElement === e), true);
+            await page.locator('#iig_style_name').fill(library === 'styles' ? 'Style 19' : 'Negative 9');
+            assert.equal(await page.locator('.iig-style-search-empty').isVisible(), false);
+            await page.locator('#iig_style_search').fill('');
+            assert.equal(await page.locator('.iig-style-item:visible').count(), library === 'styles' ? 20 : 10);
+            await page.setViewportSize({width: 390, height: 844});
+            const preview = page.locator(`[data-style-select="${library === 'styles' ? 'style-2' : 'negative-2'}"] small`);
+            const metrics = await preview.evaluate(e => {
+                const range = document.createRange(); range.selectNodeContents(e);
+                return {whiteSpace: getComputedStyle(e).whiteSpace,
+                    lines: new Set(Array.from(range.getClientRects(), rect => Math.round(rect.top))).size,
+                    textLength: e.textContent.length, textOverflow: getComputedStyle(e).textOverflow};
+            });
+            assert.equal(metrics.whiteSpace, 'nowrap');
+            assert.equal(metrics.lines, 1);
+            assert.equal(metrics.textOverflow, 'ellipsis');
+            assert.ok(metrics.textLength <= 53);
+            assert.equal(await page.locator(`[data-style-select="${library === 'styles' ? 'style-2' : 'negative-2'}"] strong`).evaluate(e => getComputedStyle(e).whiteSpace), 'nowrap');
+            assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+            await page.locator('#iig_styles_section').screenshot({path: path.join(artifacts, `previews-${library}-mobile.png`)});
+            await page.setViewportSize({width: 900, height: 1000});
+        }
+        await page.evaluate(saved => {Object.assign(app.settings, saved); app.ui.renderStyleSettings();}, libraryState);
+        checks.push('both libraries: zero/partial/cleared search results, retained focus and single-line mobile previews');
         await page.locator('#iig_styles_section [data-style-library="negativePrompts"]').click();
         await page.locator('#iig_style_add').click();
         await page.locator('#iig_style_value').fill('bad anatomy');
@@ -260,6 +315,12 @@ const server = createServer((req, res) => {
         await page.locator('[data-style-disable]').click();
         assert.equal(await page.locator('#iig_novelai_negative_prompt').isDisabled(), false);
         await page.locator('#iig_novelai_negative_prompt').fill('custom negative');
+        const fallbackNegative = await page.evaluate(async () => {
+            await app.pipeline.generateImageWithRetry('scene', '');
+            return requests.at(-1).body.parameters.negative_prompt;
+        });
+        assert.equal(fallbackNegative, 'custom negative');
+        assert.equal((await page.locator('[data-style-disable]').textContent()).trim(), 'Value from API settings');
         await page.locator('#iig_style_toggle_active').click();
         assert.equal(await page.locator('#iig_novelai_negative_prompt').inputValue(), 'bad anatomy');
         await page.locator('[data-section-id="iig_characters_section"] > summary').click();

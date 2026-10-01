@@ -602,7 +602,7 @@ function activeStyleKey() { return getPromptLibraryActiveKey(styleLibraryTab); }
 
 function getStyleLibraryLabels() {
     return styleLibraryTab === 'negativePrompts'
-        ? { name: t`Negative prompt`, add: t`New negative prompt`, search: t`Search negative prompts`, none: t`No negative prompt`, empty: t`No negative prompts created.` }
+        ? { name: t`Negative prompt`, add: t`New negative prompt`, search: t`Search negative prompts`, none: t`Value from API settings`, empty: t`No negative prompts created.` }
         : { name: t`Style`, add: t`New style`, search: t`Search styles`, none: t`No style`, empty: t`No styles created.` };
 }
 
@@ -625,7 +625,7 @@ function buildStyleListHtml(settings = getSettings()) {
     const activeId = settings[activeStyleKey()];
     const labels = getStyleLibraryLabels();
     getSelectedStyle(settings);
-    const searchHtml = styles.length > 8 ? `
+    const searchHtml = styles.length > 8 || styleSearchQuery ? `
         <label class="iig-style-search-wrap">
             <i class="fa-solid fa-magnifying-glass"></i>
             <input id="iig_style_search" class="text_pole" type="search" value="${sanitizeForHtml(styleSearchQuery)}" placeholder="${labels.search}">
@@ -652,7 +652,7 @@ function buildStyleListHtml(settings = getSettings()) {
                 <i class="fa-solid fa-ban"></i>
                 <span>${labels.none}</span>
             </button>
-            ${rowsHtml || `<div class="iig-library-empty">${labels.empty}</div>`}
+            ${rowsHtml ? `${rowsHtml}<div class="iig-library-empty iig-style-search-empty iig-hidden" role="status">${t`Nothing found.`}</div>` : `<div class="iig-library-empty">${labels.empty}</div>`}
         </div>`;
 }
 
@@ -692,9 +692,13 @@ function buildStyleEditorHtml(settings = getSettings()) {
 
 function filterStyleList() {
     const query = styleSearchQuery.trim().toLowerCase();
+    let visibleCount = 0;
     document.querySelectorAll('#iig_style_presets .iig-style-item').forEach((item) => {
-        item.classList.toggle('iig-hidden', Boolean(query) && !String(item.getAttribute('data-style-search') || '').includes(query));
+        const visible = !query || String(item.getAttribute('data-style-search') || '').includes(query);
+        item.classList.toggle('iig-hidden', !visible);
+        if (visible) visibleCount++;
     });
+    document.querySelector('#iig_style_presets .iig-style-search-empty')?.classList.toggle('iig-hidden', !query || visibleCount > 0);
 }
 
 function renderSelectedStyleEditor(settings = getSettings()) {
@@ -2069,6 +2073,7 @@ function bindStylesSectionEvents(settings) {
             if (title) title.textContent = updated.name;
             if (preview) preview.textContent = getStylePreview(updated.value);
             row.setAttribute('data-style-search', `${updated.name} ${updated.value}`.toLowerCase());
+            filterStyleList();
         }
         syncNegativePromptInputs(settings);
     });
