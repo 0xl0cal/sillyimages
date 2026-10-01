@@ -380,7 +380,7 @@ async function renderEditor(settings = getSettings(), entities = null) {
 }
 
 export async function renderCharacterLibrary(settings = getSettings()) {
-    document.querySelectorAll('.iig-library-tab').forEach((tab) => {
+    document.querySelectorAll('[data-library-tab]').forEach((tab) => {
         tab.classList.toggle('selected', tab.getAttribute('data-library-tab') === selectedKind);
     });
     const search = document.getElementById('iig_library_search');

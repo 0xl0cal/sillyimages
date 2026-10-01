@@ -374,5 +374,13 @@
     "Select a NovelAI image model": "Виберіть модель картинок NovelAI",
     "This NovelAI model supports up to ${0} character prompts": "Ця модель NovelAI підтримує до ${0} промптів персонажів",
     "NovelAI returned an invalid JSON response": "NovelAI повернув некоректну JSON-відповідь",
-    "NovelAI returned no image": "NovelAI не повернув картинку"
+    "NovelAI returned no image": "NovelAI не повернув картинку",
+    "Styles & Negatives": "Стилі та негативні промпти",
+    "Custom size": "Власний розмір",
+    "832x1216 (Portrait)": "832x1216 (Вертикальний)",
+    "1216x832 (Landscape)": "1216x832 (Горизонтальний)",
+    "1024x1536 (Portrait)": "1024x1536 (Вертикальний)",
+    "1536x1024 (Landscape)": "1536x1024 (Горизонтальний)",
+    "1536x1536 (Square)": "1536x1536 (Квадрат)",
+    "This model uses text-only references.": "Ця модель використовує лише текстові референси."
 }

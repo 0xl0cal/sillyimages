@@ -64,6 +64,7 @@ const server = createServer((req, res) => {
         await page.waitForFunction(() => window.ready);
         await page.locator('[data-section-id="iig_api_section"] > summary').click();
         await page.locator('[data-section-id="iig_styles_section"] > summary').click();
+        assert.equal(await page.locator('[data-section-id="iig_styles_section"] > summary .iig-section-title').textContent(), 'Styles & Negatives');
         await page.locator('#iig_api_section .iig-settings-group').evaluateAll(groups => groups.forEach(group => group.open = true));
         await page.locator('#iig_styles_section [data-style-library="negativePrompts"]').click();
         await page.locator('#iig_style_add').click();
@@ -101,6 +102,71 @@ const server = createServer((req, res) => {
         await page.locator('#iig_api_type').selectOption('novelai');
         await page.waitForFunction(() => document.querySelector('#iig_model_select option[value="nai-diffusion-5-full"]'));
         await page.locator('#iig_model_select').selectOption('nai-diffusion-5-full');
+        assert.equal(await page.locator('#iig_novelai_resolution').inputValue(), '832x1216');
+        for (const size of ['832x1216', '1216x832', '1024x1024', '1024x1536', '1536x1024', '1536x1536']) {
+            await page.locator('#iig_novelai_resolution').selectOption(size);
+            const [width, height] = size.split('x');
+            assert.equal(await page.locator('#iig_novelai_width').inputValue(), width);
+            assert.equal(await page.locator('#iig_novelai_height').inputValue(), height);
+        }
+        await page.locator('#iig_novelai_resolution').selectOption('1216x832');
+        assert.equal(await page.locator('#iig_novelai_width').inputValue(), '1216');
+        assert.equal(await page.locator('#iig_novelai_height').inputValue(), '832');
+        await page.locator('#iig_novelai_width').fill('1152');
+        assert.equal(await page.locator('#iig_novelai_resolution').inputValue(), 'custom');
+        await page.locator('#iig_novelai_resolution').selectOption('1024x1024');
+        assert.equal(await page.locator('#iig_novelai_height').inputValue(), '1024');
+        await page.locator('#iig_novelai_resolution').selectOption('832x1216');
+        checks.push('resolution presets update dimensions; custom dimensions and profile-derived selection');
+        await page.locator('[data-section-id="iig_references_section"] > summary').click();
+        assert.equal(await page.locator('#iig_additional_refs_section').isVisible(), true);
+        const imageRow = page.locator('.iig-additional-ref-list-row[data-ref-id="image"]');
+        const textRow = page.locator('.iig-additional-ref-list-row[data-ref-id="text"]');
+        assert.equal(await imageRow.locator('input[type="checkbox"]').isDisabled(), true);
+        assert.equal(await imageRow.locator('[data-ref-select]').isDisabled(), true);
+        assert.equal(await imageRow.evaluate(e => getComputedStyle(e).opacity), '0.35');
+        assert.equal(await page.locator('#iig_additional_refs_import').isDisabled(), true);
+        assert.equal(await page.locator('.iig-additional-ref-editor-content').evaluate(e => e.disabled), true);
+        await textRow.locator('[data-ref-select]').click();
+        assert.equal(await page.locator('.iig-additional-ref-description').isDisabled(), false);
+        await page.locator('.iig-additional-ref-description').fill('TEXT_DESCRIPTION edited');
+        assert.equal(await page.locator('.iig-additional-ref-description').evaluate(e => document.activeElement === e), true);
+        assert.equal(await page.locator('.iig-additional-ref-upload-url').isDisabled(), true);
+        await textRow.locator('input[type="checkbox"]').uncheck();
+        let referencePrompt = await page.evaluate(async () => {
+            await app.pipeline.generateImageWithRetry('Lenore in a room', '');
+            return requests.at(-1).body.parameters.v4_prompt.caption.base_caption;
+        });
+        assert.doesNotMatch(referencePrompt, /TEXT_DESCRIPTION|IMAGE_DESCRIPTION/);
+        await page.locator('#iig_send_ref_descriptions').uncheck();
+        await textRow.locator('input[type="checkbox"]').check();
+        referencePrompt = await page.evaluate(async () => {
+            await app.pipeline.generateImageWithRetry('Lenore in a room', '');
+            return requests.at(-1).body.parameters.v4_prompt.caption.base_caption;
+        });
+        assert.doesNotMatch(referencePrompt, /TEXT_DESCRIPTION|IMAGE_DESCRIPTION/);
+        await page.locator('#iig_send_ref_descriptions').check();
+        referencePrompt = await page.evaluate(async () => {
+            await app.pipeline.generateImageWithRetry('Lenore in a room', '');
+            return requests.at(-1).body.parameters.v4_prompt.caption.base_caption;
+        });
+        assert.match(referencePrompt, /TEXT_DESCRIPTION/);
+        assert.doesNotMatch(referencePrompt, /IMAGE_DESCRIPTION/);
+        const macro = await page.evaluate(() => app.references.renderIigBookMacro(app.settings, app.providers.resolveActiveProvider(app.settings).supportsReferences(app.settings)));
+        assert.match(macro, /TEXT_DESCRIPTION/);
+        assert.doesNotMatch(macro, /IMAGE_DESCRIPTION/);
+        await page.locator('#iig_api_type').selectOption('naistera');
+        await page.locator('#iig_naistera_model').selectOption('banana');
+        assert.equal(await imageRow.locator('input[type="checkbox"]').isDisabled(), false);
+        assert.equal(await imageRow.locator('input[type="checkbox"]').isChecked(), true);
+        await page.locator('#iig_naistera_model').selectOption('novelai-v5');
+        assert.equal(await imageRow.locator('input[type="checkbox"]').isDisabled(), true);
+        assert.equal(await textRow.locator('input[type="checkbox"]').isDisabled(), false);
+        await page.locator('#iig_api_type').selectOption('novelai');
+        await page.locator('label:has(input[name="iig_additional_refs_mode"][value="power"])').click();
+        assert.equal(await imageRow.locator('input[type="checkbox"]').isDisabled(), true);
+        await page.locator('label:has(input[name="iig_additional_refs_mode"][value="simple"])').click();
+        checks.push('text references remain editable and toggle generation; image controls dim/disable and restore across providers and modes');
         for (const [field, value] of [['steps','28'],['cfg_scale','7'],['cfg_rescale','0.25'],['seed','42']]) {
             await page.locator('#iig_novelai_'+field).fill(value);
         }
@@ -128,9 +194,11 @@ const server = createServer((req, res) => {
         checks.push('native source UI -> pipeline -> JSON request -> decoded image; snapshot and profile');
         await page.locator('#iig_profile_save_as').click();
         await page.locator('#iig_novelai_steps').fill('12');
+        await page.locator('#iig_novelai_resolution').selectOption('1536x1536');
         await page.locator('#iig_profile_select').selectOption(await page.locator('#iig_profile_select').inputValue());
         assert.equal(await page.locator('#iig_novelai_steps').inputValue(), '28');
         assert.equal(await page.locator('#iig_novelai_cfg_rescale').inputValue(), '0.25');
+        assert.equal(await page.locator('#iig_novelai_resolution').inputValue(), '832x1216');
         checks.push('connection profile restores native settings in the UI');
         await page.locator('#iig_styles_section [data-style-library="negativePrompts"]').click();
         await page.locator('#iig_style_duplicate').click();
@@ -142,6 +210,9 @@ const server = createServer((req, res) => {
         await page.locator('#iig_novelai_negative_prompt').fill('custom negative');
         await page.locator('#iig_style_toggle_active').click();
         assert.equal(await page.locator('#iig_novelai_negative_prompt').inputValue(), 'bad anatomy');
+        await page.locator('[data-section-id="iig_characters_section"] > summary').click();
+        await page.waitForTimeout(100);
+        assert.equal(await page.locator('[data-style-library="negativePrompts"]').evaluate(e => e.classList.contains('selected')), true);
         checks.push('negative prompt duplicate/delete/disable; custom fallback and library override');
         const descriptions = await page.evaluate(async () => {
             context.characters=[{name:'Lenore',avatar:'lenore.png'}]; context.characterId=0;

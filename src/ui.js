@@ -56,6 +56,7 @@ import {
 import {
     renderAdditionalReferencesList,
     renderAdditionalReferencesStatus,
+    syncAdditionalReferenceAvailability,
     buildUserAvatarDropdownControl,
     buildReferenceImportModalHtml,
     syncUserAvatarSelection,
@@ -75,7 +76,7 @@ import {
     renderIigBookMacro,
 } from './references.js';
 import { fetchModels, resolveActiveProvider, getActiveProviderMaxReferences, A1111_RESOLUTION_PRESETS } from './providers.js';
-import { NOVELAI_NUMERIC_FIELDS, NOVELAI_SAMPLERS, NOVELAI_NOISE_SCHEDULES } from './novelai.js';
+import { NOVELAI_NUMERIC_FIELDS, NOVELAI_SAMPLERS, NOVELAI_NOISE_SCHEDULES, NOVELAI_RESOLUTION_PRESETS } from './novelai.js';
 import { applyImageActionsStyle } from './imageActions.js';
 import { t, translate } from './i18n.js';
 import { buildCharacterLibraryBodyHtml, bindCharacterLibraryEvents } from './characterLibraryUi.js';
@@ -150,6 +151,14 @@ function buildNovelAISettingsHtml(settings) {
         </div>`;
     return `
         <div id="iig_novelai_options" class="iig-settings-card-nested ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}">
+            <div class="flex-row">
+                <label for="iig_novelai_resolution">${t`Resolution preset`}</label>
+                <select id="iig_novelai_resolution" class="flex1">
+                    <option value="custom">${t`Custom size`}</option>
+                    ${NOVELAI_RESOLUTION_PRESETS.map(preset => `<option value="${preset.width}x${preset.height}">${translate(preset.label)}</option>`).join('')}
+                </select>
+                <div></div>
+            </div>
             ${NOVELAI_NUMERIC_FIELDS.map(field => `
                 <div class="flex-row" id="iig_novelai_${field.id}_row">
                     <label for="iig_novelai_${field.id}">${translate(field.label)}</label>
@@ -167,6 +176,13 @@ function buildNovelAISettingsHtml(settings) {
                 <div></div>
             </div>
         </div>`;
+}
+
+function syncNovelAIResolution(settings) {
+    const select = document.getElementById('iig_novelai_resolution');
+    if (!select) return;
+    const preset = NOVELAI_RESOLUTION_PRESETS.find(item => item.width === Number(settings.novelaiWidth) && item.height === Number(settings.novelaiHeight));
+    select.value = preset ? `${preset.width}x${preset.height}` : 'custom';
 }
 
 function syncNegativePromptInputs(settings) {
@@ -740,7 +756,7 @@ function buildStylesSettingsSectionHtml() {
             </div>
         </div>
     `;
-    return buildSettingsSectionHtml('iig_styles_section', t`Styles`, bodyHtml, false);
+    return buildSettingsSectionHtml('iig_styles_section', t`Styles & Negatives`, bodyHtml, false);
 }
 
 // ----- Character reference library -----
@@ -929,7 +945,7 @@ function buildReferencesSettingsSectionHtml(settings = getSettings()) {
                 </div>
             </div>
 
-            <div class="iig-settings-group ${refsSectionVisible ? '' : 'iig-hidden'}" id="iig_additional_refs_section">
+            <div class="iig-settings-group" id="iig_additional_refs_section">
                 <div class="iig-settings-group-title"><i class="fa-solid fa-images"></i><span>${t`Additional references`}</span></div>
 
                 <details class="iig-reference-library-settings">
@@ -959,6 +975,10 @@ function buildReferencesSettingsSectionHtml(settings = getSettings()) {
                         </button>
                     </div>
                 </div>
+                <label class="checkbox_label">
+                    <input type="checkbox" id="iig_send_ref_descriptions" ${settings.sendRefDescriptions !== false ? 'checked' : ''}>
+                    <span>${t`Send reference descriptions from lorebook`}</span>
+                </label>
                 <div id="iig_additional_refs_status" class="hint" style="margin-bottom: 8px;"></div>
                 <div id="iig_additional_refs_list"></div>
             </div>
@@ -969,10 +989,6 @@ function buildReferencesSettingsSectionHtml(settings = getSettings()) {
                 <label class="checkbox_label">
                     <input type="checkbox" id="iig_ref_instruction_enabled" ${settings.refInstructionEnabled !== false ? 'checked' : ''}>
                     <span>${t`Send reference instruction`}</span>
-                </label>
-                <label class="checkbox_label">
-                    <input type="checkbox" id="iig_send_ref_descriptions" ${settings.sendRefDescriptions !== false ? 'checked' : ''}>
-                    <span>${t`Send reference descriptions from lorebook`}</span>
                 </label>
                 <textarea
                     id="iig_ref_instruction"
@@ -1143,7 +1159,7 @@ async function showLastRequestPopup() {
 // ----- {{iig-book}} macro preview popup -----
 
 async function showIigBookPreviewPopup() {
-    const rendered = renderIigBookMacro();
+    const rendered = renderIigBookMacro(getSettings(), resolveActiveProvider()?.supportsReferences(getSettings()) === true);
     const hintHtml = `<p class="hint">${t`Paste {{iig-book}} into a character card or preset to inject this text into the LLM's context. Only enabled lorebooks with active references are included.`}</p>`;
     const bodyHtml = rendered
         ? `${hintHtml}<pre class="iig-last-req-prompt">${sanitizeForHtml(rendered)}</pre>`
@@ -1571,9 +1587,19 @@ function bindApiSectionEvents(settings, updateVisibility) {
     for (const field of NOVELAI_NUMERIC_FIELDS) {
         document.getElementById(`iig_novelai_${field.id}`)?.addEventListener('input', (event) => {
             settings[field.key] = event.target.value === '' ? '' : Number(event.target.value);
+            if (field.id === 'width' || field.id === 'height') syncNovelAIResolution(settings);
             saveSettings();
         });
     }
+    document.getElementById('iig_novelai_resolution')?.addEventListener('change', (event) => {
+        const preset = NOVELAI_RESOLUTION_PRESETS.find(item => `${item.width}x${item.height}` === event.target.value);
+        if (!preset) return;
+        settings.novelaiWidth = preset.width;
+        settings.novelaiHeight = preset.height;
+        document.getElementById('iig_novelai_width').value = String(preset.width);
+        document.getElementById('iig_novelai_height').value = String(preset.height);
+        saveSettings();
+    });
     for (const [id, key] of [
         ['sampler', 'novelaiSampler'], ['noise_schedule', 'novelaiNoiseSchedule'],
         ['character_descriptions_mode', 'novelaiCharacterDescriptionsMode'],
@@ -2239,6 +2265,7 @@ function refreshAdditionalReferencesList() {
         selectedId: selectedAdditionalReferenceId,
         query: additionalReferenceSearchQuery,
         filter: additionalReferenceFilter,
+        supportsImageReferences: resolveActiveProvider(settings)?.supportsReferences(settings) === true,
     });
     filterAdditionalReferenceRows();
 }
@@ -2342,6 +2369,7 @@ function bindAdditionalReferencesEvents(settings) {
         if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) {
             return;
         }
+        if (target.closest('.iig-reference-unavailable, [disabled]')) return;
 
         if (target.id === 'iig_additional_refs_search') {
             additionalReferenceSearchQuery = target.value;
@@ -2381,6 +2409,7 @@ function bindAdditionalReferencesEvents(settings) {
 
     document.getElementById('iig_additional_refs_list')?.addEventListener('change', async (e) => {
         const target = e.target;
+        if (target instanceof Element && target.closest('.iig-reference-unavailable, [disabled]')) return;
         if (target instanceof HTMLSelectElement && target.id === 'iig_additional_refs_filter') {
             additionalReferenceFilter = ['enabled', 'match', 'always'].includes(target.value) ? target.value : 'all';
             filterAdditionalReferenceRows();
@@ -2471,6 +2500,7 @@ function bindAdditionalReferencesEvents(settings) {
     document.getElementById('iig_additional_refs_list')?.addEventListener('click', async (e) => {
         const target = e.target instanceof Element ? e.target : null;
         if (!target) return;
+        if (target.closest('.iig-reference-unavailable, [disabled]')) return;
 
         const selectButton = target.closest('[data-ref-select]');
         if (selectButton) {
@@ -2625,8 +2655,12 @@ function buildUpdateVisibility(settings) {
         document.getElementById('iig_model_row')?.classList.toggle('iig-hidden', isNaistera);
         document.getElementById('iig_image_context_section')?.classList.toggle('iig-hidden', !refsSupported);
         document.getElementById('iig_image_context_count_row')?.classList.toggle('iig-hidden', !(refsSupported && settings.imageContextEnabled));
-        document.getElementById('iig_additional_refs_section')?.classList.toggle('iig-hidden', !refsSupported);
         document.getElementById('iig_ref_instruction_section')?.classList.toggle('iig-hidden', !refsSupported);
+        syncAdditionalReferenceAvailability(refsSupported);
+        filterAdditionalReferenceRows();
+        document.getElementById('iig_additional_refs_import').disabled = !refsSupported;
+        const addLabel = document.querySelector('#iig_additional_refs_add span');
+        if (addLabel) addLabel.textContent = refsSupported ? t`Add reference` : t`Add description`;
 
         // Обновляем provider-limit warning в status-строке без ре-рендера
         // карточек (чтобы не терять фокус в inputs).
@@ -2646,6 +2680,7 @@ function buildUpdateVisibility(settings) {
         document.getElementById('iig_novelai_skip_cfg_above_sigma_row')?.classList.toggle('iig-hidden', isNovelAIV5);
         document.getElementById('iig_novelai_noise_schedule_row')?.classList.toggle('iig-hidden', isNovelAIV5);
         document.getElementById('iig_novelai_hint')?.classList.toggle('iig-hidden', !isNovelAI);
+        syncNovelAIResolution(settings);
         syncNegativePromptInputs(settings);
         document.getElementById('iig_naistera_character_descriptions_row')?.classList.toggle('iig-hidden', !isNaistera);
         document.getElementById('iig_naistera_aspect_row')?.classList.toggle('iig-hidden', !isNaistera);

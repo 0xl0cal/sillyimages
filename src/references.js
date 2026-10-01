@@ -29,6 +29,7 @@ import {
 import {
     extractGeneratedImageUrlsFromText,
     getMessageRenderText,
+    filterPromptReferences,
 } from './parser.js';
 import { t } from './i18n.js';
 
@@ -734,6 +735,8 @@ export async function collectPreviousContextReferences(messageId, format, reques
 
 // ----- Additional references -----
 
+let additionalReferencesSupportImages = true;
+
 export function buildAdditionalReferenceRowsHtml(settings = getSettings(), viewState = {}) {
     const refs = getActiveLorebookReferences(settings);
     const isPowerMode = settings.additionalReferencesMode === 'power';
@@ -742,30 +745,35 @@ export function buildAdditionalReferenceRowsHtml(settings = getSettings(), viewS
     const selectedRef = refs[selectedIndex] || null;
     const query = String(viewState.query || '');
     const filter = ['enabled', 'match', 'always'].includes(viewState.filter) ? viewState.filter : 'all';
+    const supportsImages = viewState.supportsImageReferences ?? additionalReferencesSupportImages;
     const listRowsHtml = refs.map((ref, index) => {
         const previewSrc = normalizeStoredImagePath(ref.imagePath);
         const isAlways = ref.matchMode === 'always';
         const isEnabled = ref.enabled !== false;
+        const unavailable = !supportsImages && Boolean(previewSrc);
         const previewHtml = previewSrc
             ? `<img src="${sanitizeForHtml(previewSrc)}" alt="${sanitizeForHtml(ref.name || `ref-${index + 1}`)}" class="iig-additional-ref-list-thumb">`
-            : `<div class="iig-additional-ref-list-thumb iig-additional-ref-thumb-placeholder"><i class="fa-solid fa-image"></i></div>`;
+            : `<div class="iig-additional-ref-list-thumb iig-additional-ref-thumb-placeholder"><i class="fa-solid fa-align-left"></i></div>`;
         const title = String(ref.name || '').trim() || t`Untitled reference`;
         const description = String(ref.description || '').replace(/\s+/g, ' ').trim() || t`No description`;
         const searchText = `${ref.name || ''} ${ref.description || ''} ${ref.group || ''}`.toLowerCase();
         return `
             <div
-                class="iig-additional-ref-list-row ${ref.id === selectedRef?.id ? 'selected' : ''} ${isEnabled ? '' : 'disabled'}"
+                class="iig-additional-ref-list-row ${ref.id === selectedRef?.id ? 'selected' : ''} ${isEnabled ? '' : 'disabled'} ${unavailable ? 'iig-reference-unavailable' : ''}"
                 data-ref-index="${index}"
                 data-ref-id="${sanitizeForHtml(ref.id)}"
                 data-ref-search="${sanitizeForHtml(searchText)}"
-                data-ref-enabled="${isEnabled ? 'true' : 'false'}"
+                data-ref-has-image="${previewSrc ? 'true' : 'false'}"
+                data-ref-configured-enabled="${isEnabled ? 'true' : 'false'}"
+                data-ref-enabled="${isEnabled && !unavailable ? 'true' : 'false'}"
+                aria-disabled="${unavailable}"
                 data-ref-match-mode="${isAlways ? 'always' : 'match'}"
             >
                 <label class="checkbox_label iig-additional-ref-list-enabled" title="${isEnabled ? t`Disable reference` : t`Enable reference`}">
-                    <input type="checkbox" class="iig-additional-ref-enabled" ${isEnabled ? 'checked' : ''}>
+                    <input type="checkbox" class="iig-additional-ref-enabled" ${isEnabled ? 'checked' : ''} ${unavailable ? 'disabled' : ''}>
                     <span></span>
                 </label>
-                <button type="button" class="menu_button iig-additional-ref-select" data-ref-select="${sanitizeForHtml(ref.id)}">
+                <button type="button" class="menu_button iig-additional-ref-select" data-ref-select="${sanitizeForHtml(ref.id)}" ${unavailable ? 'disabled' : ''}>
                     ${previewHtml}
                     <span class="iig-additional-ref-list-copy">
                         <strong>${sanitizeForHtml(title)}</strong>
@@ -783,9 +791,10 @@ export function buildAdditionalReferenceRowsHtml(settings = getSettings(), viewS
     const selectedPreviewSrc = normalizeStoredImagePath(selectedRef?.imagePath);
     const selectedPreviewHtml = selectedPreviewSrc
         ? `<img src="${sanitizeForHtml(selectedPreviewSrc)}" alt="${sanitizeForHtml(selectedRef?.name || t`Reference`)}" class="iig-additional-ref-editor-thumb">`
-        : `<div class="iig-additional-ref-editor-thumb iig-additional-ref-thumb-placeholder"><i class="fa-solid fa-image"></i></div>`;
+        : `<div class="iig-additional-ref-editor-thumb iig-additional-ref-thumb-placeholder"><i class="fa-solid fa-align-left"></i></div>`;
+    const editorUnavailable = !supportsImages && Boolean(selectedPreviewSrc);
     const editorHtml = selectedRef ? `
-        <div class="iig-additional-ref-editor-content" data-ref-index="${selectedIndex}" data-ref-id="${sanitizeForHtml(selectedRef.id)}">
+        <fieldset class="iig-additional-ref-editor-content ${editorUnavailable ? 'iig-reference-unavailable' : ''}" data-ref-index="${selectedIndex}" data-ref-id="${sanitizeForHtml(selectedRef.id)}" data-ref-has-image="${selectedPreviewSrc ? 'true' : 'false'}" ${editorUnavailable ? 'disabled' : ''}>
             <div class="iig-additional-ref-editor-heading">
                 <div>
                     <strong>${sanitizeForHtml(String(selectedRef.name || '').trim() || t`Untitled reference`)}</strong>
@@ -800,7 +809,7 @@ export function buildAdditionalReferenceRowsHtml(settings = getSettings(), viewS
             <div class="iig-additional-ref-editor-main">
                 <div class="iig-additional-ref-editor-image">
                     ${selectedPreviewHtml}
-                    <div class="iig-additional-ref-image-actions">
+                    <fieldset class="iig-additional-ref-image-actions" ${supportsImages ? '' : 'disabled'}>
                         <label class="menu_button iig-additional-ref-upload" title="${t`Upload image`}">
                             <i class="fa-solid fa-upload"></i>
                             <input type="file" accept="image/*" class="iig-additional-ref-file" style="display:none">
@@ -808,7 +817,7 @@ export function buildAdditionalReferenceRowsHtml(settings = getSettings(), viewS
                         <button type="button" class="menu_button iig-additional-ref-upload-url" title="${t`Upload image by URL`}">
                             <i class="fa-solid fa-link"></i>
                         </button>
-                    </div>
+                    </fieldset>
                 </div>
                 <div class="iig-additional-ref-editor-fields">
                     <label>
@@ -874,7 +883,7 @@ export function buildAdditionalReferenceRowsHtml(settings = getSettings(), viewS
                     <i class="fa-solid fa-trash"></i><span>${t`Delete`}</span>
                 </button>
             </div>
-        </div>` : `<div class="iig-library-empty iig-additional-ref-editor-empty">${t`Add a reference to start editing.`}</div>`;
+        </fieldset>` : `<div class="iig-library-empty iig-additional-ref-editor-empty">${t`Add a reference to start editing.`}</div>`;
 
     return `
         <div class="iig-additional-ref-workspace ${isPowerMode ? 'power' : 'simple'}">
@@ -902,6 +911,30 @@ export function buildAdditionalReferenceRowsHtml(settings = getSettings(), viewS
         </div>`;
 }
 
+// Availability is derived from the model; saved reference switches stay unchanged.
+export function syncAdditionalReferenceAvailability(supportsImages) {
+    additionalReferencesSupportImages = supportsImages;
+    const container = document.getElementById('iig_additional_refs_list');
+    if (!container) return;
+    for (const row of container.querySelectorAll('.iig-additional-ref-list-row')) {
+        const unavailable = !supportsImages && row.dataset.refHasImage === 'true';
+        row.classList.toggle('iig-reference-unavailable', unavailable);
+        row.setAttribute('aria-disabled', String(unavailable));
+        row.title = unavailable ? t`This model uses text-only references.` : '';
+        row.dataset.refEnabled = String(!unavailable && row.dataset.refConfiguredEnabled === 'true');
+        row.querySelectorAll('input, button').forEach(control => { control.disabled = unavailable; });
+    }
+    const editor = container.querySelector('.iig-additional-ref-editor-content');
+    if (editor) {
+        const unavailable = !supportsImages && editor.dataset.refHasImage === 'true';
+        editor.disabled = unavailable;
+        editor.classList.toggle('iig-reference-unavailable', unavailable);
+        editor.setAttribute('aria-disabled', String(unavailable));
+    }
+    const imageActions = container.querySelector('.iig-additional-ref-image-actions');
+    if (imageActions) imageActions.disabled = !supportsImages;
+}
+
 /**
  * Обновляет только статус-строку под списком, без ре-рендера карточек.
  * Нужно, чтобы при смене провайдера / модели не терять фокус в inputs.
@@ -916,7 +949,7 @@ export function renderAdditionalReferencesStatus(providerMaxRefs = 0) {
     const refs = getActiveLorebookReferences().filter((ref) =>
         String(ref?.name || '').trim()
         && (String(ref?.imagePath || '').trim() || String(ref?.description || '').trim()));
-    const enabledRefs = refs.filter((ref) => ref.enabled !== false);
+    const enabledRefs = filterPromptReferences(refs, additionalReferencesSupportImages).filter((ref) => ref.enabled !== false);
     const enabledImageCount = enabledRefs.filter((ref) => String(ref.imagePath || '').trim()).length;
     const alwaysCount = enabledRefs.filter((ref) => ref.matchMode === 'always').length;
     const parts = [];
@@ -941,7 +974,9 @@ export function renderAdditionalReferencesList(providerMaxRefs = 0, viewState = 
         return;
     }
 
+    additionalReferencesSupportImages = viewState.supportsImageReferences ?? additionalReferencesSupportImages;
     container.innerHTML = buildAdditionalReferenceRowsHtml(getSettings(), viewState);
+    syncAdditionalReferenceAvailability(additionalReferencesSupportImages);
     renderAdditionalReferencesStatus(providerMaxRefs);
 }
 
@@ -1015,14 +1050,14 @@ function formatLorebookRefsSections(refs) {
  * не выводится, чтобы выхлоп выглядел как до D.1 (один лорбук → плоский
  * список групп).
  */
-export function renderIigBookMacro(settings = getSettings()) {
+export function renderIigBookMacro(settings = getSettings(), supportsImageReferences = true) {
     const lorebooks = getMatchingLorebooks(settings);
     if (lorebooks.length === 0) return '';
 
     const blocks = [];
     const showHeader = lorebooks.length > 1;
     for (const lb of lorebooks) {
-        const body = formatLorebookRefsSections(lb.refs);
+        const body = formatLorebookRefsSections(filterPromptReferences(lb.refs, supportsImageReferences));
         if (!body) continue;
         blocks.push(showHeader ? `=== ${lb.name} ===\n${body}` : body);
     }
@@ -1036,13 +1071,13 @@ export function renderIigBookMacro(settings = getSettings()) {
  * совместимости с текущей фактической версией ST. Если API недоступно —
  * тихо пропускает регистрацию (extension продолжает работать).
  */
-export function registerIigBookMacro() {
+export function registerIigBookMacro(getImageReferenceSupport) {
     try {
         const context = SillyTavern.getContext();
         if (typeof context?.registerMacro === 'function') {
             context.registerMacro(
                 'iig-book',
-                () => renderIigBookMacro(),
+                () => renderIigBookMacro(getSettings(), getImageReferenceSupport()),
                 'Inline Image Generation: renders additional references grouped by category for LLM hints.',
             );
             console.log('[IIG] Registered {{iig-book}} macro');

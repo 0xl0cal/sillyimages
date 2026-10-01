@@ -68,11 +68,11 @@ A ref entry has: name (or a comma-separated list of aliases), description, image
 
 **Simple** searches all lorebooks using names and comma-separated aliases as whole words, regardless of case. Each card has its own enable switch and sending mode. **Power** applies lorebook switches, regex, secondary keys, and priority. All secondary keys must occur in the image-generation prompt.
 
-Enabled entries can contain an image, a description, or both. **Send reference descriptions from lorebook** adds descriptions to the final prompt. Models without image-reference support receive only description-only entries; image entries and their descriptions are excluded. Image attachments follow the selected model's reference limit.
+Enabled entries can contain an image, a description, or both. **Send reference descriptions from lorebook** adds descriptions to the final prompt. Models without image-reference support receive only text entries. You can edit and disable these entries; image entries appear dimmed with their controls disabled. Selecting an image-capable model restores their saved switches. The `{{iig-book}}` macro includes only entries available to the selected model. Image attachments follow the model's reference limit.
 
 ### Styles and negative prompts
 
-The **Styles** library has two tabs: **Styles** and **Negative prompts**. Each tab has its own active entry, search, editor and enable switch. Opening an entry selects it for editing; **Activate** applies it to generation.
+The **Styles & Negatives** library has two tabs: **Styles** and **Negative prompts**. Each tab has its own active entry, search, editor and enable switch. Opening an entry selects it for editing; **Activate** applies it to generation.
 
 An active negative prompt supplies undesired content for direct NovelAI and NovelAI models on Naistera. Disable it to use the custom **Negative prompt** field in **Generation**. Other providers use their own settings.
 
@@ -80,7 +80,7 @@ An active negative prompt supplies undesired content for direct NovelAI and Nove
 
 Select **NovelAI**, enter a persistent NovelAI API token and choose **V5 Full**, **V5 Curated**, **V4.5 Full** or **V4.5 Curated**. The default endpoint is `https://image.novelai.net`. The image model picker lists these supported models; NovelAI's OpenAI-compatible model endpoint lists text models.
 
-**Generation** controls width, height, steps, CFG scale, CFG rescale, seed and sampler. V4.5 also accepts noise schedule and **Skip CFG above sigma** (`0` disables it). Dimensions use multiples of 64 with a maximum of 3 megapixels. Seed `-1` chooses a random seed. These settings are saved in connection profiles.
+In **Generation**, choose a resolution preset or enter width and height. Portrait, landscape and square sizes are available alongside steps, CFG scale, CFG rescale, seed and sampler. V4.5 also accepts noise schedule and **Skip CFG above sigma** (`0` disables it). Dimensions use multiples of 64 with a maximum of 3 megapixels. Seed `-1` chooses a random seed. These settings are saved in connection profiles.
 
 Separate character prompts with `|` or `\|`: `scene | 1boy | 1girl`. **Send character descriptions** controls descriptions from the character/persona library; **Send as character prompt** adds them as separate character captions. Direct NovelAI generates from text and does not attach avatars, image references or image context.
 

@@ -18,6 +18,15 @@ export const NOVELAI_SAMPLERS = Object.freeze({
 });
 export const NOVELAI_NOISE_SCHEDULES = Object.freeze(['native', 'karras', 'exponential', 'polyexponential']);
 
+export const NOVELAI_RESOLUTION_PRESETS = Object.freeze([
+    { width: 832, height: 1216, label: '832x1216 (Portrait)' },
+    { width: 1216, height: 832, label: '1216x832 (Landscape)' },
+    { width: 1024, height: 1024, label: '1024x1024 (Square)' },
+    { width: 1024, height: 1536, label: '1024x1536 (Portrait)' },
+    { width: 1536, height: 1024, label: '1536x1024 (Landscape)' },
+    { width: 1536, height: 1536, label: '1536x1536 (Square)' },
+]);
+
 export const NOVELAI_NUMERIC_FIELDS = Object.freeze([
     { key: 'novelaiWidth', id: 'width', label: 'Width', min: 64, max: 2048, step: 64 },
     { key: 'novelaiHeight', id: 'height', label: 'Height', min: 64, max: 2048, step: 64 },

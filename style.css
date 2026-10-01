@@ -1511,6 +1511,22 @@
     opacity: 0.52;
 }
 
+.iig-additional-ref-list-row.iig-reference-unavailable,
+.iig-additional-ref-editor-content.iig-reference-unavailable {
+    opacity: 0.35;
+    filter: grayscale(1);
+}
+
+.iig-reference-unavailable button,
+.iig-reference-unavailable input,
+.iig-additional-ref-image-actions:disabled .menu_button {
+    cursor: not-allowed;
+}
+
+.iig-additional-ref-image-actions:disabled {
+    opacity: 0.45;
+}
+
 .iig-additional-ref-list-enabled {
     display: flex;
     width: 28px;
@@ -1597,6 +1613,14 @@
     min-width: 0;
     flex-direction: column;
     gap: 9px;
+}
+
+fieldset.iig-additional-ref-editor-content,
+fieldset.iig-additional-ref-image-actions {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
 }
 
 .iig-additional-ref-editor-heading {
