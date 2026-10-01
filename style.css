@@ -276,6 +276,13 @@
     align-items: start;
 }
 
+.iig-prompt-library-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
 .iig-style-library-head {
     flex-wrap: wrap;
 }

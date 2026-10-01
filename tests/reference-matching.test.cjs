@@ -207,6 +207,131 @@ test('description-only references reach the final prompt', async () => {
     assert.equal(parser.buildFinalGenerationPrompt('Lenore at a desk', '', matched, settings), 'Lenore at a desk');
 });
 
+test('switching Naistera to NovelAI drops image-bound descriptions but keeps text records', async () => {
+    const { settings, providers, requests } = await loadExtension();
+    const provider = new providers.NaisteraProvider();
+    provider.modelCatalog.set('image-model', { references: true });
+    provider.modelCatalog.set('novelai-v5', { references: false, negativePrompt: true });
+    const matchedAdditionalRefs = [
+        { name: 'Lenore', imagePath: '/lenore.png', description: 'image-bound outfit' },
+        { name: 'Lenore', description: 'text-only silver ring' },
+    ];
+    const generate = () => provider.generate({ prompt: 'Lenore', options: { matchedAdditionalRefs, characterDescriptionPromptBlock: '' } });
+    await generate();
+    assert.match(JSON.parse(requests.at(-1).body).prompt, /image-bound outfit/);
+    settings.naisteraModel = 'novelai-v5';
+    await generate();
+    const body = JSON.parse(requests.at(-1).body);
+    assert.doesNotMatch(body.prompt, /image-bound outfit/);
+    assert.match(body.prompt, /text-only silver ring/);
+    assert.equal(body.reference_objects, undefined);
+    settings.naisteraModel = 'image-model';
+    await generate();
+    assert.match(JSON.parse(requests.at(-1).body).prompt, /image-bound outfit/);
+});
+
+test('negative library overrides fallback only for NovelAI; explicit request override wins', async () => {
+    const { settings, settingsModule, providers, requests } = await loadExtension();
+    const negative = settingsModule.createStyle('Anatomy', 'negativePrompts');
+    settingsModule.updateStyle(negative.id, { value: 'bad anatomy' }, 'negativePrompts');
+    settings.activeNegativePromptId = negative.id;
+    settings.naisteraNegativePrompt = 'fallback';
+    const style = settingsModule.createStyle('Painting');
+    settingsModule.updateStyle(style.id, { value: 'oil painting' });
+    settings.activeStyleId = style.id;
+    assert.equal(settingsModule.getActiveStyle(settings).value, 'oil painting');
+    const provider = new providers.NaisteraProvider();
+    provider.modelCatalog.set('image-model', { references: true, negativePrompt: true });
+    provider.modelCatalog.set('novelai-v5', { references: false, negativePrompt: true });
+    const generate = (options = {}) => provider.generate({ prompt: 'scene', options: { characterDescriptionPromptBlock: '', ...options } });
+    await generate();
+    assert.equal(JSON.parse(requests.at(-1).body).negative_prompt, 'fallback');
+    settings.naisteraModel = 'novelai-v5';
+    await generate();
+    assert.equal(JSON.parse(requests.at(-1).body).negative_prompt, 'bad anatomy');
+    await generate({ negativePrompt: 'request override' });
+    assert.equal(JSON.parse(requests.at(-1).body).negative_prompt, 'request override');
+    settingsModule.removeStyle(negative.id, 'negativePrompts');
+    await generate();
+    assert.equal(JSON.parse(requests.at(-1).body).negative_prompt, 'fallback');
+    assert.equal(settings.activeStyleId, style.id);
+});
+
+test('native NovelAI sends JSON, structured character captions and configurable parameters', async () => {
+    const { settings, providers, requests } = await loadExtension({ respond: () => Response.json({ images: [{ image: 'AA==', seed: 42 }] }, { status: 201 }) });
+    Object.assign(settings, {
+        apiType: 'novelai', endpoint: '', model: 'nai-diffusion-4-5-full',
+        novelaiSteps: 28, novelaiCfgScale: 7, novelaiCfgRescale: 0.25,
+        novelaiWidth: 832, novelaiHeight: 1216, novelaiSeed: 42,
+        novelaiSampler: 'k_euler_ancestral', novelaiNoiseSchedule: 'karras', novelaiSkipCfgAboveSigma: 19,
+        novelaiNegativePrompt: 'bad anatomy | bad hands', novelaiCharacterDescriptionsMode: 'none',
+    });
+    const provider = providers.resolveActiveProvider(settings);
+    assert.ok(provider);
+    assert.equal(provider.validate(settings).length, 0);
+    assert.equal(provider.supportsReferences(settings), false);
+    const result = await provider.generate({ prompt: 'bedroom | 1boy \\| 1girl', style: 'painting', options: { characterDescriptionPromptBlock: '' } });
+    assert.equal(result, 'data:image/png;base64,AA==');
+    const request = requests.at(-1);
+    assert.equal(request.url, 'https://image.novelai.net/ai/generate-image');
+    assert.equal(request.headers.Accept, 'application/json');
+    assert.equal(request.headers.Authorization, 'Bearer test');
+    const body = JSON.parse(request.body);
+    assert.equal(body.action, 'generate');
+    assert.equal(body.model, settings.model);
+    assert.equal(body.input, 'painting\n\nbedroom');
+    const p = body.parameters;
+    assert.equal(p.steps, 28);
+    assert.equal(p.scale, 7);
+    assert.equal(p.cfg_rescale, 0.25);
+    assert.equal(p.skip_cfg_above_sigma, 19);
+    assert.equal(p.seed, 42);
+    assert.equal(p.width, 832);
+    assert.equal(p.height, 1216);
+    assert.equal(p.n_samples, 1);
+    assert.equal(p.v4_prompt.caption.base_caption, body.input);
+    assert.deepEqual(Array.from(p.v4_prompt.caption.char_captions, c => c.char_caption), ['1boy', '1girl']);
+    assert.equal(p.v4_negative_prompt.caption.base_caption, 'bad anatomy');
+    assert.equal(p.v4_negative_prompt.caption.char_captions[0].char_caption, 'bad hands');
+    assert.equal(p.v4_negative_prompt.caption.char_captions[1].char_caption, '');
+    settings.rawEndpoint = true;
+    settings.endpoint = 'https://example.test/custom';
+    await provider.generate({ prompt: 'scene', options: { characterDescriptionPromptBlock: '' } });
+    assert.equal(requests.at(-1).url, settings.endpoint);
+});
+
+test('native NovelAI rejects invalid inputs without HTTP requests', async () => {
+    const { settings, providers, requests } = await loadExtension();
+    Object.assign(settings, { apiType: 'novelai', endpoint: '', model: 'nai-diffusion-4-5-full', novelaiCharacterDescriptionsMode: 'none' });
+    const provider = providers.resolveActiveProvider(settings);
+    assert.ok(provider);
+    for (const [key, value] of [
+        ['novelaiWidth', 833], ['novelaiHeight', 0], ['novelaiSteps', 0], ['novelaiSteps', 51],
+        ['novelaiCfgScale', NaN], ['novelaiCfgRescale', 2], ['novelaiSeed', -2],
+        ['novelaiSampler', 'invalid'], ['novelaiNoiseSchedule', 'invalid'], ['novelaiSkipCfgAboveSigma', -1],
+    ]) {
+        const saved = settings[key];
+        settings[key] = value;
+        assert.ok(provider.validate(settings).length > 0, key);
+        await assert.rejects(provider.generate({ prompt: 'scene' }), undefined, key);
+        settings[key] = saved;
+    }
+    await assert.rejects(provider.generate({ prompt: `scene${' | boy'.repeat(7)}` }), /character/i);
+    assert.equal(requests.length, 0);
+});
+
+test('native NovelAI reports API errors and empty responses', async () => {
+    for (const [response, pattern] of [
+        [Response.json({ message: 'Invalid access token' }, { status: 401 }), /401.*Invalid access token/],
+        [Response.json({ images: [] }), /image/i],
+        [new Response('not JSON'), /JSON|response/i],
+    ]) {
+        const { settings, providers } = await loadExtension({ respond: () => response });
+        Object.assign(settings, { apiType: 'novelai', endpoint: '', model: 'nai-diffusion-5-full', novelaiCharacterDescriptionsMode: 'none' });
+        await assert.rejects(providers.resolveActiveProvider(settings).generate({ prompt: 'scene' }), pattern);
+    }
+});
+
 test('Naistera sends matching images and descriptions in the HTTP request', async () => {
     const { settings, parser, providers, requests } = await loadExtension();
     setReferences(settings, [{ name: 'Lenore', description: 'silver ring', imagePath: '/ref.png' }]);
@@ -221,10 +346,10 @@ test('Naistera sends matching images and descriptions in the HTTP request', asyn
     assert.match(body.prompt, /Lenore: silver ring/);
 });
 
-test('NovelAI includes matching descriptions without requesting reference images', async () => {
+test('NovelAI includes matching text records without requesting reference images', async () => {
     const { settings, parser, providers, requests } = await loadExtension();
     settings.naisteraModel = 'novelai-v5';
-    setReferences(settings, [{ name: 'Lenore', description: 'silver ring', imagePath: '/ref.png' }]);
+    setReferences(settings, [{ name: 'Lenore', description: 'silver ring' }]);
     const provider = new providers.NaisteraProvider();
     provider.modelCatalog.set('novelai-v5', { references: false });
     const matchedAdditionalRefs = parser.getMatchedAdditionalReferences('Lenore at a desk');

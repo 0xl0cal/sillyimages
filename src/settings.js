@@ -277,7 +277,9 @@ export const defaultSettings = Object.freeze({
     imageActionsOpacity: 80,
     styles: [],
     activeStyleId: '',
-    apiType: 'openai', // 'openai' | 'xai' | 'gemini' | 'openrouter' | 'electronhub' | 'naistera' | 'a1111'
+    negativePrompts: [],
+    activeNegativePromptId: '',
+    apiType: 'openai', // 'openai' | 'xai' | 'gemini' | 'openrouter' | 'electronhub' | 'naistera' | 'novelai' | 'a1111'
     endpoint: '',
     /**
      * Если true — endpoint используется «как есть» для генерации (никаких
@@ -315,6 +317,18 @@ export const defaultSettings = Object.freeze({
     naisteraPolling: false,
     naisteraPollIntervalMs: 3000,
     naisteraPollTimeoutMs: 600000,
+    // Direct NovelAI text-to-image settings.
+    novelaiWidth: 832,
+    novelaiHeight: 1216,
+    novelaiSteps: 23,
+    novelaiCfgScale: 5,
+    novelaiCfgRescale: 0,
+    novelaiSampler: 'k_euler_ancestral',
+    novelaiNoiseSchedule: 'karras',
+    novelaiSeed: -1,
+    novelaiSkipCfgAboveSigma: 0,
+    novelaiNegativePrompt: '',
+    novelaiCharacterDescriptionsMode: 'character-prompt',
     // A1111 / Forge specific (txt2img only — references not supported)
     a1111Width: 512,
     a1111Height: 512,
@@ -399,6 +413,17 @@ export const CONNECTION_FIELDS = Object.freeze([
     'naisteraPolling',
     'naisteraPollIntervalMs',
     'naisteraPollTimeoutMs',
+    'novelaiWidth',
+    'novelaiHeight',
+    'novelaiSteps',
+    'novelaiCfgScale',
+    'novelaiCfgRescale',
+    'novelaiSampler',
+    'novelaiNoiseSchedule',
+    'novelaiSeed',
+    'novelaiSkipCfgAboveSigma',
+    'novelaiNegativePrompt',
+    'novelaiCharacterDescriptionsMode',
     'a1111Width',
     'a1111Height',
     'a1111Steps',
@@ -564,6 +589,7 @@ export const VIDEO_MODEL_KEYWORDS = [
 export const DEFAULT_ENDPOINTS = Object.freeze({
     xai: 'https://api.x.ai',
     naistera: 'https://naistera.org',
+    novelai: 'https://image.novelai.net',
     openrouter: 'https://openrouter.ai/api/v1',
     electronhub: 'https://api.electronhub.ai',
     a1111: 'http://127.0.0.1:7860',
@@ -576,6 +602,7 @@ export const ENDPOINT_PLACEHOLDERS = Object.freeze({
     openrouter: 'https://openrouter.ai/api/v1',
     electronhub: 'https://api.electronhub.ai',
     naistera: 'https://naistera.org',
+    novelai: 'https://image.novelai.net',
     a1111: 'http://127.0.0.1:7860',
 });
 
@@ -681,6 +708,7 @@ export function normalizeConfiguredEndpoint(apiType, endpoint) {
     if (!trimmed) {
         if (apiType === 'xai') return DEFAULT_ENDPOINTS.xai;
         if (apiType === 'naistera') return DEFAULT_ENDPOINTS.naistera;
+        if (apiType === 'novelai') return DEFAULT_ENDPOINTS.novelai;
         if (apiType === 'openrouter') return DEFAULT_ENDPOINTS.openrouter;
         if (apiType === 'electronhub') return DEFAULT_ENDPOINTS.electronhub;
         if (apiType === 'a1111') return DEFAULT_ENDPOINTS.a1111;
@@ -725,30 +753,39 @@ export function getEffectiveEndpoint(settings = getSettings()) {
 
 // ----- Styles -----
 
-export function ensureStyles(settings = getSettings()) {
-    if (!Array.isArray(settings.styles)) {
-        settings.styles = [];
+export function getPromptLibraryActiveKey(kind = 'styles') {
+    return kind === 'negativePrompts' ? 'activeNegativePromptId' : 'activeStyleId';
+}
+
+function promptLibraryDefaultName(kind, index) {
+    return kind === 'negativePrompts' ? t`Negative prompt ${index + 1}` : t`Style ${index + 1}`;
+}
+
+export function ensureStyles(settings = getSettings(), kind = 'styles') {
+    if (!Array.isArray(settings[kind])) {
+        settings[kind] = [];
     }
 
-    settings.styles = settings.styles.map((style, index) => ({
+    settings[kind] = settings[kind].map((style, index) => ({
         id: String(style?.id || `iig-style-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`),
-        name: String(style?.name || t`Style ${index + 1}`).trim() || t`Style ${index + 1}`,
+        name: String(style?.name || '').trim() || promptLibraryDefaultName(kind, index),
         value: String(style?.value || '').trim(),
     }));
 
-    if (!settings.styles.some((style) => style.id === settings.activeStyleId)) {
-        settings.activeStyleId = '';
+    const activeKey = getPromptLibraryActiveKey(kind);
+    if (!settings[kind].some((style) => style.id === settings[activeKey])) {
+        settings[activeKey] = '';
     }
 
-    return settings.styles;
+    return settings[kind];
 }
 
-export function createStyle(name = '') {
+export function createStyle(name = '', kind = 'styles') {
     const settings = getSettings();
-    const styles = ensureStyles(settings);
+    const styles = ensureStyles(settings, kind);
     const style = {
         id: `iig-style-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        name: String(name || '').trim() || t`Style ${styles.length + 1}`,
+        name: String(name || '').trim() || promptLibraryDefaultName(kind, styles.length),
         value: '',
     };
     styles.push(style);
@@ -760,9 +797,9 @@ export function getActiveStyle(settings = getSettings()) {
     return styles.find((style) => style.id === settings.activeStyleId) || null;
 }
 
-export function updateStyle(styleId, patch) {
+export function updateStyle(styleId, patch, kind = 'styles') {
     const settings = getSettings();
-    const style = ensureStyles(settings).find((item) => item.id === styleId);
+    const style = ensureStyles(settings, kind).find((item) => item.id === styleId);
     if (!style) {
         return null;
     }
@@ -777,19 +814,29 @@ export function updateStyle(styleId, patch) {
     return style;
 }
 
-export function removeStyle(styleId) {
+export function removeStyle(styleId, kind = 'styles') {
     const settings = getSettings();
-    const styles = ensureStyles(settings);
+    const styles = ensureStyles(settings, kind);
     const index = styles.findIndex((item) => item.id === styleId);
     if (index === -1) {
         return false;
     }
 
     styles.splice(index, 1);
-    if (settings.activeStyleId === styleId) {
-        settings.activeStyleId = '';
+    const activeKey = getPromptLibraryActiveKey(kind);
+    if (settings[activeKey] === styleId) {
+        settings[activeKey] = '';
     }
     return true;
+}
+
+export function getEffectiveNegativePrompt(fallback = '', settings = getSettings()) {
+    const isNovelAI = settings.apiType === 'novelai'
+        || (settings.apiType === 'naistera' && isNaisteraNovelAIModel(settings.naisteraModel));
+    const active = isNovelAI
+        ? ensureStyles(settings, 'negativePrompts').find(item => item.id === settings.activeNegativePromptId)
+        : null;
+    return String(active ? active.value : fallback).trim();
 }
 
 // ----- Last request snapshot (in-memory, NOT persisted) -----

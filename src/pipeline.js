@@ -17,6 +17,7 @@ import {
     normalizeNaisteraModel,
     isNaisteraNovelAIModel,
     normalizeNaisteraCharacterDescriptionsMode,
+    getEffectiveNegativePrompt,
 } from './settings.js';
 import {
     saveImageToFile,
@@ -30,6 +31,7 @@ import {
 import {
     applyConfiguredStyleToTag,
     buildFinalGenerationPrompt,
+    filterPromptReferences,
     buildPersistedImageTag,
     buildPersistedMediaTag,
     convertLegacyTagsToInstructionFormat,
@@ -262,7 +264,9 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
         ? normalizeNaisteraModel(settings.naisteraModel)
         : (settings.model || '');
 
-    const aspectRatio = settings.apiType === 'naistera'
+    const aspectRatio = settings.apiType === 'novelai'
+        ? `${settings.novelaiWidth}:${settings.novelaiHeight}`
+        : settings.apiType === 'naistera'
         ? (options?.aspectRatio || settings.naisteraAspectRatio)
         : settings.apiType === 'xai'
             ? (options?.aspectRatio || settings.xaiAspectRatio)
@@ -275,8 +279,10 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
         lorebookName: String(ref?._lorebookName || ''),
         reason: ref?._matchReason || null,
     }));
-    const negativePrompt = settings.apiType === 'naistera' && provider?.supportsNegativePrompt(settings)
-        ? String(options?.negativePrompt ?? settings.naisteraNegativePrompt ?? '').trim()
+    const negativePrompt = provider?.supportsNegativePrompt(settings)
+        ? String(options?.negativePrompt ?? getEffectiveNegativePrompt(
+            settings.apiType === 'novelai' ? settings.novelaiNegativePrompt : settings.naisteraNegativePrompt, settings,
+        )).trim()
         : '';
 
     return {
@@ -295,14 +301,22 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
             apiType: settings.apiType,
             model,
             aspectRatio,
-            imageSize: settings.apiType === 'xai'
+            imageSize: settings.apiType === 'novelai' ? '' : settings.apiType === 'xai'
                 ? (options?.imageSize || settings.xaiResolution || '')
                 : (options?.imageSize || settings.imageSize || ''),
-            size: settings.size || '',
-            quality: settings.apiType === 'xai'
+            size: settings.apiType === 'novelai' ? `${settings.novelaiWidth}x${settings.novelaiHeight}` : settings.size || '',
+            quality: settings.apiType === 'novelai' ? '' : settings.apiType === 'xai'
                 ? (options?.quality || settings.xaiQuality || '')
                 : (options?.quality || settings.quality || ''),
             refInstructionApplied,
+            ...(settings.apiType === 'novelai' ? {
+                steps: settings.novelaiSteps,
+                cfgScale: settings.novelaiCfgScale,
+                cfgRescale: settings.novelaiCfgRescale,
+                sampler: settings.novelaiSampler,
+                noiseSchedule: settings.model.startsWith('nai-diffusion-5-') ? '' : settings.novelaiNoiseSchedule,
+                seed: settings.novelaiSeed,
+            } : {}),
         },
     };
 }
@@ -485,7 +499,7 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
     const maxRetries = settings.maxRetries;
     const baseDelay = settings.retryDelay;
 
-    const matchedAdditionalRefs = getMatchedAdditionalReferences(prompt);
+    let matchedAdditionalRefs = getMatchedAdditionalReferences(prompt);
     if (matchedAdditionalRefs.length > 0) {
         iigLog(
             'INFO',
@@ -500,16 +514,20 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
         matchedAdditionalRefs,
         providerOptions: options,
     });
+    const effectiveModelSettings = options.model
+        ? { ...settings, [settings.apiType === 'naistera' ? 'naisteraModel' : 'model']: options.model }
+        : settings;
+    matchedAdditionalRefs = filterPromptReferences(matchedAdditionalRefs, provider.supportsReferences(effectiveModelSettings));
     const naisteraDescriptionMode = normalizeNaisteraCharacterDescriptionsMode(settings.naisteraCharacterDescriptionsMode);
-    const characterDescriptionPromptBlock = settings.apiType === 'naistera'
+    const characterDescriptionPromptBlock = settings.apiType === 'naistera' || settings.apiType === 'novelai'
         ? await buildCharacterDescriptionPromptBlock({
             includeChar: true,
             includeUser: true,
             references,
-            mode: naisteraDescriptionMode,
+            mode: settings.apiType === 'novelai' ? settings.novelaiCharacterDescriptionsMode : naisteraDescriptionMode,
         }, settings)
         : '';
-    const wrapStyle = !(settings.apiType === 'naistera' && isNaisteraNovelAIModel(settings.naisteraModel));
+    const wrapStyle = !(settings.apiType === 'novelai' || (settings.apiType === 'naistera' && isNaisteraNovelAIModel(effectiveModelSettings.naisteraModel)));
 
     iigLog('INFO', `References collected for ${settings.apiType}: ${references.length} ref(s)`);
     for (let i = 0; i < references.length; i++) {
@@ -544,7 +562,7 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
         matchedAdditionalRefs,
         options,
         provider,
-        settings,
+        settings: effectiveModelSettings,
         characterDescriptionPromptBlock,
         wrapStyle,
     }));

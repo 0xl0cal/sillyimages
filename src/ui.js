@@ -19,6 +19,8 @@ import {
     createStyle,
     updateStyle,
     removeStyle,
+    getPromptLibraryActiveKey,
+    getEffectiveNegativePrompt,
     getActiveLorebookReferences,
     ensureLorebooks,
     getActiveLorebook,
@@ -73,8 +75,9 @@ import {
     renderIigBookMacro,
 } from './references.js';
 import { fetchModels, resolveActiveProvider, getActiveProviderMaxReferences, A1111_RESOLUTION_PRESETS } from './providers.js';
+import { NOVELAI_NUMERIC_FIELDS, NOVELAI_SAMPLERS, NOVELAI_NOISE_SCHEDULES } from './novelai.js';
 import { applyImageActionsStyle } from './imageActions.js';
-import { t } from './i18n.js';
+import { t, translate } from './i18n.js';
 import { buildCharacterLibraryBodyHtml, bindCharacterLibraryEvents } from './characterLibraryUi.js';
 // Относительный путь: /scripts/extensions/third-party/sillyimages/src/ui.js → /scripts/popup.js
 import { Popup } from '../../../../popup.js';
@@ -138,6 +141,47 @@ function buildConnectionProfilesBlockHtml(settings = getSettings()) {
     `;
 }
 
+function buildNovelAISettingsHtml(settings) {
+    const selectHtml = (id, label, key, options) => `
+        <div class="flex-row" id="iig_novelai_${id}_row">
+            <label for="iig_novelai_${id}">${label}</label>
+            <select id="iig_novelai_${id}" class="flex1">${Object.entries(options).map(([value, name]) => `<option value="${value}" ${settings[key] === value ? 'selected' : ''}>${name}</option>`).join('')}</select>
+            <div></div>
+        </div>`;
+    return `
+        <div id="iig_novelai_options" class="iig-settings-card-nested ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}">
+            ${NOVELAI_NUMERIC_FIELDS.map(field => `
+                <div class="flex-row" id="iig_novelai_${field.id}_row">
+                    <label for="iig_novelai_${field.id}">${translate(field.label)}</label>
+                    <input id="iig_novelai_${field.id}" class="text_pole flex1" type="number" min="${field.min}" max="${field.max}" step="${field.step}" value="${settings[field.key]}">
+                    <div></div>
+                </div>`).join('')}
+            ${selectHtml('sampler', t`Sampler`, 'novelaiSampler', NOVELAI_SAMPLERS)}
+            ${selectHtml('noise_schedule', t`Noise schedule`, 'novelaiNoiseSchedule', Object.fromEntries(NOVELAI_NOISE_SCHEDULES.map(name => [name, name])))}
+            ${selectHtml('character_descriptions_mode', t`Send character descriptions`, 'novelaiCharacterDescriptionsMode', {
+                none: t`Do not send`, 'as-is': t`Send as-is`, 'character-prompt': t`Send as character prompt`,
+            })}
+            <div class="flex-row">
+                <label for="iig_novelai_negative_prompt">${t`Negative prompt`}</label>
+                <textarea id="iig_novelai_negative_prompt" class="text_pole textarea_compact flex1" rows="2">${sanitizeForHtml(settings.novelaiNegativePrompt)}</textarea>
+                <div></div>
+            </div>
+        </div>`;
+}
+
+function syncNegativePromptInputs(settings) {
+    for (const type of ['naistera', 'novelai']) {
+        const input = document.getElementById(`iig_${type}_negative_prompt`);
+        if (!input) continue;
+        const active = settings.apiType === type && settings.activeNegativePromptId
+            && ensureStyles(settings, 'negativePrompts').some(item => item.id === settings.activeNegativePromptId)
+            && (type === 'novelai' || /^novelai(?:-|$)/i.test(settings.naisteraModel));
+        input.disabled = Boolean(active);
+        input.title = active ? t`Disable the library prompt to edit this field.` : '';
+        input.value = active ? getEffectiveNegativePrompt(settings[`${type}NegativePrompt`], settings) : settings[`${type}NegativePrompt`];
+    }
+}
+
 function buildApiSettingsSectionHtml(settings = getSettings()) {
     const profilesHtml = buildConnectionProfilesBlockHtml(settings);
     const bodyHtml = `
@@ -181,6 +225,7 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                     <option value="openrouter" ${settings.apiType === 'openrouter' ? 'selected' : ''}>${t`OpenRouter (chat/completions)`}</option>
                     <option value="electronhub" ${settings.apiType === 'electronhub' ? 'selected' : ''}>${t`Electron Hub (/v1/images/*)`}</option>
                     <option value="naistera" ${settings.apiType === 'naistera' ? 'selected' : ''}>${t`Naistera (naistera.org)`}</option>
+                    <option value="novelai" ${settings.apiType === 'novelai' ? 'selected' : ''}>NovelAI</option>
                     <option value="a1111" ${settings.apiType === 'a1111' ? 'selected' : ''}>${t`AUTOMATIC1111 / Forge (local)`}</option>
                 </select>
                 <div></div>
@@ -206,6 +251,7 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
             </div>
 
             <p id="iig_naistera_hint" class="hint ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}">${t`For Naistera: paste the token from the Telegram bot. Available models are loaded from the API.`}</p>
+            <p id="iig_novelai_hint" class="hint ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}">${t`Use a NovelAI persistent API token. Image references are not sent.`}</p>
 
             <div class="flex-row ${settings.apiType === 'naistera' ? 'iig-hidden' : ''}" id="iig_model_row">
                 <label for="iig_model_select">${t`Model`}</label>
@@ -319,6 +365,8 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                 <textarea id="iig_naistera_negative_prompt" class="text_pole textarea_compact flex1" rows="2" placeholder="${t`(empty)`}">${sanitizeForHtml(settings.naisteraNegativePrompt || '')}</textarea>
                 <div></div>
             </div>
+
+            ${buildNovelAISettingsHtml(settings)}
 
             <div id="iig_avatar_section" class="iig-settings-card-nested ${settings.apiType !== 'gemini' && settings.apiType !== 'openrouter' ? 'iig-hidden' : ''}">
                 <div class="flex-row">
@@ -531,33 +579,44 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
 
 let selectedStyleId = '';
 let styleSearchQuery = '';
+let styleLibraryTab = 'styles';
+const styleLibraryStates = { styles: {}, negativePrompts: {} };
+
+function activeStyleKey() { return getPromptLibraryActiveKey(styleLibraryTab); }
+
+function getStyleLibraryLabels() {
+    return styleLibraryTab === 'negativePrompts'
+        ? { name: t`Negative prompt`, add: t`New negative prompt`, search: t`Search negative prompts`, none: t`No negative prompt`, empty: t`No negative prompts created.` }
+        : { name: t`Style`, add: t`New style`, search: t`Search styles`, none: t`No style`, empty: t`No styles created.` };
+}
 
 function getSelectedStyle(settings = getSettings()) {
-    const styles = ensureStyles(settings);
+    const styles = ensureStyles(settings, styleLibraryTab);
     if (!styles.some((style) => style.id === selectedStyleId)) {
-        selectedStyleId = styles.find((style) => style.id === settings.activeStyleId)?.id || styles[0]?.id || '';
+        selectedStyleId = styles.find((style) => style.id === settings[activeStyleKey()])?.id || styles[0]?.id || '';
     }
     return styles.find((style) => style.id === selectedStyleId) || null;
 }
 
 function getStylePreview(value) {
     const text = String(value || '').replace(/\s+/g, ' ').trim();
-    if (!text) return t`Empty style`;
+    if (!text) return styleLibraryTab === 'negativePrompts' ? t`Empty negative prompt` : t`Empty style`;
     return text.length > 50 ? `${text.slice(0, 50).trimEnd()}...` : text;
 }
 
 function buildStyleListHtml(settings = getSettings()) {
-    const styles = ensureStyles(settings);
-    const activeId = settings.activeStyleId;
+    const styles = ensureStyles(settings, styleLibraryTab);
+    const activeId = settings[activeStyleKey()];
+    const labels = getStyleLibraryLabels();
     getSelectedStyle(settings);
     const searchHtml = styles.length > 8 ? `
         <label class="iig-style-search-wrap">
             <i class="fa-solid fa-magnifying-glass"></i>
-            <input id="iig_style_search" class="text_pole" type="search" value="${sanitizeForHtml(styleSearchQuery)}" placeholder="${t`Search styles`}">
+            <input id="iig_style_search" class="text_pole" type="search" value="${sanitizeForHtml(styleSearchQuery)}" placeholder="${labels.search}">
         </label>` : '';
     const rowsHtml = styles.map((style) => `
         <div class="iig-style-item ${style.id === activeId ? 'active' : ''} ${style.id === selectedStyleId ? 'selected' : ''}" data-style-id="${sanitizeForHtml(style.id)}" data-style-search="${sanitizeForHtml(`${style.name} ${style.value}`.toLowerCase())}">
-            <button type="button" class="menu_button iig-style-activation" data-style-activate="${sanitizeForHtml(style.id)}" title="${style.id === activeId ? t`Disable style` : t`Activate style`}">
+            <button type="button" class="menu_button iig-style-activation" data-style-activate="${sanitizeForHtml(style.id)}" title="${style.id === activeId ? t`Disable` : t`Activate`}">
                 <i class="fa-solid ${style.id === activeId ? 'fa-circle-check' : 'fa-circle'}"></i>
             </button>
             <button type="button" class="menu_button iig-style-item-select" data-style-select="${sanitizeForHtml(style.id)}">
@@ -565,8 +624,8 @@ function buildStyleListHtml(settings = getSettings()) {
                 <small>${sanitizeForHtml(getStylePreview(style.value))}</small>
             </button>
             <div class="iig-style-item-actions">
-                <button type="button" class="menu_button" data-style-duplicate="${sanitizeForHtml(style.id)}" title="${t`Duplicate style`}"><i class="fa-solid fa-copy"></i></button>
-                <button type="button" class="menu_button redWarningBG" data-style-remove="${sanitizeForHtml(style.id)}" title="${t`Delete style`}"><i class="fa-solid fa-trash"></i></button>
+                <button type="button" class="menu_button" data-style-duplicate="${sanitizeForHtml(style.id)}" title="${t`Duplicate`}"><i class="fa-solid fa-copy"></i></button>
+                <button type="button" class="menu_button redWarningBG" data-style-remove="${sanitizeForHtml(style.id)}" title="${t`Delete`}"><i class="fa-solid fa-trash"></i></button>
             </div>
         </div>`).join('');
 
@@ -575,18 +634,18 @@ function buildStyleListHtml(settings = getSettings()) {
         <div class="iig-style-list">
             <button type="button" class="menu_button iig-style-none ${activeId ? '' : 'active'}" data-style-disable>
                 <i class="fa-solid fa-ban"></i>
-                <span>${t`No style`}</span>
+                <span>${labels.none}</span>
             </button>
-            ${rowsHtml || `<div class="iig-library-empty">${t`No styles created.`}</div>`}
+            ${rowsHtml || `<div class="iig-library-empty">${labels.empty}</div>`}
         </div>`;
 }
 
 function buildStyleEditorHtml(settings = getSettings()) {
     const selectedStyle = getSelectedStyle(settings);
     if (!selectedStyle) {
-        return `<div class="iig-library-empty iig-style-editor-empty">${t`Create a style to start editing.`}</div>`;
+        return `<div class="iig-library-empty iig-style-editor-empty">${getStyleLibraryLabels().empty}</div>`;
     }
-    const isActive = selectedStyle.id === settings.activeStyleId;
+    const isActive = selectedStyle.id === settings[activeStyleKey()];
 
     return `
         <div class="iig-style-editor-content" data-style-editor-id="${sanitizeForHtml(selectedStyle.id)}">
@@ -599,8 +658,8 @@ function buildStyleEditorHtml(settings = getSettings()) {
                 <input type="text" id="iig_style_name" class="text_pole" value="${sanitizeForHtml(selectedStyle.name)}">
             </label>
             <label class="iig-style-field" for="iig_style_value">
-                <span>${t`Style`}</span>
-                <textarea id="iig_style_value" class="text_pole iig-settings-textarea" rows="6" placeholder="masterpiece, cinematic lighting, painterly">${sanitizeForHtml(selectedStyle.value)}</textarea>
+                <span>${getStyleLibraryLabels().name}</span>
+                <textarea id="iig_style_value" class="text_pole iig-settings-textarea" rows="6" placeholder="${styleLibraryTab === 'negativePrompts' ? 'lowres, bad anatomy, blurry' : 'masterpiece, cinematic lighting, painterly'}">${sanitizeForHtml(selectedStyle.value)}</textarea>
             </label>
             <div class="iig-style-editor-actions">
                 <button type="button" id="iig_style_toggle_active" class="menu_button iig-button-inline">
@@ -648,15 +707,29 @@ export function renderStyleSettings() {
     if (nextList) {
         nextList.scrollTop = previousScrollTop;
     }
+    document.querySelectorAll('[data-style-library]').forEach(button => {
+        const selected = button.dataset.styleLibrary === styleLibraryTab;
+        button.classList.toggle('selected', selected);
+        button.setAttribute('aria-selected', String(selected));
+    });
+    const addLabel = document.querySelector('#iig_style_add span');
+    if (addLabel) addLabel.textContent = getStyleLibraryLabels().add;
+    const libraryTitle = document.getElementById('iig_prompt_library_title');
+    if (libraryTitle) libraryTitle.textContent = styleLibraryTab === 'negativePrompts' ? t`Negative prompt library` : t`Style library`;
+    syncNegativePromptInputs(settings);
 }
 
 function buildStylesSettingsSectionHtml() {
     const bodyHtml = `
+        <div class="iig-library-tabs iig-prompt-library-tabs" role="tablist">
+            <button type="button" class="menu_button iig-library-tab selected" role="tab" data-style-library="styles" aria-selected="true"><i class="fa-solid fa-palette"></i><span>${t`Styles`}</span></button>
+            <button type="button" class="menu_button iig-library-tab" role="tab" data-style-library="negativePrompts" aria-selected="false"><i class="fa-solid fa-ban"></i><span>${t`Negative prompts`}</span></button>
+        </div>
         <div class="iig-style-workspace">
             <div class="iig-settings-group iig-style-library">
                 <div class="iig-settings-group-title iig-style-library-head">
                     <i class="fa-solid fa-swatchbook"></i>
-                    <span>${t`Style library`}</span>
+                    <span id="iig_prompt_library_title">${t`Style library`}</span>
                     <button type="button" id="iig_style_add" class="menu_button iig-button-inline"><i class="fa-solid fa-plus"></i><span>${t`New style`}</span></button>
                 </div>
                 <div id="iig_style_presets"></div>
@@ -1025,6 +1098,12 @@ function buildLastRequestPopupHtml(snapshot) {
     pushRow(t`Resolution`, meta.imageSize);
     pushRow(t`Size`, meta.size);
     pushRow(t`Quality`, meta.quality);
+    pushRow(t`Steps`, meta.steps);
+    pushRow(t`CFG scale`, meta.cfgScale);
+    pushRow(t`CFG rescale`, meta.cfgRescale);
+    pushRow(t`Sampler`, meta.sampler);
+    pushRow(t`Noise schedule`, meta.noiseSchedule);
+    pushRow(t`Seed`, meta.seed);
     pushRow(t`Reference instruction applied`, meta.refInstructionApplied ? t`yes` : t`no`);
 
     const refsHtml = Array.isArray(snapshot.references) && snapshot.references.length > 0
@@ -1125,6 +1204,11 @@ function applyProfileValuesToInputs(settings) {
     }
     setVal('iig_naistera_model', naisteraModel);
     setVal('iig_naistera_negative_prompt', settings.naisteraNegativePrompt);
+    for (const field of NOVELAI_NUMERIC_FIELDS) setVal(`iig_novelai_${field.id}`, settings[field.key]);
+    setVal('iig_novelai_sampler', settings.novelaiSampler);
+    setVal('iig_novelai_noise_schedule', settings.novelaiNoiseSchedule);
+    setVal('iig_novelai_character_descriptions_mode', settings.novelaiCharacterDescriptionsMode);
+    setVal('iig_novelai_negative_prompt', settings.novelaiNegativePrompt);
     setVal('iig_naistera_character_descriptions_mode', settings.naisteraCharacterDescriptionsMode);
     setVal('iig_naistera_aspect_ratio', settings.naisteraAspectRatio);
     setChk('iig_naistera_video_test', settings.naisteraVideoTest);
@@ -1372,9 +1456,10 @@ function bindApiSectionEvents(settings, updateVisibility) {
             const models = await fetchModels();
             if (select) {
                 let current = isNaistera ? normalizeNaisteraModel(settings.naisteraModel) : (settings.model || '');
-                if (isNaistera && models.length > 0 && !models.includes(current)) {
+                if ((isNaistera || settings.apiType === 'novelai') && models.length > 0 && !models.includes(current)) {
                     current = models[0];
-                    settings.naisteraModel = current;
+                    settings[isNaistera ? 'naisteraModel' : 'model'] = current;
+                    if (!isNaistera) syncModelInputs(current);
                     saveSettings();
                 }
                 const provider = resolveActiveProvider(settings);
@@ -1480,6 +1565,26 @@ function bindApiSectionEvents(settings, updateVisibility) {
 
     document.getElementById('iig_naistera_negative_prompt')?.addEventListener('input', (e) => {
         settings.naisteraNegativePrompt = e.target.value;
+        saveSettings();
+    });
+
+    for (const field of NOVELAI_NUMERIC_FIELDS) {
+        document.getElementById(`iig_novelai_${field.id}`)?.addEventListener('input', (event) => {
+            settings[field.key] = event.target.value === '' ? '' : Number(event.target.value);
+            saveSettings();
+        });
+    }
+    for (const [id, key] of [
+        ['sampler', 'novelaiSampler'], ['noise_schedule', 'novelaiNoiseSchedule'],
+        ['character_descriptions_mode', 'novelaiCharacterDescriptionsMode'],
+    ]) {
+        document.getElementById(`iig_novelai_${id}`)?.addEventListener('change', (event) => {
+            settings[key] = event.target.value;
+            saveSettings();
+        });
+    }
+    document.getElementById('iig_novelai_negative_prompt')?.addEventListener('input', (event) => {
+        settings.novelaiNegativePrompt = event.target.value;
         saveSettings();
     });
 
@@ -1823,10 +1928,10 @@ function bindAvatarDropdownToggles() {
 // ----- Styles section events -----
 
 async function createStyleFromPrompt(settings) {
-    const name = await Popup.show.input(t`New style`, t`Style name`);
+    const name = await Popup.show.input(getStyleLibraryLabels().add, t`Name`);
     const normalizedName = String(name || '').trim();
     if (!normalizedName) return;
-    const style = createStyle(normalizedName);
+    const style = createStyle(normalizedName, styleLibraryTab);
     selectedStyleId = style.id;
     saveSettings();
     renderStyleSettings();
@@ -1834,30 +1939,45 @@ async function createStyleFromPrompt(settings) {
 }
 
 function duplicateStyleById(styleId, settings) {
-    const source = ensureStyles(settings).find((style) => style.id === styleId);
+    const source = ensureStyles(settings, styleLibraryTab).find((style) => style.id === styleId);
     if (!source) return;
-    const copy = createStyle(t`Copy of ${source.name}`);
-    updateStyle(copy.id, { value: source.value });
+    const copy = createStyle(t`Copy of ${source.name}`, styleLibraryTab);
+    updateStyle(copy.id, { value: source.value }, styleLibraryTab);
     selectedStyleId = copy.id;
     saveSettings();
     renderStyleSettings();
 }
 
 async function deleteStyleById(styleId, settings) {
-    const styles = ensureStyles(settings);
+    const styles = ensureStyles(settings, styleLibraryTab);
     const index = styles.findIndex((style) => style.id === styleId);
     const style = styles[index];
     if (!style) return;
-    const confirmed = await Popup.show.confirm(t`Delete style "${style.name}"?`, t`Confirm`);
+    const confirmed = await Popup.show.confirm(t`Delete "${style.name}"?`, t`Confirm`);
     if (!confirmed) return;
-    removeStyle(styleId);
-    const remaining = ensureStyles(settings);
+    removeStyle(styleId, styleLibraryTab);
+    const remaining = ensureStyles(settings, styleLibraryTab);
     selectedStyleId = remaining[Math.min(index, remaining.length - 1)]?.id || '';
     saveSettings();
     renderStyleSettings();
 }
 
 function bindStylesSectionEvents(settings) {
+    document.querySelector('.iig-prompt-library-tabs')?.addEventListener('click', (event) => {
+        const tab = event.target.closest('[data-style-library]');
+        const next = tab?.dataset.styleLibrary;
+        if (!next || next === styleLibraryTab) return;
+        styleLibraryStates[styleLibraryTab] = {
+            selectedStyleId, styleSearchQuery,
+            scrollTop: document.querySelector('#iig_style_presets .iig-style-list')?.scrollTop || 0,
+        };
+        styleLibraryTab = next;
+        selectedStyleId = styleLibraryStates[next].selectedStyleId || '';
+        styleSearchQuery = styleLibraryStates[next].styleSearchQuery || '';
+        renderStyleSettings();
+        const list = document.querySelector('#iig_style_presets .iig-style-list');
+        if (list) list.scrollTop = styleLibraryStates[next].scrollTop || 0;
+    });
     document.getElementById('iig_style_add')?.addEventListener('click', () => {
         createStyleFromPrompt(settings).catch((error) => console.warn('[IIG] Failed to create style:', error));
     });
@@ -1873,7 +1993,7 @@ function bindStylesSectionEvents(settings) {
         const target = event.target instanceof Element ? event.target : null;
         if (!target) return;
         if (target.closest('[data-style-disable]')) {
-            settings.activeStyleId = '';
+            settings[activeStyleKey()] = '';
             saveSettings();
             renderStyleSettings();
             return;
@@ -1882,7 +2002,7 @@ function bindStylesSectionEvents(settings) {
         if (activateButton) {
             const styleId = String(activateButton.getAttribute('data-style-activate') || '');
             selectedStyleId = styleId;
-            settings.activeStyleId = settings.activeStyleId === styleId ? '' : styleId;
+            settings[activeStyleKey()] = settings[activeStyleKey()] === styleId ? '' : styleId;
             saveSettings();
             renderStyleSettings();
             return;
@@ -1911,12 +2031,12 @@ function bindStylesSectionEvents(settings) {
         const selectedStyle = getSelectedStyle(settings);
         const target = event.target;
         if (!selectedStyle || !(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) return;
-        if (target.id === 'iig_style_name') updateStyle(selectedStyle.id, { name: target.value });
-        if (target.id === 'iig_style_value') updateStyle(selectedStyle.id, { value: target.value });
+        if (target.id === 'iig_style_name') updateStyle(selectedStyle.id, { name: target.value }, styleLibraryTab);
+        if (target.id === 'iig_style_value') updateStyle(selectedStyle.id, { value: target.value }, styleLibraryTab);
         saveSettings();
         const row = [...document.querySelectorAll('#iig_style_presets .iig-style-item')]
             .find((item) => item.getAttribute('data-style-id') === selectedStyle.id);
-        const updated = ensureStyles(settings).find((style) => style.id === selectedStyle.id);
+        const updated = ensureStyles(settings, styleLibraryTab).find((style) => style.id === selectedStyle.id);
         if (row && updated) {
             const title = row.querySelector('strong');
             const preview = row.querySelector('small');
@@ -1924,6 +2044,7 @@ function bindStylesSectionEvents(settings) {
             if (preview) preview.textContent = getStylePreview(updated.value);
             row.setAttribute('data-style-search', `${updated.name} ${updated.value}`.toLowerCase());
         }
+        syncNegativePromptInputs(settings);
     });
 
     document.getElementById('iig_style_editor')?.addEventListener('click', async (event) => {
@@ -1931,7 +2052,7 @@ function bindStylesSectionEvents(settings) {
         const selectedStyle = getSelectedStyle(settings);
         if (!target || !selectedStyle) return;
         if (target.closest('#iig_style_toggle_active')) {
-            settings.activeStyleId = settings.activeStyleId === selectedStyle.id ? '' : selectedStyle.id;
+            settings[activeStyleKey()] = settings[activeStyleKey()] === selectedStyle.id ? '' : selectedStyle.id;
             saveSettings();
             renderStyleSettings();
             return;
@@ -2483,6 +2604,7 @@ function buildUpdateVisibility(settings) {
     return () => {
         const apiType = settings.apiType;
         const isNaistera = apiType === 'naistera';
+        const isNovelAI = apiType === 'novelai';
         const isGemini = apiType === 'gemini';
         const isOpenAI = apiType === 'openai';
         const isXAI = apiType === 'xai';
@@ -2519,6 +2641,12 @@ function buildUpdateVisibility(settings) {
         // Naistera-only params
         document.getElementById('iig_naistera_model_row')?.classList.toggle('iig-hidden', !isNaistera);
         document.getElementById('iig_naistera_negative_prompt_row')?.classList.toggle('iig-hidden', !naisteraNegativePromptSupported);
+        document.getElementById('iig_novelai_options')?.classList.toggle('iig-hidden', !isNovelAI);
+        const isNovelAIV5 = settings.model?.startsWith('nai-diffusion-5-');
+        document.getElementById('iig_novelai_skip_cfg_above_sigma_row')?.classList.toggle('iig-hidden', isNovelAIV5);
+        document.getElementById('iig_novelai_noise_schedule_row')?.classList.toggle('iig-hidden', isNovelAIV5);
+        document.getElementById('iig_novelai_hint')?.classList.toggle('iig-hidden', !isNovelAI);
+        syncNegativePromptInputs(settings);
         document.getElementById('iig_naistera_character_descriptions_row')?.classList.toggle('iig-hidden', !isNaistera);
         document.getElementById('iig_naistera_aspect_row')?.classList.toggle('iig-hidden', !isNaistera);
         document.getElementById('iig_naistera_video_section')?.classList.toggle('iig-hidden', !isNaistera);

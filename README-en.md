@@ -2,7 +2,7 @@
 
 A SillyTavern extension that catches generation tags in AI messages and renders images through your chosen API.
 
-Supported providers: **OpenAI-compatible**, **xAI Imagine**, **Gemini-compatible**, **OpenRouter**, **Electron Hub**, **Naistera**.
+Supported providers: **OpenAI-compatible**, **xAI Imagine**, **Gemini-compatible**, **OpenRouter**, **Electron Hub**, **Naistera**, **NovelAI**, **AUTOMATIC1111 / Forge**.
 
 Russian version: [README.md](./README.md)
 
@@ -68,7 +68,27 @@ A ref entry has: name (or a comma-separated list of aliases), description, image
 
 **Simple** searches all lorebooks using names and comma-separated aliases as whole words, regardless of case. Each card has its own enable switch and sending mode. **Power** applies lorebook switches, regex, secondary keys, and priority. All secondary keys must occur in the image-generation prompt.
 
-Enabled entries can contain an image, a description, or both. **Send reference descriptions from lorebook** adds descriptions to the final prompt. Image attachments depend on the selected model's reference support and image limit.
+Enabled entries can contain an image, a description, or both. **Send reference descriptions from lorebook** adds descriptions to the final prompt. Models without image-reference support receive only description-only entries; image entries and their descriptions are excluded. Image attachments follow the selected model's reference limit.
+
+### Styles and negative prompts
+
+The **Styles** library has two tabs: **Styles** and **Negative prompts**. Each tab has its own active entry, search, editor and enable switch. Opening an entry selects it for editing; **Activate** applies it to generation.
+
+An active negative prompt supplies undesired content for direct NovelAI and NovelAI models on Naistera. Disable it to use the custom **Negative prompt** field in **Generation**. Other providers use their own settings.
+
+### Direct NovelAI
+
+Select **NovelAI**, enter a persistent NovelAI API token and choose **V5 Full**, **V5 Curated**, **V4.5 Full** or **V4.5 Curated**. The default endpoint is `https://image.novelai.net`. The image model picker lists these supported models; NovelAI's OpenAI-compatible model endpoint lists text models.
+
+**Generation** controls width, height, steps, CFG scale, CFG rescale, seed and sampler. V4.5 also accepts noise schedule and **Skip CFG above sigma** (`0` disables it). Dimensions use multiples of 64 with a maximum of 3 megapixels. Seed `-1` chooses a random seed. These settings are saved in connection profiles.
+
+Separate character prompts with `|` or `\|`: `scene | 1boy | 1girl`. **Send character descriptions** controls descriptions from the character/persona library; **Send as character prompt** adds them as separate character captions. Direct NovelAI generates from text and does not attach avatars, image references or image context.
+
+Requests use [`POST /ai/generate-image`](https://image.novelai.net/docs/index.html) with a JSON response. Steps and resolution can affect Anlas usage; check [NovelAI's guidance](https://docs.novelai.net/en/image/stepsguidance/) before raising them.
+
+### Browser checks
+
+With Playwright available to Node (use `NODE_PATH` for an external installation), run `node tests/novelai-e2e.cjs`. Set `IIG_BROWSER_CHANNEL=msedge` to use installed Edge. The test opens the real settings UI and generation pipeline with simulated Tavern state and provider responses. It writes a request report and desktop/mobile screenshots to `tests/artifacts/novelai`.
 
 Run matching and request tests with `node --experimental-vm-modules --test tests/reference-matching.test.cjs`. Tests use an in-memory configuration and simulated HTTP responses.
 

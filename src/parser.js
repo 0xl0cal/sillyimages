@@ -281,7 +281,7 @@ export function buildFinalGenerationPrompt(
     style,
     matchedAdditionalRefs = [],
     settings = getSettings(),
-    { wrapStyle = true } = {},
+    { wrapStyle = true, supportsImageReferences = true } = {},
 ) {
     const effectiveStyle = resolveEffectiveStyle(style, settings);
     let fullPrompt = wrapStyle
@@ -289,13 +289,20 @@ export function buildFinalGenerationPrompt(
         : injectPlainStyle(prompt, effectiveStyle);
 
     if (settings.sendRefDescriptions !== false) {
-        const additionalReferencesBlock = buildAdditionalReferencesPromptBlock(matchedAdditionalRefs);
+        const additionalReferencesBlock = buildAdditionalReferencesPromptBlock(
+            filterPromptReferences(matchedAdditionalRefs, supportsImageReferences),
+        );
         if (additionalReferencesBlock) {
             fullPrompt = `${fullPrompt}\n\n${additionalReferencesBlock}`.trim();
         }
     }
 
     return fullPrompt;
+}
+
+// Image-bound descriptions belong to image-capable requests; text records stand alone.
+export function filterPromptReferences(refs = [], supportsImageReferences = true) {
+    return supportsImageReferences ? refs : refs.filter(ref => !String(ref?.imagePath || '').trim());
 }
 
 export function getMatchedAdditionalReferences(prompt) {

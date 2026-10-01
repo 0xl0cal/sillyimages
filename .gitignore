@@ -7,3 +7,6 @@ testing.md
 
 # External references for code review
 reference/
+
+# Repeatable browser test output
+tests/artifacts/

@@ -1,14 +1,4 @@
-/**
- * Провайдер-абстракция.
- *
- * Цель на этапе 1:
- *   - свести три текущих варианта (openai/gemini/naistera) под единый интерфейс;
- *   - убрать `if (apiType === '...')` из pipeline.js;
- *   - сохранить 100% идентичное поведение (никаких новых фич).
- *
- * На этапе 2 здесь появятся OpenRouter, Electron Hub, расширенные capabilities
- * и единый формат ошибок. Сейчас — минимально достаточный скелет.
- */
+/** Provider registry, model capabilities and generation transports. */
 
 import {
     getSettings,
@@ -25,6 +15,8 @@ import {
     normalizeNaisteraVideoFrequency,
     getEffectiveEndpoint,
     getEffectiveRefInstruction,
+    getEffectiveNegativePrompt,
+    getLastRequestSnapshot,
 } from './settings.js';
 import {
     normalizeStoredImagePath,
@@ -37,6 +29,7 @@ import {
     isRetryableHttpStatus,
 } from './utils.js';
 import { buildFinalGenerationPrompt } from './parser.js';
+import { NOVELAI_MODELS, buildNovelAIParameters, validateNovelAIParameters, splitNovelAICharacterPrompts } from './novelai.js';
 import { t } from './i18n.js';
 import {
     collectCharacterLibraryReferences,
@@ -81,6 +74,7 @@ export function getActiveProviderMaxReferences(settings = getSettings()) {
         return getOpenRouterCapabilities(settings.model).maxReferences || 0;
     }
     if (apiType === 'naistera') {
+        if (!getProviderById('naistera')?.supportsReferences(settings)) return 0;
         // Naistera не ограничивает число рефов — отдаём верхний потолок,
         // совпадающий с лимитом самого хранилища лорбука.
         return MAX_ADDITIONAL_REFERENCES;
@@ -1642,6 +1636,7 @@ export class NaisteraProvider extends Provider {
     }
 
     supportsReferences(settings) {
+        if (isNaisteraNovelAIModel(settings.naisteraModel)) return false;
         const model = this.modelCatalog.get(normalizeNaisteraModel(settings.naisteraModel));
         return model ? model.references !== false : true;
     }
@@ -1832,6 +1827,7 @@ export class NaisteraProvider extends Provider {
 
         const aspectRatio = options.aspectRatio || settings.naisteraAspectRatio || '1:1';
         const model = normalizeNaisteraModel(options.model || settings.naisteraModel);
+        if (!this.supportsReferences({ ...settings, naisteraModel: model })) references = [];
         const preset = options.preset || null;
         const wantsVideoTest = Boolean(options.videoTestMode);
         const videoEveryN = normalizeNaisteraVideoFrequency(options.videoEveryN ?? settings.naisteraVideoEveryN);
@@ -1841,7 +1837,7 @@ export class NaisteraProvider extends Provider {
             style,
             options.matchedAdditionalRefs || [],
             settings,
-            { wrapStyle },
+            { wrapStyle, supportsImageReferences: this.supportsReferences({ ...settings, naisteraModel: model }) },
         );
         const descriptionMode = normalizeNaisteraCharacterDescriptionsMode(settings.naisteraCharacterDescriptionsMode);
         const characterDescriptionPromptBlock = options.characterDescriptionPromptBlock
@@ -1865,7 +1861,9 @@ export class NaisteraProvider extends Provider {
             aspect_ratio: aspectRatio,
             model,
         };
-        const negativePrompt = String(options.negativePrompt ?? settings.naisteraNegativePrompt ?? '').trim();
+        const negativePrompt = String(options.negativePrompt ?? getEffectiveNegativePrompt(
+            settings.naisteraNegativePrompt, { ...settings, naisteraModel: model },
+        )).trim();
         if (negativePrompt && this.supportsNegativePrompt({ ...settings, naisteraModel: model })) {
             body.negative_prompt = negativePrompt;
         }
@@ -2226,6 +2224,80 @@ export class A1111Provider extends Provider {
     }
 }
 
+// ----- Direct NovelAI text-to-image -----
+
+export class NovelAIProvider extends Provider {
+    get id() { return 'novelai'; }
+    get displayName() { return 'NovelAI'; }
+    get capabilities() { return { ...super.capabilities, referencesMaxCount: 0 }; }
+    supportsReferences() { return false; }
+    supportsNegativePrompt() { return true; }
+    getModelLabel(model) { return NOVELAI_MODELS[model] || model; }
+    async fetchModels() { return Object.keys(NOVELAI_MODELS); }
+
+    validate(settings) {
+        const errors = validateNovelAIParameters(settings);
+        if (!settings.apiKey) errors.push(t`API key is not configured`);
+        if (!Object.hasOwn(NOVELAI_MODELS, settings.model)) errors.push(t`Select a NovelAI image model`);
+        return errors;
+    }
+
+    async generate({ prompt, style = '', options = {} }) {
+        const settings = getSettings();
+        const model = options.model || settings.model;
+        const errors = this.validate({ ...settings, model });
+        if (errors.length) throw new ProviderError({ message: errors.join('; '), code: 'invalid_request', providerId: this.id });
+        let fullPrompt = buildFinalGenerationPrompt(prompt, style, options.matchedAdditionalRefs || [], settings, {
+            wrapStyle: false, supportsImageReferences: false,
+        });
+        const descriptions = options.characterDescriptionPromptBlock
+            ?? await buildCharacterDescriptionPromptBlock({
+                includeChar: true, includeUser: true, mode: settings.novelaiCharacterDescriptionsMode,
+            }, settings);
+        fullPrompt = appendPromptBlock(fullPrompt, descriptions);
+        const negativePrompt = String(options.negativePrompt ?? getEffectiveNegativePrompt(settings.novelaiNegativePrompt, settings)).trim();
+        const parameters = buildNovelAIParameters(settings, fullPrompt, negativePrompt, model);
+        const body = { action: 'generate', model, input: splitNovelAICharacterPrompts(fullPrompt).base, parameters };
+        const snapshot = getLastRequestSnapshot();
+        if (snapshot?.metadata?.apiType === this.id) {
+            snapshot.metadata.seed = parameters.seed;
+            snapshot.parameters = parameters;
+        }
+        const endpoint = getEffectiveEndpoint(settings);
+        const url = settings.rawEndpoint || endpoint.endsWith('/ai/generate-image')
+            ? endpoint : `${endpoint}/ai/generate-image`;
+        let response;
+        try {
+            response = await fetchWithTimeout(url, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${settings.apiKey}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+                body: JSON.stringify(body),
+            }, 600000, options.signal);
+        } catch (cause) {
+            throw new ProviderError({
+                message: cause.message, code: options.signal?.aborted ? 'aborted' : 'network',
+                retryable: !options.signal?.aborted, providerId: this.id, cause,
+            });
+        }
+        if (!response.ok) {
+            const detail = await response.text();
+            throw new ProviderError({
+                message: `NovelAI ${response.status}: ${detail.slice(0, 800)}`,
+                status: response.status, code: String(response.status),
+                retryable: isRetryableHttpStatus(response.status), providerId: this.id,
+            });
+        }
+        let result;
+        try { result = await response.json(); }
+        catch (cause) { throw new ProviderError({ message: t`NovelAI returned an invalid JSON response`, code: 'invalid_response', providerId: this.id, cause }); }
+        const image = result?.images?.[0]?.image;
+        if (typeof image !== 'string' || !image.trim()) {
+            throw new ProviderError({ message: t`NovelAI returned no image`, code: 'invalid_response', providerId: this.id });
+        }
+        return `data:image/png;base64,${image}`;
+    }
+}
+
 // ----- Registry -----
 
 const providers = new Map();
@@ -2255,6 +2327,7 @@ registerProvider(new GeminiProvider());
 registerProvider(new OpenRouterProvider());
 registerProvider(new ElectronHubProvider());
 registerProvider(new NaisteraProvider());
+registerProvider(new NovelAIProvider());
 registerProvider(new A1111Provider());
 
 // ----- Models fetcher (делегируется провайдеру) -----
