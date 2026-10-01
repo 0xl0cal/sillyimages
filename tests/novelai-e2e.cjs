@@ -66,10 +66,62 @@ const server = createServer((req, res) => {
         await page.locator('[data-section-id="iig_styles_section"] > summary').click();
         assert.equal(await page.locator('[data-section-id="iig_styles_section"] > summary .iig-section-title').textContent(), 'Styles & Negatives');
         await page.locator('#iig_api_section .iig-settings-group').evaluateAll(groups => groups.forEach(group => group.open = true));
+        const emptyLibraryMetrics = {};
+        await page.addStyleTag({content: '.menu_button:not(.disabled):not([disabled]):hover,.menu_button:not(.disabled):not([disabled]).active{background-color:var(--white30a)}'});
+        const savedStyles = await page.evaluate(() => {
+            const saved = {styles: app.settings.styles, activeStyleId: app.settings.activeStyleId};
+            app.settings.styles = []; app.settings.activeStyleId = ''; app.ui.renderStyleSettings();
+            return saved;
+        });
+        for (const library of ['styles', 'negativePrompts']) {
+            await page.locator(`[data-style-library="${library}"]`).click();
+            const none = page.locator('[data-style-disable]');
+            assert.equal(await none.getAttribute('aria-pressed'), 'true');
+            for (const [theme, body, tint, quote] of [
+                ['dark', '#eeeeee', '#302c35', '#c7b89f'],
+                ['light', '#29232c', '#f7e8ee', '#bd467c'],
+            ]) {
+                await page.evaluate(({body, tint, quote}) => {
+                    const root = document.documentElement.style;
+                    root.setProperty('--SmartThemeBodyColor', body);
+                    root.setProperty('--SmartThemeBlurTintColor', tint);
+                    root.setProperty('--SmartThemeQuoteColor', quote);
+                    root.setProperty('--white30a', 'rgba(255,255,255,0.3)');
+                }, {body, tint, quote});
+                await none.hover();
+                const metrics = await page.evaluate(() => {
+                    const none = document.querySelector('[data-style-disable]');
+                    const empty = document.querySelector('.iig-style-editor-empty');
+                    const range = document.createRange(); range.selectNodeContents(empty);
+                    const text = range.getBoundingClientRect(), box = empty.getBoundingClientRect();
+                    const css = getComputedStyle(none);
+                    return {textColor: css.color, bodyColor: getComputedStyle(document.body).color,
+                        background: css.backgroundColor, opacity: css.opacity, filter: css.filter,
+                        dx: Math.abs((text.left + text.right - box.left - box.right) / 2),
+                        dy: Math.abs((text.top + text.bottom - box.top - box.bottom) / 2), height: box.height};
+                });
+                assert.equal(metrics.textColor, body === '#eeeeee' ? 'rgb(238, 238, 238)' : 'rgb(41, 35, 44)');
+                assert.equal(metrics.opacity, '1');
+                assert.equal(metrics.filter, 'none');
+                assert.notEqual(metrics.background, 'rgba(255, 255, 255, 0.3)');
+                assert.ok(metrics.dx <= 1 && metrics.dy <= 1, `${library}/${theme} empty editor not centered: ${JSON.stringify(metrics)}`);
+                assert.ok(metrics.height >= 132);
+                emptyLibraryMetrics[`${library}/${theme}`] = metrics;
+                await page.locator('#iig_styles_section').screenshot({path: path.join(artifacts, `empty-${library}-${theme}.png`)});
+            }
+        }
+        await page.evaluate(saved => {
+            Object.assign(app.settings, saved);
+            const root = document.documentElement.style;
+            for (const key of ['--SmartThemeBodyColor', '--SmartThemeBlurTintColor', '--SmartThemeQuoteColor', '--white30a']) root.removeProperty(key);
+            app.ui.renderStyleSettings();
+        }, savedStyles);
+        checks.push('empty libraries: readable selected/hover state in light/dark themes and centered editor text');
         await page.locator('#iig_styles_section [data-style-library="negativePrompts"]').click();
         await page.locator('#iig_style_add').click();
         await page.locator('#iig_style_value').fill('bad anatomy');
         await page.locator('#iig_style_toggle_active').click();
+        assert.equal(await page.locator('[data-style-disable]').getAttribute('aria-pressed'), 'false');
         assert.equal(await page.evaluate(() => app.settings.styles.length), 20);
         assert.equal(await page.evaluate(() => app.settings.activeStyleId), 'style-0');
         assert.equal(await page.evaluate(() => app.settings.negativePrompts[0].value), 'bad anatomy');
@@ -246,7 +298,7 @@ const server = createServer((req, res) => {
         await page.screenshot({ path: path.join(artifacts, 'mobile.png'), fullPage: true });
         checks.push('390px layout without horizontal overflow');
         assert.deepEqual(errors, []);
-        writeFileSync(path.join(artifacts, 'report.json'), JSON.stringify({ checks, errors, transition, native }, null, 2));
+        writeFileSync(path.join(artifacts, 'report.json'), JSON.stringify({ checks, errors, transition, native, emptyLibraryMetrics }, null, 2));
         console.log(JSON.stringify({ checks, artifacts }, null, 2));
     } finally { await browser.close(); server.close(); }
 })().catch(error => { console.error(error); server.close(); process.exitCode = 1; });

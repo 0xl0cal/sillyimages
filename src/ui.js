@@ -648,7 +648,7 @@ function buildStyleListHtml(settings = getSettings()) {
     return `
         ${searchHtml}
         <div class="iig-style-list">
-            <button type="button" class="menu_button iig-style-none ${activeId ? '' : 'active'}" data-style-disable>
+            <button type="button" class="menu_button iig-style-none" data-style-disable aria-pressed="${!activeId}">
                 <i class="fa-solid fa-ban"></i>
                 <span>${labels.none}</span>
             </button>
