@@ -2245,7 +2245,8 @@ export class NovelAIProvider extends Provider {
     async generate({ prompt, style = '', options = {} }) {
         const settings = getSettings();
         const model = options.model || settings.model;
-        const errors = this.validate({ ...settings, model });
+        const requestSettings = { ...settings, model, novelaiAspectRatio: options.aspectRatio || settings.novelaiAspectRatio };
+        const errors = this.validate(requestSettings);
         if (errors.length) throw new ProviderError({ message: errors.join('; '), code: 'invalid_request', providerId: this.id });
         let fullPrompt = buildFinalGenerationPrompt(prompt, style, options.matchedAdditionalRefs || [], settings, {
             wrapStyle: false, supportsImageReferences: false,
@@ -2256,7 +2257,7 @@ export class NovelAIProvider extends Provider {
             }, settings);
         fullPrompt = appendPromptBlock(fullPrompt, descriptions);
         const negativePrompt = String(options.negativePrompt ?? getEffectiveNegativePrompt(settings.novelaiNegativePrompt, settings)).trim();
-        const parameters = buildNovelAIParameters(settings, fullPrompt, negativePrompt, model);
+        const parameters = buildNovelAIParameters(requestSettings, fullPrompt, negativePrompt, model);
         const body = { action: 'generate', model, input: splitNovelAICharacterPrompts(fullPrompt).base, parameters };
         const snapshot = getLastRequestSnapshot();
         if (snapshot?.metadata?.apiType === this.id) {

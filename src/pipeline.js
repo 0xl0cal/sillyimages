@@ -265,14 +265,15 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
         ? normalizeNaisteraModel(settings.naisteraModel)
         : (settings.model || '');
 
-    const novelaiResolution = settings.apiType === 'novelai' ? getNovelAIResolution(settings) : null;
     const aspectRatio = settings.apiType === 'novelai'
-        ? settings.novelaiAspectRatio
+        ? (options?.aspectRatio || settings.novelaiAspectRatio)
         : settings.apiType === 'naistera'
         ? (options?.aspectRatio || settings.naisteraAspectRatio)
         : settings.apiType === 'xai'
             ? (options?.aspectRatio || settings.xaiAspectRatio)
             : (options?.aspectRatio || settings.aspectRatio);
+    const novelaiResolution = settings.apiType === 'novelai'
+        ? getNovelAIResolution({ ...settings, novelaiAspectRatio: aspectRatio }) : null;
 
     const matchedRefsInfo = (Array.isArray(matchedAdditionalRefs) ? matchedAdditionalRefs : []).map((ref) => ({
         name: String(ref?.name || ''),

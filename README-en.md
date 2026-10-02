@@ -80,7 +80,7 @@ An active negative prompt supplies undesired content for direct NovelAI and Nove
 
 Select **NovelAI**, enter a persistent NovelAI API token and choose **V5 Full**, **V5 Curated**, **V4.5 Full** or **V4.5 Curated**. The default endpoint is `https://image.novelai.net`. The image model picker lists these supported models; NovelAI's OpenAI-compatible model endpoint lists text models.
 
-In **Generation**, choose **Small / Normal / Big** and an aspect ratio. The extension converts this pair to width and height when sending the request:
+In **Generation**, choose **Small / Normal / Big** and a default aspect ratio. A request's aspect ratio takes priority for that generation; requests without one use the setting. Size comes from settings. The extension converts this pair to width and height when sending the request:
 
 | Aspect ratio | Small | Normal | Big |
 | --- | --- | --- | --- |

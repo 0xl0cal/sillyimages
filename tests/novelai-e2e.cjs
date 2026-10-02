@@ -236,6 +236,46 @@ const server = createServer((req, res) => {
                 resolutionRequests.push({size, ratio, dimensions});
             }
         }
+        // Request overrides must affect payload and snapshot without changing saved settings.
+        const aspectOverrideRequests = [];
+        for (const [size, ratios] of Object.entries(resolutionMatrix)) {
+            await page.locator('#iig_novelai_resolution').selectOption(size);
+            for (const [ratio, dimensions] of Object.entries(ratios)) {
+                const defaultRatio = ratio === '2:3' ? '1:1' : '2:3';
+                await page.locator('#iig_novelai_aspect_ratio').selectOption(defaultRatio);
+                const result = await page.evaluate(async ratio => {
+                    await app.pipeline.generateImageWithRetry('scene', '', null, {aspectRatio: ratio});
+                    return {parameters: requests.at(-1).body.parameters, snapshot: app.settingsModule.getLastRequestSnapshot(),
+                        savedRatio: app.settings.novelaiAspectRatio};
+                }, ratio);
+                assert.deepEqual([result.parameters.width, result.parameters.height], dimensions);
+                assert.equal(result.snapshot.metadata.aspectRatio, ratio);
+                assert.equal(result.snapshot.metadata.size, dimensions.join('x'));
+                assert.equal(result.snapshot.metadata.imageSize, size);
+                assert.equal(result.savedRatio, defaultRatio);
+                assert.equal(await page.locator('#iig_novelai_aspect_ratio').inputValue(), defaultRatio);
+                aspectOverrideRequests.push({size, ratio, defaultRatio, dimensions});
+            }
+        }
+        await page.locator('#iig_novelai_resolution').selectOption('normal');
+        await page.locator('#iig_novelai_aspect_ratio').selectOption('2:3');
+        const missingAspectRequests = await page.evaluate(async () => {
+            const results = [];
+            for (const options of [{}, {aspectRatio: ''}, {aspectRatio: null}]) {
+                await app.pipeline.generateImageWithRetry('scene', '', null, options);
+                const {width, height} = requests.at(-1).body.parameters;
+                results.push({width, height, ratio: app.settingsModule.getLastRequestSnapshot().metadata.aspectRatio});
+            }
+            const count = requests.length;
+            let invalid = false;
+            try {await app.pipeline.generateImageWithRetry('scene', '', null, {aspectRatio: 'invalid'});}
+            catch {invalid = true;}
+            return {results, invalid, invalidRequests: requests.length - count};
+        });
+        assert.deepEqual(missingAspectRequests.results, Array(3).fill({width:832, height:1216, ratio:'2:3'}));
+        assert.equal(missingAspectRequests.invalid, true);
+        assert.equal(missingAspectRequests.invalidRequests, 0);
+        checks.push('request aspect overrides all 15 pairs without changing defaults; missing values use settings and unsupported values stop before HTTP');
         const invalidResolutionRequests = await page.evaluate(async () => {
             const saved = {novelaiResolution: app.settings.novelaiResolution, novelaiAspectRatio: app.settings.novelaiAspectRatio};
             const results = [];
@@ -393,7 +433,7 @@ const server = createServer((req, res) => {
         await page.locator('#iig_novelai_options').screenshot({path: path.join(artifacts, 'novelai-settings-mobile.png')});
         checks.push('390px layout without horizontal overflow');
         assert.deepEqual(errors, []);
-        writeFileSync(path.join(artifacts, 'report.json'), JSON.stringify({ checks, errors, transition, native, emptyLibraryMetrics, resolutionRequests }, null, 2));
+        writeFileSync(path.join(artifacts, 'report.json'), JSON.stringify({ checks, errors, transition, native, emptyLibraryMetrics, resolutionRequests, aspectOverrideRequests, missingAspectRequests }, null, 2));
         console.log(JSON.stringify({ checks, artifacts }, null, 2));
     } finally { await browser.close(); server.close(); }
 })().catch(error => { console.error(error); server.close(); process.exitCode = 1; });
