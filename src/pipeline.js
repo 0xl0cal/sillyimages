@@ -19,6 +19,7 @@ import {
     normalizeNaisteraCharacterDescriptionsMode,
     getEffectiveNegativePrompt,
 } from './settings.js';
+import { getNovelAIResolution } from './novelai.js';
 import {
     saveImageToFile,
     saveNaisteraMediaToFile,
@@ -264,8 +265,9 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
         ? normalizeNaisteraModel(settings.naisteraModel)
         : (settings.model || '');
 
+    const novelaiResolution = settings.apiType === 'novelai' ? getNovelAIResolution(settings) : null;
     const aspectRatio = settings.apiType === 'novelai'
-        ? `${settings.novelaiWidth}:${settings.novelaiHeight}`
+        ? settings.novelaiAspectRatio
         : settings.apiType === 'naistera'
         ? (options?.aspectRatio || settings.naisteraAspectRatio)
         : settings.apiType === 'xai'
@@ -301,10 +303,10 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
             apiType: settings.apiType,
             model,
             aspectRatio,
-            imageSize: settings.apiType === 'novelai' ? '' : settings.apiType === 'xai'
+            imageSize: settings.apiType === 'novelai' ? settings.novelaiResolution : settings.apiType === 'xai'
                 ? (options?.imageSize || settings.xaiResolution || '')
                 : (options?.imageSize || settings.imageSize || ''),
-            size: settings.apiType === 'novelai' ? `${settings.novelaiWidth}x${settings.novelaiHeight}` : settings.size || '',
+            size: novelaiResolution ? `${novelaiResolution.width}x${novelaiResolution.height}` : settings.size || '',
             quality: settings.apiType === 'novelai' ? '' : settings.apiType === 'xai'
                 ? (options?.quality || settings.xaiQuality || '')
                 : (options?.quality || settings.quality || ''),

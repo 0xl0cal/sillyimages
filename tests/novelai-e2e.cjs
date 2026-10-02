@@ -209,22 +209,49 @@ const server = createServer((req, res) => {
         await page.locator('#iig_api_type').selectOption('novelai');
         await page.waitForFunction(() => document.querySelector('#iig_model_select option[value="nai-diffusion-5-full"]'));
         await page.locator('#iig_model_select').selectOption('nai-diffusion-5-full');
-        assert.equal(await page.locator('#iig_novelai_resolution').inputValue(), '832x1216');
-        for (const size of ['832x1216', '1216x832', '1024x1024', '1024x1536', '1536x1024', '1536x1536']) {
+        // Cover every pair, obsolete dimension controls, snapshot consistency and invalid choices before HTTP.
+        assert.equal(await page.locator('#iig_novelai_resolution').inputValue(), 'normal');
+        assert.equal(await page.locator('#iig_novelai_aspect_ratio').inputValue(), '2:3');
+        assert.equal(await page.locator('#iig_novelai_width, #iig_novelai_height').count(), 0);
+        const resolutionRequests = [];
+        const resolutionMatrix = {
+            small: {'1:1':[640,640], '2:3':[512,768], '3:2':[768,512], '9:16':[448,832], '16:9':[832,448]},
+            normal: {'1:1':[1024,1024], '2:3':[832,1216], '3:2':[1216,832], '9:16':[768,1344], '16:9':[1344,768]},
+            big: {'1:1':[1472,1472], '2:3':[1024,1536], '3:2':[1536,1024], '9:16':[1088,1920], '16:9':[1920,1088]},
+        };
+        for (const [size, ratios] of Object.entries(resolutionMatrix)) {
             await page.locator('#iig_novelai_resolution').selectOption(size);
-            const [width, height] = size.split('x');
-            assert.equal(await page.locator('#iig_novelai_width').inputValue(), width);
-            assert.equal(await page.locator('#iig_novelai_height').inputValue(), height);
+            for (const [ratio, dimensions] of Object.entries(ratios)) {
+                await page.locator('#iig_novelai_aspect_ratio').selectOption(ratio);
+                const result = await page.evaluate(async () => {
+                    await app.pipeline.generateImageWithRetry('scene', '');
+                    return {parameters: requests.at(-1).body.parameters, snapshot: app.settingsModule.getLastRequestSnapshot()};
+                });
+                assert.deepEqual([result.parameters.width, result.parameters.height], dimensions);
+                assert.equal(result.snapshot.metadata.aspectRatio, ratio);
+                assert.equal(result.snapshot.metadata.imageSize, size);
+                assert.equal(result.snapshot.metadata.size, dimensions.join('x'));
+                assert.ok(dimensions.every(value => value % 64 === 0 && value <= 2048));
+                assert.ok(dimensions[0] * dimensions[1] <= 3145728);
+                resolutionRequests.push({size, ratio, dimensions});
+            }
         }
-        await page.locator('#iig_novelai_resolution').selectOption('1216x832');
-        assert.equal(await page.locator('#iig_novelai_width').inputValue(), '1216');
-        assert.equal(await page.locator('#iig_novelai_height').inputValue(), '832');
-        await page.locator('#iig_novelai_width').fill('1152');
-        assert.equal(await page.locator('#iig_novelai_resolution').inputValue(), 'custom');
-        await page.locator('#iig_novelai_resolution').selectOption('1024x1024');
-        assert.equal(await page.locator('#iig_novelai_height').inputValue(), '1024');
-        await page.locator('#iig_novelai_resolution').selectOption('832x1216');
-        checks.push('resolution presets update dimensions; custom dimensions and profile-derived selection');
+        const invalidResolutionRequests = await page.evaluate(async () => {
+            const saved = {novelaiResolution: app.settings.novelaiResolution, novelaiAspectRatio: app.settings.novelaiAspectRatio};
+            const results = [];
+            for (const [key, value] of [['novelaiResolution', 'custom'], ['novelaiAspectRatio', 'invalid']]) {
+                Object.assign(app.settings, saved, {[key]: value});
+                const count = requests.length;
+                try {await app.pipeline.generateImageWithRetry('scene', ''); results.push({failed: false});}
+                catch {results.push({failed: true, requests: requests.length - count});}
+            }
+            Object.assign(app.settings, saved);
+            return results;
+        });
+        assert.deepEqual(invalidResolutionRequests, [{failed:true, requests:0}, {failed:true, requests:0}]);
+        await page.locator('#iig_novelai_resolution').selectOption('normal');
+        await page.locator('#iig_novelai_aspect_ratio').selectOption('2:3');
+        checks.push('15 size/aspect pairs convert in HTTP and snapshots; invalid choices do not send requests');
         await page.locator('[data-section-id="iig_references_section"] > summary').click();
         assert.equal(await page.locator('#iig_additional_refs_section').isVisible(), true);
         const imageRow = page.locator('.iig-additional-ref-list-row[data-ref-id="image"]');
@@ -295,17 +322,22 @@ const server = createServer((req, res) => {
         assert.equal(native.profile.novelaiSteps, 28);
         assert.equal(native.profile.novelaiCfgRescale, 0.25);
         assert.equal(native.profile.novelaiSeed, 42);
+        assert.equal(native.profile.novelaiResolution, 'normal');
+        assert.equal(native.profile.novelaiAspectRatio, '2:3');
+        assert.equal('novelaiWidth' in native.profile || 'novelaiHeight' in native.profile, false);
         assert.equal(native.snapshot.negativePrompt, 'bad anatomy');
         assert.equal(native.snapshot.metadata.size, '832x1216');
         await page.waitForFunction(() => document.querySelector('#result').naturalWidth === 1);
         checks.push('native source UI -> pipeline -> JSON request -> decoded image; snapshot and profile');
         await page.locator('#iig_profile_save_as').click();
         await page.locator('#iig_novelai_steps').fill('12');
-        await page.locator('#iig_novelai_resolution').selectOption('1536x1536');
+        await page.locator('#iig_novelai_resolution').selectOption('big');
+        await page.locator('#iig_novelai_aspect_ratio').selectOption('16:9');
         await page.locator('#iig_profile_select').selectOption(await page.locator('#iig_profile_select').inputValue());
         assert.equal(await page.locator('#iig_novelai_steps').inputValue(), '28');
         assert.equal(await page.locator('#iig_novelai_cfg_rescale').inputValue(), '0.25');
-        assert.equal(await page.locator('#iig_novelai_resolution').inputValue(), '832x1216');
+        assert.equal(await page.locator('#iig_novelai_resolution').inputValue(), 'normal');
+        assert.equal(await page.locator('#iig_novelai_aspect_ratio').inputValue(), '2:3');
         checks.push('connection profile restores native settings in the UI');
         await page.locator('#iig_styles_section [data-style-library="negativePrompts"]').click();
         await page.locator('#iig_style_duplicate').click();
@@ -354,12 +386,14 @@ const server = createServer((req, res) => {
         assert.deepEqual(cancelled, {code:'aborted',requests:0});
         checks.push('cancelled request does not call the provider');
         await page.screenshot({ path: path.join(artifacts, 'desktop.png'), fullPage: true });
+        await page.locator('#iig_novelai_options').screenshot({path: path.join(artifacts, 'novelai-settings-desktop.png')});
         await page.setViewportSize({ width: 390, height: 844 });
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'mobile overflow');
         await page.screenshot({ path: path.join(artifacts, 'mobile.png'), fullPage: true });
+        await page.locator('#iig_novelai_options').screenshot({path: path.join(artifacts, 'novelai-settings-mobile.png')});
         checks.push('390px layout without horizontal overflow');
         assert.deepEqual(errors, []);
-        writeFileSync(path.join(artifacts, 'report.json'), JSON.stringify({ checks, errors, transition, native, emptyLibraryMetrics }, null, 2));
+        writeFileSync(path.join(artifacts, 'report.json'), JSON.stringify({ checks, errors, transition, native, emptyLibraryMetrics, resolutionRequests }, null, 2));
         console.log(JSON.stringify({ checks, artifacts }, null, 2));
     } finally { await browser.close(); server.close(); }
 })().catch(error => { console.error(error); server.close(); process.exitCode = 1; });

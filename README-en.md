@@ -80,7 +80,17 @@ An active negative prompt supplies undesired content for direct NovelAI and Nove
 
 Select **NovelAI**, enter a persistent NovelAI API token and choose **V5 Full**, **V5 Curated**, **V4.5 Full** or **V4.5 Curated**. The default endpoint is `https://image.novelai.net`. The image model picker lists these supported models; NovelAI's OpenAI-compatible model endpoint lists text models.
 
-In **Generation**, choose a resolution preset or enter width and height. Portrait, landscape and square sizes are available alongside steps, CFG scale, CFG rescale, seed and sampler. V4.5 also accepts noise schedule and **Skip CFG above sigma** (`0` disables it). Dimensions use multiples of 64 with a maximum of 3 megapixels. Seed `-1` chooses a random seed. These settings are saved in connection profiles.
+In **Generation**, choose **Small / Normal / Big** and an aspect ratio. The extension converts this pair to width and height when sending the request:
+
+| Aspect ratio | Small | Normal | Big |
+| --- | --- | --- | --- |
+| 1:1 | 640x640 | 1024x1024 | 1472x1472 |
+| 2:3 | 512x768 | 832x1216 | 1024x1536 |
+| 3:2 | 768x512 | 1216x832 | 1536x1024 |
+| 9:16 | 448x832 | 768x1344 | 1088x1920 |
+| 16:9 | 832x448 | 1344x768 | 1920x1088 |
+
+Aspect ratios are nominal: dimensions use NovelAI presets and a 64-pixel grid. See [NovelAI image sizes](https://docs.novelai.net/en/image/#image-resolution). Steps, CFG scale, CFG rescale, seed and sampler are also available. V4.5 accepts noise schedule and **Skip CFG above sigma** (`0` disables it). Seed `-1` chooses a random seed. These settings are saved in connection profiles.
 
 Separate character prompts with `|` or `\|`: `scene | 1boy | 1girl`. **Send character descriptions** controls descriptions from the character/persona library; **Send as character prompt** adds them as separate character captions. Direct NovelAI generates from text and does not attach avatars, image references or image context.
 

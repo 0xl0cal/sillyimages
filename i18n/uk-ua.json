@@ -369,7 +369,7 @@
     "Skip CFG above sigma (0 = off)": "Skip CFG above sigma (0 = вимкнено)",
     "Use a NovelAI persistent API token. Image references are not sent.": "Введіть постійний API-токен NovelAI. Картинки-референси не надсилаються.",
     "Disable the library prompt to edit this field.": "Вимкніть промпт у бібліотеці, щоб редагувати це поле.",
-    "NovelAI image size must not exceed 3 megapixels": "Розмір картинки NovelAI не повинен перевищувати 3 мегапікселі",
+    "Select a NovelAI size and aspect ratio": "Виберіть розмір і співвідношення сторін NovelAI",
     "Select a NovelAI sampler": "Виберіть семплер NovelAI",
     "Select a noise schedule": "Виберіть розклад шуму",
     "Select a NovelAI image model": "Виберіть модель картинок NovelAI",
@@ -377,11 +377,8 @@
     "NovelAI returned an invalid JSON response": "NovelAI повернув некоректну JSON-відповідь",
     "NovelAI returned no image": "NovelAI не повернув картинку",
     "Styles & Negatives": "Стилі та негативні промпти",
-    "Custom size": "Власний розмір",
-    "832x1216 (Portrait)": "832x1216 (Вертикальний)",
-    "1216x832 (Landscape)": "1216x832 (Горизонтальний)",
-    "1024x1536 (Portrait)": "1024x1536 (Вертикальний)",
-    "1536x1024 (Landscape)": "1536x1024 (Горизонтальний)",
-    "1536x1536 (Square)": "1536x1536 (Квадрат)",
+    "Small": "Малий",
+    "Normal": "Звичайний",
+    "Big": "Великий",
     "This model uses text-only references.": "Ця модель використовує лише текстові референси."
 }

@@ -76,7 +76,7 @@ import {
     renderIigBookMacro,
 } from './references.js';
 import { fetchModels, resolveActiveProvider, getActiveProviderMaxReferences, A1111_RESOLUTION_PRESETS } from './providers.js';
-import { NOVELAI_NUMERIC_FIELDS, NOVELAI_SAMPLERS, NOVELAI_NOISE_SCHEDULES, NOVELAI_RESOLUTION_PRESETS } from './novelai.js';
+import { NOVELAI_NUMERIC_FIELDS, NOVELAI_SAMPLERS, NOVELAI_NOISE_SCHEDULES, NOVELAI_RESOLUTION_PRESETS, NOVELAI_ASPECT_RATIOS } from './novelai.js';
 import { applyImageActionsStyle } from './imageActions.js';
 import { t, translate } from './i18n.js';
 import { buildCharacterLibraryBodyHtml, bindCharacterLibraryEvents } from './characterLibraryUi.js';
@@ -151,14 +151,8 @@ function buildNovelAISettingsHtml(settings) {
         </div>`;
     return `
         <div id="iig_novelai_options" class="iig-settings-card-nested ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}">
-            <div class="flex-row">
-                <label for="iig_novelai_resolution">${t`Resolution preset`}</label>
-                <select id="iig_novelai_resolution" class="flex1">
-                    <option value="custom">${t`Custom size`}</option>
-                    ${NOVELAI_RESOLUTION_PRESETS.map(preset => `<option value="${preset.width}x${preset.height}">${translate(preset.label)}</option>`).join('')}
-                </select>
-                <div></div>
-            </div>
+            ${selectHtml('resolution', t`Size`, 'novelaiResolution', Object.fromEntries(Object.entries(NOVELAI_RESOLUTION_PRESETS).map(([value, preset]) => [value, translate(preset.label)])))}
+            ${selectHtml('aspect_ratio', t`Aspect ratio`, 'novelaiAspectRatio', Object.fromEntries(NOVELAI_ASPECT_RATIOS.map(ratio => [ratio, ratio])))}
             ${NOVELAI_NUMERIC_FIELDS.map(field => `
                 <div class="flex-row" id="iig_novelai_${field.id}_row">
                     <label for="iig_novelai_${field.id}">${translate(field.label)}</label>
@@ -176,13 +170,6 @@ function buildNovelAISettingsHtml(settings) {
                 <div></div>
             </div>
         </div>`;
-}
-
-function syncNovelAIResolution(settings) {
-    const select = document.getElementById('iig_novelai_resolution');
-    if (!select) return;
-    const preset = NOVELAI_RESOLUTION_PRESETS.find(item => item.width === Number(settings.novelaiWidth) && item.height === Number(settings.novelaiHeight));
-    select.value = preset ? `${preset.width}x${preset.height}` : 'custom';
 }
 
 function syncNegativePromptInputs(settings) {
@@ -1229,6 +1216,8 @@ function applyProfileValuesToInputs(settings) {
     setVal('iig_novelai_noise_schedule', settings.novelaiNoiseSchedule);
     setVal('iig_novelai_character_descriptions_mode', settings.novelaiCharacterDescriptionsMode);
     setVal('iig_novelai_negative_prompt', settings.novelaiNegativePrompt);
+    setVal('iig_novelai_resolution', settings.novelaiResolution);
+    setVal('iig_novelai_aspect_ratio', settings.novelaiAspectRatio);
     setVal('iig_naistera_character_descriptions_mode', settings.naisteraCharacterDescriptionsMode);
     setVal('iig_naistera_aspect_ratio', settings.naisteraAspectRatio);
     setChk('iig_naistera_video_test', settings.naisteraVideoTest);
@@ -1591,20 +1580,11 @@ function bindApiSectionEvents(settings, updateVisibility) {
     for (const field of NOVELAI_NUMERIC_FIELDS) {
         document.getElementById(`iig_novelai_${field.id}`)?.addEventListener('input', (event) => {
             settings[field.key] = event.target.value === '' ? '' : Number(event.target.value);
-            if (field.id === 'width' || field.id === 'height') syncNovelAIResolution(settings);
             saveSettings();
         });
     }
-    document.getElementById('iig_novelai_resolution')?.addEventListener('change', (event) => {
-        const preset = NOVELAI_RESOLUTION_PRESETS.find(item => `${item.width}x${item.height}` === event.target.value);
-        if (!preset) return;
-        settings.novelaiWidth = preset.width;
-        settings.novelaiHeight = preset.height;
-        document.getElementById('iig_novelai_width').value = String(preset.width);
-        document.getElementById('iig_novelai_height').value = String(preset.height);
-        saveSettings();
-    });
     for (const [id, key] of [
+        ['resolution', 'novelaiResolution'], ['aspect_ratio', 'novelaiAspectRatio'],
         ['sampler', 'novelaiSampler'], ['noise_schedule', 'novelaiNoiseSchedule'],
         ['character_descriptions_mode', 'novelaiCharacterDescriptionsMode'],
     ]) {
@@ -2685,7 +2665,6 @@ function buildUpdateVisibility(settings) {
         document.getElementById('iig_novelai_skip_cfg_above_sigma_row')?.classList.toggle('iig-hidden', isNovelAIV5);
         document.getElementById('iig_novelai_noise_schedule_row')?.classList.toggle('iig-hidden', isNovelAIV5);
         document.getElementById('iig_novelai_hint')?.classList.toggle('iig-hidden', !isNovelAI);
-        syncNovelAIResolution(settings);
         syncNegativePromptInputs(settings);
         document.getElementById('iig_naistera_character_descriptions_row')?.classList.toggle('iig-hidden', !isNaistera);
         document.getElementById('iig_naistera_aspect_row')?.classList.toggle('iig-hidden', !isNaistera);

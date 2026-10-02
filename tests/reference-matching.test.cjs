@@ -262,7 +262,7 @@ test('native NovelAI sends JSON, structured character captions and configurable 
     Object.assign(settings, {
         apiType: 'novelai', endpoint: '', model: 'nai-diffusion-4-5-full',
         novelaiSteps: 28, novelaiCfgScale: 7, novelaiCfgRescale: 0.25,
-        novelaiWidth: 832, novelaiHeight: 1216, novelaiSeed: 42,
+        novelaiResolution: 'normal', novelaiAspectRatio: '2:3', novelaiSeed: 42,
         novelaiSampler: 'k_euler_ancestral', novelaiNoiseSchedule: 'karras', novelaiSkipCfgAboveSigma: 19,
         novelaiNegativePrompt: 'bad anatomy | bad hands', novelaiCharacterDescriptionsMode: 'none',
     });
@@ -306,7 +306,7 @@ test('native NovelAI rejects invalid inputs without HTTP requests', async () => 
     const provider = providers.resolveActiveProvider(settings);
     assert.ok(provider);
     for (const [key, value] of [
-        ['novelaiWidth', 833], ['novelaiHeight', 0], ['novelaiSteps', 0], ['novelaiSteps', 51],
+        ['novelaiResolution', 'invalid'], ['novelaiAspectRatio', 'invalid'], ['novelaiSteps', 0], ['novelaiSteps', 51],
         ['novelaiCfgScale', NaN], ['novelaiCfgRescale', 2], ['novelaiSeed', -2],
         ['novelaiSampler', 'invalid'], ['novelaiNoiseSchedule', 'invalid'], ['novelaiSkipCfgAboveSigma', -1],
     ]) {
