@@ -2354,7 +2354,7 @@ function bindAdditionalReferencesEvents(settings) {
         if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) {
             return;
         }
-        if (target.closest('.iig-reference-unavailable, [disabled]')) return;
+        if (target.closest('[disabled]')) return;
 
         if (target.id === 'iig_additional_refs_search') {
             additionalReferenceSearchQuery = target.value;
@@ -2394,7 +2394,7 @@ function bindAdditionalReferencesEvents(settings) {
 
     document.getElementById('iig_additional_refs_list')?.addEventListener('change', async (e) => {
         const target = e.target;
-        if (target instanceof Element && target.closest('.iig-reference-unavailable, [disabled]')) return;
+        if (target instanceof Element && target.closest('[disabled]')) return;
         if (target instanceof HTMLSelectElement && target.id === 'iig_additional_refs_filter') {
             additionalReferenceFilter = ['enabled', 'match', 'always'].includes(target.value) ? target.value : 'all';
             filterAdditionalReferenceRows();
@@ -2485,7 +2485,7 @@ function bindAdditionalReferencesEvents(settings) {
     document.getElementById('iig_additional_refs_list')?.addEventListener('click', async (e) => {
         const target = e.target instanceof Element ? e.target : null;
         if (!target) return;
-        if (target.closest('.iig-reference-unavailable, [disabled]')) return;
+        if (target.closest('[disabled]')) return;
 
         const selectButton = target.closest('[data-ref-select]');
         if (selectButton) {

@@ -207,7 +207,7 @@ test('description-only references reach the final prompt', async () => {
     assert.equal(parser.buildFinalGenerationPrompt('Lenore at a desk', '', matched, settings), 'Lenore at a desk');
 });
 
-test('switching Naistera to NovelAI drops image-bound descriptions but keeps text records', async () => {
+test('switching Naistera to NovelAI keeps descriptions without image attachments', async () => {
     const { settings, providers, requests } = await loadExtension();
     const provider = new providers.NaisteraProvider();
     provider.modelCatalog.set('image-model', { references: true });
@@ -215,6 +215,7 @@ test('switching Naistera to NovelAI drops image-bound descriptions but keeps tex
     const matchedAdditionalRefs = [
         { name: 'Lenore', imagePath: '/lenore.png', description: 'image-bound outfit' },
         { name: 'Lenore', description: 'text-only silver ring' },
+        { name: 'empty-description image', imagePath: '/empty.png', description: ' ' },
     ];
     const generate = () => provider.generate({ prompt: 'Lenore', options: { matchedAdditionalRefs, characterDescriptionPromptBlock: '' } });
     await generate();
@@ -222,8 +223,10 @@ test('switching Naistera to NovelAI drops image-bound descriptions but keeps tex
     settings.naisteraModel = 'novelai-v5';
     await generate();
     const body = JSON.parse(requests.at(-1).body);
-    assert.doesNotMatch(body.prompt, /image-bound outfit/);
+    assert.match(body.prompt, /image-bound outfit/);
     assert.match(body.prompt, /text-only silver ring/);
+    assert.doesNotMatch(body.prompt, /empty-description image/);
+    assert.equal(matchedAdditionalRefs[0].imagePath, '/lenore.png');
     assert.equal(body.reference_objects, undefined);
     settings.naisteraModel = 'image-model';
     await generate();
@@ -349,7 +352,7 @@ test('Naistera sends matching images and descriptions in the HTTP request', asyn
 test('NovelAI includes matching text records without requesting reference images', async () => {
     const { settings, parser, providers, requests } = await loadExtension();
     settings.naisteraModel = 'novelai-v5';
-    setReferences(settings, [{ name: 'Lenore', description: 'silver ring' }]);
+    setReferences(settings, [{ name: 'Lenore', description: 'silver ring', imagePath: '/ref.png' }]);
     const provider = new providers.NaisteraProvider();
     provider.modelCatalog.set('novelai-v5', { references: false });
     const matchedAdditionalRefs = parser.getMatchedAdditionalReferences('Lenore at a desk');

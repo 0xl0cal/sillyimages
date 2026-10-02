@@ -68,7 +68,7 @@ A ref entry has: name (or a comma-separated list of aliases), description, image
 
 **Simple** searches all lorebooks using names and comma-separated aliases as whole words, regardless of case. Each card has its own enable switch and sending mode. **Power** applies lorebook switches, regex, secondary keys, and priority. All secondary keys must occur in the image-generation prompt.
 
-Enabled entries can contain an image, a description, or both. **Send reference descriptions from lorebook** adds descriptions to the final prompt. Models without image-reference support receive only text entries. You can edit and disable these entries; image entries appear dimmed with their controls disabled. Selecting an image-capable model restores their saved switches. The `{{iig-book}}` macro includes only entries available to the selected model. Image attachments follow the model's reference limit.
+Enabled entries can contain an image, a description, or both. **Send reference descriptions from lorebook** adds descriptions to the final prompt. Models without image-reference support receive descriptions from all matching enabled entries, including entries with images. Image previews appear dimmed and upload controls are disabled; names, descriptions, sending rules and enable switches remain editable. Entries without descriptions are not sent to text-only models. Selecting an image-capable model uses the saved image. The `{{iig-book}}` macro includes descriptions available to the selected model. Image attachments follow the model's reference limit.
 
 ### Styles and negative prompts
 

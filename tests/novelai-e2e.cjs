@@ -5,7 +5,7 @@ const path = require('node:path');
 const { chromium } = require('playwright');
 
 // Real settings UI and pipeline; fake Tavern state and provider HTTP responses.
-// Failures covered: leaked image descriptions, tab cross-talk, lost focus/scroll,
+// Failures covered: unwanted image attachments, description switches, tab cross-talk, lost focus/scroll,
 // missing profile fields, wrong native payload/snapshot and narrow-window overflow.
 const root = path.resolve(__dirname, '..');
 const prefix = '/scripts/extensions/third-party/sillyimages/';
@@ -59,6 +59,9 @@ const server = createServer((req, res) => {
     const errors = [];
     const checks = [];
     page.on('pageerror', error => errors.push(error.message));
+    await page.route('https://example.test/**', route => route.fulfill({
+        status: 200, contentType: 'image/png', body: Buffer.from(png, 'base64'),
+    }));
     try {
         await page.goto(`http://127.0.0.1:${server.address().port}`);
         await page.waitForFunction(() => window.ready);
@@ -199,12 +202,14 @@ const server = createServer((req, res) => {
             return {before,after:requests.filter(r=>r.body?.prompt).at(-1).body,snapshot:app.settingsModule.getLastRequestSnapshot()};
         });
         assert.match(transition.before.prompt, /IMAGE_DESCRIPTION/);
-        assert.doesNotMatch(transition.after.prompt, /IMAGE_DESCRIPTION/);
+        assert.match(transition.after.prompt, /IMAGE_DESCRIPTION/);
         assert.match(transition.after.prompt, /TEXT_DESCRIPTION/);
         assert.equal(transition.after.negative_prompt, 'bad anatomy');
         assert.equal(transition.snapshot.prompt, transition.after.prompt);
-        assert.equal(transition.snapshot.matchedRefs.length, 1);
-        checks.push('Naistera model switch filters image reference and its description; snapshot agrees');
+        assert.equal(transition.snapshot.matchedRefs.length, 2);
+        assert.equal(transition.after.reference_objects, undefined);
+        assert.equal(transition.snapshot.references.length, 0);
+        checks.push('Naistera NovelAI keeps image reference descriptions without image attachments; snapshot agrees');
 
         await page.locator('#iig_api_type').selectOption('novelai');
         await page.waitForFunction(() => document.querySelector('#iig_model_select option[value="nai-diffusion-5-full"]'));
@@ -296,11 +301,24 @@ const server = createServer((req, res) => {
         assert.equal(await page.locator('#iig_additional_refs_section').isVisible(), true);
         const imageRow = page.locator('.iig-additional-ref-list-row[data-ref-id="image"]');
         const textRow = page.locator('.iig-additional-ref-list-row[data-ref-id="text"]');
-        assert.equal(await imageRow.locator('input[type="checkbox"]').isDisabled(), true);
-        assert.equal(await imageRow.locator('[data-ref-select]').isDisabled(), true);
-        assert.equal(await imageRow.evaluate(e => getComputedStyle(e).opacity), '0.35');
+        assert.equal(await imageRow.locator('input[type="checkbox"]').isDisabled(), false);
+        assert.equal(await imageRow.locator('[data-ref-select]').isDisabled(), false);
+        assert.equal(await imageRow.evaluate(e => getComputedStyle(e).opacity), '1');
+        assert.equal(await imageRow.locator('img').evaluate(e => getComputedStyle(e).opacity), '0.35');
         assert.equal(await page.locator('#iig_additional_refs_import').isDisabled(), true);
-        assert.equal(await page.locator('.iig-additional-ref-editor-content').evaluate(e => e.disabled), true);
+        assert.equal(await page.locator('.iig-additional-ref-description').isDisabled(), false);
+        assert.equal(await page.locator('.iig-additional-ref-upload-url').isDisabled(), true);
+        await page.locator('.iig-additional-ref-description').fill('IMAGE_DESCRIPTION edited');
+        assert.equal(await page.locator('.iig-additional-ref-description').evaluate(e => document.activeElement === e), true);
+        await page.locator('.iig-additional-ref-description').fill(' ');
+        const emptyImageDescription = await page.evaluate(async () => {
+            await app.pipeline.generateImageWithRetry('Lenore in a room', '');
+            return app.settingsModule.getLastRequestSnapshot();
+        });
+        assert.equal(emptyImageDescription.matchedRefs.length, 1);
+        assert.doesNotMatch(emptyImageDescription.prompt, /IMAGE_DESCRIPTION/);
+        await page.locator('.iig-additional-ref-description').fill('IMAGE_DESCRIPTION edited');
+        await imageRow.locator('input[type="checkbox"]').uncheck();
         await textRow.locator('[data-ref-select]').click();
         assert.equal(await page.locator('.iig-additional-ref-description').isDisabled(), false);
         await page.locator('.iig-additional-ref-description').fill('TEXT_DESCRIPTION edited');
@@ -313,6 +331,7 @@ const server = createServer((req, res) => {
         });
         assert.doesNotMatch(referencePrompt, /TEXT_DESCRIPTION|IMAGE_DESCRIPTION/);
         await page.locator('#iig_send_ref_descriptions').uncheck();
+        await imageRow.locator('input[type="checkbox"]').check();
         await textRow.locator('input[type="checkbox"]').check();
         referencePrompt = await page.evaluate(async () => {
             await app.pipeline.generateImageWithRetry('Lenore in a room', '');
@@ -325,22 +344,33 @@ const server = createServer((req, res) => {
             return requests.at(-1).body.parameters.v4_prompt.caption.base_caption;
         });
         assert.match(referencePrompt, /TEXT_DESCRIPTION/);
-        assert.doesNotMatch(referencePrompt, /IMAGE_DESCRIPTION/);
+        assert.match(referencePrompt, /IMAGE_DESCRIPTION edited/);
+        assert.equal(referencePrompt.match(/IMAGE_DESCRIPTION edited/g).length, 1);
+        assert.equal(await page.evaluate(() => app.settings.lorebooks[0].refs[0].imagePath), 'https://example.test/ref.png');
         const macro = await page.evaluate(() => app.references.renderIigBookMacro(app.settings, app.providers.resolveActiveProvider(app.settings).supportsReferences(app.settings)));
         assert.match(macro, /TEXT_DESCRIPTION/);
-        assert.doesNotMatch(macro, /IMAGE_DESCRIPTION/);
+        assert.match(macro, /IMAGE_DESCRIPTION edited/);
         await page.locator('#iig_api_type').selectOption('naistera');
         await page.locator('#iig_naistera_model').selectOption('banana');
         assert.equal(await imageRow.locator('input[type="checkbox"]').isDisabled(), false);
         assert.equal(await imageRow.locator('input[type="checkbox"]').isChecked(), true);
+        assert.equal(await imageRow.locator('img').evaluate(e => getComputedStyle(e).opacity), '1');
+        await page.evaluate(async () => app.pipeline.generateImageWithRetry('Lenore in a room', ''));
+        assert.equal(await page.evaluate(() => requests.at(-1).body.reference_objects.length), 1);
         await page.locator('#iig_naistera_model').selectOption('novelai-v5');
-        assert.equal(await imageRow.locator('input[type="checkbox"]').isDisabled(), true);
+        assert.equal(await imageRow.locator('input[type="checkbox"]').isDisabled(), false);
+        assert.equal(await imageRow.locator('img').evaluate(e => getComputedStyle(e).opacity), '0.35');
         assert.equal(await textRow.locator('input[type="checkbox"]').isDisabled(), false);
         await page.locator('#iig_api_type').selectOption('novelai');
         await page.locator('label:has(input[name="iig_additional_refs_mode"][value="power"])').click();
-        assert.equal(await imageRow.locator('input[type="checkbox"]').isDisabled(), true);
+        assert.equal(await imageRow.locator('input[type="checkbox"]').isDisabled(), false);
+        await imageRow.locator('[data-ref-select]').click();
+        assert.equal(await page.locator('.iig-additional-ref-name').isDisabled(), false);
+        assert.equal(await page.locator('.iig-additional-ref-match-mode').isDisabled(), false);
+        assert.equal(await page.locator('.iig-additional-ref-remove').isDisabled(), false);
         await page.locator('label:has(input[name="iig_additional_refs_mode"][value="simple"])').click();
-        checks.push('text references remain editable and toggle generation; image controls dim/disable and restore across providers and modes');
+        await page.locator('#iig_additional_refs_section').screenshot({path: path.join(artifacts, 'novelai-reference-descriptions.png')});
+        checks.push('image descriptions stay editable/toggleable in both modes; only image previews/actions dim and image attachments restore on compatible models');
         for (const [field, value] of [['steps','28'],['cfg_scale','7'],['cfg_rescale','0.25'],['seed','42']]) {
             await page.locator('#iig_novelai_'+field).fill(value);
         }

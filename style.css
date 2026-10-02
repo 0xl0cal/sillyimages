@@ -1520,14 +1520,11 @@
     opacity: 0.52;
 }
 
-.iig-additional-ref-list-row.iig-reference-unavailable,
-.iig-additional-ref-editor-content.iig-reference-unavailable {
+.iig-reference-image-unavailable {
     opacity: 0.35;
     filter: grayscale(1);
 }
 
-.iig-reference-unavailable button,
-.iig-reference-unavailable input,
 .iig-additional-ref-image-actions:disabled .menu_button {
     cursor: not-allowed;
 }
@@ -1624,7 +1621,6 @@
     gap: 9px;
 }
 
-fieldset.iig-additional-ref-editor-content,
 fieldset.iig-additional-ref-image-actions {
     min-width: 0;
     margin: 0;
