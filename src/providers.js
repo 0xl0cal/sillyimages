@@ -29,7 +29,7 @@ import {
     isRetryableHttpStatus,
 } from './utils.js';
 import { buildFinalGenerationPrompt } from './parser.js';
-import { NOVELAI_MODELS, buildNovelAIParameters, validateNovelAIParameters, splitNovelAICharacterPrompts } from './novelai.js';
+import { NOVELAI_MODELS, buildNovelAIParameters, validateNovelAIParameters, splitNovelAICharacterPrompts, isNovelAIMedium } from './novelai.js';
 import { t } from './i18n.js';
 import {
     collectCharacterLibraryReferences,
@@ -1646,6 +1646,30 @@ export class NaisteraProvider extends Provider {
         return model?.negativePrompt === true;
     }
 
+    getGenerationParameters(settings) {
+        if (!isNaisteraNovelAIModel(settings.naisteraModel)) return null;
+        return this.modelCatalog.get(normalizeNaisteraModel(settings.naisteraModel))?.parameters || null;
+    }
+
+    getGenerationSettings(settings, options = {}) {
+        const rules = this.getGenerationParameters(settings);
+        if (!rules) return {};
+        const numeric = (key, saved) => {
+            const rule = rules[key];
+            const raw = options[key] ?? saved;
+            const value = raw === null || raw === '' || raw === undefined ? rule.default : Number(raw);
+            return Math.min(rule.max, Math.max(rule.min, Number.isFinite(value) ? value : rule.default));
+        };
+        const requestedSampler = options.sampler ?? settings.naisteraSampler;
+        const result = {
+            steps: Math.round(numeric('steps', settings.naisteraSteps)),
+            sampler: rules.sampler.choices.includes(requestedSampler) ? requestedSampler : rules.sampler.default,
+            scale: numeric('scale', settings.naisteraCfgScale),
+        };
+        if (rules.cfg_rescale) result.cfg_rescale = numeric('cfg_rescale', settings.naisteraCfgRescale);
+        return result;
+    }
+
     getModelLabel(modelId) {
         return this.modelCatalog.get(String(modelId || ''))?.name || super.getModelLabel(modelId);
     }
@@ -1690,6 +1714,7 @@ export class NaisteraProvider extends Provider {
                 name: String(model.name || model.id),
                 references: model.references !== false,
                 negativePrompt: model.negative_prompt === true,
+                parameters: model.parameters || null,
             }));
 
         this.modelCatalog = new Map(models.map((model) => [model.id, model]));
@@ -1827,6 +1852,7 @@ export class NaisteraProvider extends Provider {
 
         const aspectRatio = options.aspectRatio || settings.naisteraAspectRatio || '1:1';
         const model = normalizeNaisteraModel(options.model || settings.naisteraModel);
+        if (!this.modelCatalog.has(model)) await this.fetchModels();
         if (!this.supportsReferences({ ...settings, naisteraModel: model })) references = [];
         const preset = options.preset || null;
         const wantsVideoTest = Boolean(options.videoTestMode);
@@ -1860,6 +1886,7 @@ export class NaisteraProvider extends Provider {
             prompt: fullPrompt,
             aspect_ratio: aspectRatio,
             model,
+            ...this.getGenerationSettings({ ...settings, naisteraModel: model }, options),
         };
         const negativePrompt = String(options.negativePrompt ?? getEffectiveNegativePrompt(
             settings.naisteraNegativePrompt, { ...settings, naisteraModel: model },
@@ -2231,7 +2258,7 @@ export class NovelAIProvider extends Provider {
     get displayName() { return 'NovelAI'; }
     get capabilities() { return { ...super.capabilities, referencesMaxCount: 0 }; }
     supportsReferences() { return false; }
-    supportsNegativePrompt() { return true; }
+    supportsNegativePrompt(settings = getSettings()) { return !isNovelAIMedium(settings.model); }
     getModelLabel(model) { return NOVELAI_MODELS[model] || model; }
     async fetchModels() { return Object.keys(NOVELAI_MODELS); }
 
@@ -2245,7 +2272,8 @@ export class NovelAIProvider extends Provider {
     async generate({ prompt, style = '', options = {} }) {
         const settings = getSettings();
         const model = options.model || settings.model;
-        const errors = this.validate({ ...settings, model });
+        const requestSettings = { ...settings, model, novelaiAspectRatio: options.aspectRatio || settings.novelaiAspectRatio };
+        const errors = this.validate(requestSettings);
         if (errors.length) throw new ProviderError({ message: errors.join('; '), code: 'invalid_request', providerId: this.id });
         let fullPrompt = buildFinalGenerationPrompt(prompt, style, options.matchedAdditionalRefs || [], settings, {
             wrapStyle: false, supportsImageReferences: false,
@@ -2256,7 +2284,7 @@ export class NovelAIProvider extends Provider {
             }, settings);
         fullPrompt = appendPromptBlock(fullPrompt, descriptions);
         const negativePrompt = String(options.negativePrompt ?? getEffectiveNegativePrompt(settings.novelaiNegativePrompt, settings)).trim();
-        const parameters = buildNovelAIParameters(settings, fullPrompt, negativePrompt, model);
+        const parameters = buildNovelAIParameters(requestSettings, fullPrompt, negativePrompt, model);
         const body = { action: 'generate', model, input: splitNovelAICharacterPrompts(fullPrompt).base, parameters };
         const snapshot = getLastRequestSnapshot();
         if (snapshot?.metadata?.apiType === this.id) {

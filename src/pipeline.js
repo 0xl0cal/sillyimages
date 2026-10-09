@@ -19,6 +19,7 @@ import {
     normalizeNaisteraCharacterDescriptionsMode,
     getEffectiveNegativePrompt,
 } from './settings.js';
+import { getNovelAIResolution, isNovelAIMedium, resolveNovelAISettings, NOVELAI_MEDIUM_NEGATIVE } from './novelai.js';
 import {
     saveImageToFile,
     saveNaisteraMediaToFile,
@@ -265,12 +266,14 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
         : (settings.model || '');
 
     const aspectRatio = settings.apiType === 'novelai'
-        ? `${settings.novelaiWidth}:${settings.novelaiHeight}`
+        ? (options?.aspectRatio || settings.novelaiAspectRatio)
         : settings.apiType === 'naistera'
         ? (options?.aspectRatio || settings.naisteraAspectRatio)
         : settings.apiType === 'xai'
             ? (options?.aspectRatio || settings.xaiAspectRatio)
             : (options?.aspectRatio || settings.aspectRatio);
+    const novelaiResolution = settings.apiType === 'novelai'
+        ? getNovelAIResolution({ ...settings, novelaiAspectRatio: aspectRatio }) : null;
 
     const matchedRefsInfo = (Array.isArray(matchedAdditionalRefs) ? matchedAdditionalRefs : []).map((ref) => ({
         name: String(ref?.name || ''),
@@ -279,11 +282,17 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
         lorebookName: String(ref?._lorebookName || ''),
         reason: ref?._matchReason || null,
     }));
-    const negativePrompt = provider?.supportsNegativePrompt(settings)
+    const nativeSettings = settings.apiType === 'novelai' ? resolveNovelAISettings(settings) : null;
+    const negativePrompt = nativeSettings && isNovelAIMedium(nativeSettings.model)
+        ? NOVELAI_MEDIUM_NEGATIVE
+        : provider?.supportsNegativePrompt(settings)
         ? String(options?.negativePrompt ?? getEffectiveNegativePrompt(
             settings.apiType === 'novelai' ? settings.novelaiNegativePrompt : settings.naisteraNegativePrompt, settings,
         )).trim()
         : '';
+    const naisteraParameters = settings.apiType === 'naistera'
+        ? provider?.getGenerationSettings?.({ ...settings, naisteraModel: model }, options) || {}
+        : {};
 
     return {
         timestamp: Date.now(),
@@ -301,19 +310,25 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
             apiType: settings.apiType,
             model,
             aspectRatio,
-            imageSize: settings.apiType === 'novelai' ? '' : settings.apiType === 'xai'
+            imageSize: settings.apiType === 'novelai' ? settings.novelaiResolution : settings.apiType === 'xai'
                 ? (options?.imageSize || settings.xaiResolution || '')
                 : (options?.imageSize || settings.imageSize || ''),
-            size: settings.apiType === 'novelai' ? `${settings.novelaiWidth}x${settings.novelaiHeight}` : settings.size || '',
+            size: novelaiResolution ? `${novelaiResolution.width}x${novelaiResolution.height}` : settings.size || '',
             quality: settings.apiType === 'novelai' ? '' : settings.apiType === 'xai'
                 ? (options?.quality || settings.xaiQuality || '')
                 : (options?.quality || settings.quality || ''),
             refInstructionApplied,
+            ...(Object.keys(naisteraParameters).length ? {
+                steps: naisteraParameters.steps,
+                sampler: naisteraParameters.sampler,
+                cfgScale: naisteraParameters.scale,
+                cfgRescale: naisteraParameters.cfg_rescale,
+            } : {}),
             ...(settings.apiType === 'novelai' ? {
-                steps: settings.novelaiSteps,
-                cfgScale: settings.novelaiCfgScale,
-                cfgRescale: settings.novelaiCfgRescale,
-                sampler: settings.novelaiSampler,
+                steps: nativeSettings.novelaiSteps,
+                cfgScale: nativeSettings.novelaiCfgScale,
+                cfgRescale: nativeSettings.novelaiCfgRescale,
+                sampler: nativeSettings.novelaiSampler,
                 noiseSchedule: settings.model.startsWith('nai-diffusion-5-') ? '' : settings.novelaiNoiseSchedule,
                 seed: settings.novelaiSeed,
             } : {}),

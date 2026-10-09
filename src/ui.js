@@ -76,7 +76,7 @@ import {
     renderIigBookMacro,
 } from './references.js';
 import { fetchModels, resolveActiveProvider, getActiveProviderMaxReferences, A1111_RESOLUTION_PRESETS } from './providers.js';
-import { NOVELAI_NUMERIC_FIELDS, NOVELAI_SAMPLERS, NOVELAI_NOISE_SCHEDULES, NOVELAI_RESOLUTION_PRESETS } from './novelai.js';
+import { NOVELAI_NUMERIC_FIELDS, NOVELAI_SAMPLERS, NOVELAI_NOISE_SCHEDULES, NOVELAI_RESOLUTION_PRESETS, NOVELAI_ASPECT_RATIOS, isNovelAIMedium, resolveNovelAISettings } from './novelai.js';
 import { applyImageActionsStyle } from './imageActions.js';
 import { t, translate } from './i18n.js';
 import { buildCharacterLibraryBodyHtml, bindCharacterLibraryEvents } from './characterLibraryUi.js';
@@ -151,14 +151,8 @@ function buildNovelAISettingsHtml(settings) {
         </div>`;
     return `
         <div id="iig_novelai_options" class="iig-settings-card-nested ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}">
-            <div class="flex-row">
-                <label for="iig_novelai_resolution">${t`Resolution preset`}</label>
-                <select id="iig_novelai_resolution" class="flex1">
-                    <option value="custom">${t`Custom size`}</option>
-                    ${NOVELAI_RESOLUTION_PRESETS.map(preset => `<option value="${preset.width}x${preset.height}">${translate(preset.label)}</option>`).join('')}
-                </select>
-                <div></div>
-            </div>
+            ${selectHtml('resolution', t`Size`, 'novelaiResolution', Object.fromEntries(Object.entries(NOVELAI_RESOLUTION_PRESETS).map(([value, preset]) => [value, translate(preset.label)])))}
+            ${selectHtml('aspect_ratio', t`Aspect ratio`, 'novelaiAspectRatio', Object.fromEntries(NOVELAI_ASPECT_RATIOS.map(ratio => [ratio, ratio])))}
             ${NOVELAI_NUMERIC_FIELDS.map(field => `
                 <div class="flex-row" id="iig_novelai_${field.id}_row">
                     <label for="iig_novelai_${field.id}">${translate(field.label)}</label>
@@ -170,19 +164,12 @@ function buildNovelAISettingsHtml(settings) {
             ${selectHtml('character_descriptions_mode', t`Send character descriptions`, 'novelaiCharacterDescriptionsMode', {
                 none: t`Do not send`, 'as-is': t`Send as-is`, 'character-prompt': t`Send as character prompt`,
             })}
-            <div class="flex-row">
+            <div class="flex-row" id="iig_novelai_negative_prompt_row">
                 <label for="iig_novelai_negative_prompt">${t`Negative prompt`}</label>
                 <textarea id="iig_novelai_negative_prompt" class="text_pole textarea_compact flex1" rows="2">${sanitizeForHtml(settings.novelaiNegativePrompt)}</textarea>
                 <div></div>
             </div>
         </div>`;
-}
-
-function syncNovelAIResolution(settings) {
-    const select = document.getElementById('iig_novelai_resolution');
-    if (!select) return;
-    const preset = NOVELAI_RESOLUTION_PRESETS.find(item => item.width === Number(settings.novelaiWidth) && item.height === Number(settings.novelaiHeight));
-    select.value = preset ? `${preset.width}x${preset.height}` : 'custom';
 }
 
 function syncNegativePromptInputs(settings) {
@@ -380,6 +367,29 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                 <label for="iig_naistera_negative_prompt">${t`Negative prompt`}</label>
                 <textarea id="iig_naistera_negative_prompt" class="text_pole textarea_compact flex1" rows="2" placeholder="${t`(empty)`}">${sanitizeForHtml(settings.naisteraNegativePrompt || '')}</textarea>
                 <div></div>
+            </div>
+
+            <div id="iig_naistera_generation_options" class="iig-hidden">
+                <div class="flex-row">
+                    <label for="iig_naistera_steps">${t`Steps`}</label>
+                    <input id="iig_naistera_steps" class="text_pole flex1" type="number" min="1" max="28" step="1">
+                    <div></div>
+                </div>
+                <div class="flex-row">
+                    <label for="iig_naistera_sampler">${t`Sampler`}</label>
+                    <select id="iig_naistera_sampler" class="flex1"></select>
+                    <div></div>
+                </div>
+                <div class="flex-row">
+                    <label for="iig_naistera_cfg_scale">${t`Guidance`}</label>
+                    <input id="iig_naistera_cfg_scale" class="text_pole flex1" type="number" min="0" max="10" step="0.1">
+                    <div></div>
+                </div>
+                <div class="flex-row" id="iig_naistera_cfg_rescale_row">
+                    <label for="iig_naistera_cfg_rescale">${t`Guidance rescale`}</label>
+                    <input id="iig_naistera_cfg_rescale" class="text_pole flex1" type="number" min="0" max="1" step="0.05">
+                    <div></div>
+                </div>
             </div>
 
             ${buildNovelAISettingsHtml(settings)}
@@ -1229,6 +1239,8 @@ function applyProfileValuesToInputs(settings) {
     setVal('iig_novelai_noise_schedule', settings.novelaiNoiseSchedule);
     setVal('iig_novelai_character_descriptions_mode', settings.novelaiCharacterDescriptionsMode);
     setVal('iig_novelai_negative_prompt', settings.novelaiNegativePrompt);
+    setVal('iig_novelai_resolution', settings.novelaiResolution);
+    setVal('iig_novelai_aspect_ratio', settings.novelaiAspectRatio);
     setVal('iig_naistera_character_descriptions_mode', settings.naisteraCharacterDescriptionsMode);
     setVal('iig_naistera_aspect_ratio', settings.naisteraAspectRatio);
     setChk('iig_naistera_video_test', settings.naisteraVideoTest);
@@ -1588,23 +1600,27 @@ function bindApiSectionEvents(settings, updateVisibility) {
         saveSettings();
     });
 
-    for (const field of NOVELAI_NUMERIC_FIELDS) {
-        document.getElementById(`iig_novelai_${field.id}`)?.addEventListener('input', (event) => {
-            settings[field.key] = event.target.value === '' ? '' : Number(event.target.value);
-            if (field.id === 'width' || field.id === 'height') syncNovelAIResolution(settings);
+    for (const [id, key] of [
+        ['steps', 'naisteraSteps'], ['cfg_scale', 'naisteraCfgScale'], ['cfg_rescale', 'naisteraCfgRescale'],
+    ]) {
+        document.getElementById(`iig_naistera_${id}`)?.addEventListener('input', (event) => {
+            settings[key] = event.target.value === '' ? null : Number(event.target.value);
             saveSettings();
         });
     }
-    document.getElementById('iig_novelai_resolution')?.addEventListener('change', (event) => {
-        const preset = NOVELAI_RESOLUTION_PRESETS.find(item => `${item.width}x${item.height}` === event.target.value);
-        if (!preset) return;
-        settings.novelaiWidth = preset.width;
-        settings.novelaiHeight = preset.height;
-        document.getElementById('iig_novelai_width').value = String(preset.width);
-        document.getElementById('iig_novelai_height').value = String(preset.height);
+    document.getElementById('iig_naistera_sampler')?.addEventListener('change', (event) => {
+        settings.naisteraSampler = event.target.value;
         saveSettings();
     });
+
+    for (const field of NOVELAI_NUMERIC_FIELDS) {
+        document.getElementById(`iig_novelai_${field.id}`)?.addEventListener('input', (event) => {
+            settings[field.key] = event.target.value === '' ? '' : Number(event.target.value);
+            saveSettings();
+        });
+    }
     for (const [id, key] of [
+        ['resolution', 'novelaiResolution'], ['aspect_ratio', 'novelaiAspectRatio'],
         ['sampler', 'novelaiSampler'], ['noise_schedule', 'novelaiNoiseSchedule'],
         ['character_descriptions_mode', 'novelaiCharacterDescriptionsMode'],
     ]) {
@@ -2374,7 +2390,7 @@ function bindAdditionalReferencesEvents(settings) {
         if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) {
             return;
         }
-        if (target.closest('.iig-reference-unavailable, [disabled]')) return;
+        if (target.closest('[disabled]')) return;
 
         if (target.id === 'iig_additional_refs_search') {
             additionalReferenceSearchQuery = target.value;
@@ -2414,7 +2430,7 @@ function bindAdditionalReferencesEvents(settings) {
 
     document.getElementById('iig_additional_refs_list')?.addEventListener('change', async (e) => {
         const target = e.target;
-        if (target instanceof Element && target.closest('.iig-reference-unavailable, [disabled]')) return;
+        if (target instanceof Element && target.closest('[disabled]')) return;
         if (target instanceof HTMLSelectElement && target.id === 'iig_additional_refs_filter') {
             additionalReferenceFilter = ['enabled', 'match', 'always'].includes(target.value) ? target.value : 'all';
             filterAdditionalReferenceRows();
@@ -2505,7 +2521,7 @@ function bindAdditionalReferencesEvents(settings) {
     document.getElementById('iig_additional_refs_list')?.addEventListener('click', async (e) => {
         const target = e.target instanceof Element ? e.target : null;
         if (!target) return;
-        if (target.closest('.iig-reference-unavailable, [disabled]')) return;
+        if (target.closest('[disabled]')) return;
 
         const selectButton = target.closest('[data-ref-select]');
         if (selectButton) {
@@ -2680,12 +2696,47 @@ function buildUpdateVisibility(settings) {
         // Naistera-only params
         document.getElementById('iig_naistera_model_row')?.classList.toggle('iig-hidden', !isNaistera);
         document.getElementById('iig_naistera_negative_prompt_row')?.classList.toggle('iig-hidden', !naisteraNegativePromptSupported);
+        const generationRules = isNaistera ? provider?.getGenerationParameters(settings) : null;
+        document.getElementById('iig_naistera_generation_options')?.classList.toggle('iig-hidden', !generationRules);
+        if (generationRules) {
+            const values = provider.getGenerationSettings(settings);
+            for (const [id, key] of [['steps', 'steps'], ['cfg_scale', 'scale'], ['cfg_rescale', 'cfg_rescale']]) {
+                const input = document.getElementById(`iig_naistera_${id}`);
+                const rule = generationRules[key];
+                if (!input || !rule) continue;
+                input.min = rule.min;
+                input.max = rule.max;
+                input.value = values[key];
+                input.disabled = rule.min === rule.max;
+            }
+            const sampler = document.getElementById('iig_naistera_sampler');
+            sampler.replaceChildren(...generationRules.sampler.choices.map(value =>
+                new Option(NOVELAI_SAMPLERS[value] || value, value)));
+            sampler.value = values.sampler;
+            sampler.disabled = generationRules.sampler.choices.length === 1;
+            document.getElementById('iig_naistera_cfg_rescale_row')?.classList.toggle('iig-hidden', !generationRules.cfg_rescale);
+        }
         document.getElementById('iig_novelai_options')?.classList.toggle('iig-hidden', !isNovelAI);
         const isNovelAIV5 = settings.model?.startsWith('nai-diffusion-5-');
+        const isMedium = isNovelAIMedium(settings.model);
+        const effectiveNovelAI = resolveNovelAISettings(settings);
+        const novelaiSteps = document.getElementById('iig_novelai_steps');
+        if (novelaiSteps) {
+            novelaiSteps.min = isMedium ? 14 : 1;
+            novelaiSteps.max = isMedium ? 14 : 50;
+            novelaiSteps.value = effectiveNovelAI.novelaiSteps;
+            novelaiSteps.disabled = isMedium;
+        }
+        const novelaiSampler = document.getElementById('iig_novelai_sampler');
+        if (novelaiSampler) {
+            novelaiSampler.value = effectiveNovelAI.novelaiSampler;
+            novelaiSampler.disabled = isMedium;
+        }
+        document.getElementById('iig_novelai_cfg_rescale_row')?.classList.toggle('iig-hidden', isMedium);
+        document.getElementById('iig_novelai_negative_prompt_row')?.classList.toggle('iig-hidden', isMedium);
         document.getElementById('iig_novelai_skip_cfg_above_sigma_row')?.classList.toggle('iig-hidden', isNovelAIV5);
         document.getElementById('iig_novelai_noise_schedule_row')?.classList.toggle('iig-hidden', isNovelAIV5);
         document.getElementById('iig_novelai_hint')?.classList.toggle('iig-hidden', !isNovelAI);
-        syncNovelAIResolution(settings);
         syncNegativePromptInputs(settings);
         document.getElementById('iig_naistera_character_descriptions_row')?.classList.toggle('iig-hidden', !isNaistera);
         document.getElementById('iig_naistera_aspect_row')?.classList.toggle('iig-hidden', !isNaistera);

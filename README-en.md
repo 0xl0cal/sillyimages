@@ -68,19 +68,31 @@ A ref entry has: name (or a comma-separated list of aliases), description, image
 
 **Simple** searches all lorebooks using names and comma-separated aliases as whole words, regardless of case. Each card has its own enable switch and sending mode. **Power** applies lorebook switches, regex, secondary keys, and priority. All secondary keys must occur in the image-generation prompt.
 
-Enabled entries can contain an image, a description, or both. **Send reference descriptions from lorebook** adds descriptions to the final prompt. Models without image-reference support receive only text entries. You can edit and disable these entries; image entries appear dimmed with their controls disabled. Selecting an image-capable model restores their saved switches. The `{{iig-book}}` macro includes only entries available to the selected model. Image attachments follow the model's reference limit.
+Enabled entries can contain an image, a description, or both. **Send reference descriptions from lorebook** adds descriptions to the final prompt. Models without image-reference support receive descriptions from all matching enabled entries, including entries with images. Image previews appear dimmed and upload controls are disabled; names, descriptions, sending rules and enable switches remain editable. Entries without descriptions are not sent to text-only models. Selecting an image-capable model uses the saved image. The `{{iig-book}}` macro includes descriptions available to the selected model. Image attachments follow the model's reference limit.
 
 ### Styles and negative prompts
 
 The **Styles & Negatives** library has two tabs: **Styles** and **Negative prompts**. Each tab has its own active entry, search, editor and enable switch. Opening an entry selects it for editing; **Activate** applies it to generation.
 
-An active negative prompt supplies undesired content for direct NovelAI and NovelAI models on Naistera. Disable it to use the custom **Negative prompt** field in **Generation**. Other providers use their own settings.
+An active negative prompt supplies undesired content for V4.5, V5 High and V5 Curated on NovelAI and Naistera. Disable it to use the custom **Negative prompt** field in **Generation**. Medium uses a fixed negative prompt. Other providers use their own settings.
 
 ### Direct NovelAI
 
-Select **NovelAI**, enter a persistent NovelAI API token and choose **V5 Full**, **V5 Curated**, **V4.5 Full** or **V4.5 Curated**. The default endpoint is `https://image.novelai.net`. The image model picker lists these supported models; NovelAI's OpenAI-compatible model endpoint lists text models.
+Select **NovelAI**, enter a persistent NovelAI API token and choose **V5 Full**, **V5 Full Medium**, **V5 Curated**, **V4.5 Full** or **V4.5 Curated**. The default endpoint is `https://image.novelai.net`.
 
-In **Generation**, choose a resolution preset or enter width and height. Portrait, landscape and square sizes are available alongside steps, CFG scale, CFG rescale, seed and sampler. V4.5 also accepts noise schedule and **Skip CFG above sigma** (`0` disables it). Dimensions use multiples of 64 with a maximum of 3 megapixels. Seed `-1` chooses a random seed. These settings are saved in connection profiles.
+NovelAI and NovelAI through Naistera default to 23 steps, guidance 7, rescale 0 and Euler Ancestral. **V5 Full Medium** uses 14 steps, Euler Ancestral and a fixed negative prompt. Guidance is adjustable. High settings are retained when switching models.
+
+In **Generation**, choose **Small / Normal / Big** and a default aspect ratio. A request's aspect ratio takes priority for that generation; requests without one use the setting. Size comes from settings. The extension converts this pair to width and height when sending the request:
+
+| Aspect ratio | Small | Normal | Big |
+| --- | --- | --- | --- |
+| 1:1 | 640x640 | 1024x1024 | 1472x1472 |
+| 2:3 | 512x768 | 832x1216 | 1024x1536 |
+| 3:2 | 768x512 | 1216x832 | 1536x1024 |
+| 9:16 | 448x832 | 768x1344 | 1088x1920 |
+| 16:9 | 832x448 | 1344x768 | 1920x1088 |
+
+Aspect ratios are nominal: dimensions use NovelAI presets and a 64-pixel grid. See [NovelAI image sizes](https://docs.novelai.net/en/image/#image-resolution). Steps, CFG scale, CFG rescale, seed and sampler are also available. V4.5 accepts noise schedule and **Skip CFG above sigma** (`0` disables it). Seed `-1` chooses a random seed. These settings are saved in connection profiles.
 
 Separate character prompts with `|` or `\|`: `scene | 1boy | 1girl`. **Send character descriptions** controls descriptions from the character/persona library; **Send as character prompt** adds them as separate character captions. Direct NovelAI generates from text and does not attach avatars, image references or image context.
 
@@ -88,7 +100,7 @@ Requests use [`POST /ai/generate-image`](https://image.novelai.net/docs/index.ht
 
 ### Browser checks
 
-With Playwright available to Node (use `NODE_PATH` for an external installation), run `node tests/novelai-e2e.cjs`. Set `IIG_BROWSER_CHANNEL=msedge` to use installed Edge. The test opens the real settings UI and generation pipeline with simulated Tavern state and provider responses. It writes a request report and desktop/mobile screenshots to `tests/artifacts/novelai`.
+With Playwright available to Node (use `NODE_PATH` for an external installation), run `node tests/novelai-e2e.cjs` and `node tests/naistera-parameters-e2e.cjs`. Set `IIG_BROWSER_CHANNEL=msedge` to use installed Edge. The tests open the real settings UI and generation pipeline with simulated Tavern state and provider responses. Reports and desktop/mobile screenshots are written to `tests/artifacts/novelai` and `tests/artifacts/naistera-parameters`.
 
 Run matching and request tests with `node --experimental-vm-modules --test tests/reference-matching.test.cjs`. Tests use an in-memory configuration and simulated HTTP responses.
 

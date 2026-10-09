@@ -300,9 +300,11 @@ export function buildFinalGenerationPrompt(
     return fullPrompt;
 }
 
-// Image-bound descriptions belong to image-capable requests; text records stand alone.
+// Text-only models receive descriptions without changing the stored image references.
 export function filterPromptReferences(refs = [], supportsImageReferences = true) {
-    return supportsImageReferences ? refs : refs.filter(ref => !String(ref?.imagePath || '').trim());
+    return supportsImageReferences ? refs : refs
+        .filter(ref => String(ref?.description || '').trim())
+        .map(ref => ({ ...ref, imagePath: '' }));
 }
 
 export function getMatchedAdditionalReferences(prompt) {
