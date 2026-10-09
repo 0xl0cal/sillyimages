@@ -27,6 +27,8 @@
     "Height": "Высота",
     "Steps": "Шаги",
     "CFG scale": "CFG",
+    "Guidance": "Гайданс",
+    "Guidance rescale": "Рескейл гайданса",
     "Sampler": "Сэмплер",
     "Sampling method": "Метод сэмплинга",
     "Sampling steps": "Кол-во шагов",

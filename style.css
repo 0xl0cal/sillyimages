@@ -36,6 +36,12 @@
     min-width: 0;
 }
 
+#iig_naistera_generation_options {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+}
+
 .iig-settings input:not([type="checkbox"]):not([type="radio"]),
 .iig-settings select,
 .iig-settings textarea {

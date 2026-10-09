@@ -287,6 +287,9 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
             settings.apiType === 'novelai' ? settings.novelaiNegativePrompt : settings.naisteraNegativePrompt, settings,
         )).trim()
         : '';
+    const naisteraParameters = settings.apiType === 'naistera'
+        ? provider?.getGenerationSettings?.({ ...settings, naisteraModel: model }, options) || {}
+        : {};
 
     return {
         timestamp: Date.now(),
@@ -312,6 +315,12 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
                 ? (options?.quality || settings.xaiQuality || '')
                 : (options?.quality || settings.quality || ''),
             refInstructionApplied,
+            ...(Object.keys(naisteraParameters).length ? {
+                steps: naisteraParameters.steps,
+                sampler: naisteraParameters.sampler,
+                cfgScale: naisteraParameters.scale,
+                cfgRescale: naisteraParameters.cfg_rescale,
+            } : {}),
             ...(settings.apiType === 'novelai' ? {
                 steps: settings.novelaiSteps,
                 cfgScale: settings.novelaiCfgScale,

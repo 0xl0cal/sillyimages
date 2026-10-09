@@ -1646,6 +1646,30 @@ export class NaisteraProvider extends Provider {
         return model?.negativePrompt === true;
     }
 
+    getGenerationParameters(settings) {
+        if (!isNaisteraNovelAIModel(settings.naisteraModel)) return null;
+        return this.modelCatalog.get(normalizeNaisteraModel(settings.naisteraModel))?.parameters || null;
+    }
+
+    getGenerationSettings(settings, options = {}) {
+        const rules = this.getGenerationParameters(settings);
+        if (!rules) return {};
+        const numeric = (key, saved) => {
+            const rule = rules[key];
+            const raw = options[key] ?? saved;
+            const value = raw === null || raw === '' || raw === undefined ? rule.default : Number(raw);
+            return Math.min(rule.max, Math.max(rule.min, Number.isFinite(value) ? value : rule.default));
+        };
+        const requestedSampler = options.sampler ?? settings.naisteraSampler;
+        const result = {
+            steps: Math.round(numeric('steps', settings.naisteraSteps)),
+            sampler: rules.sampler.choices.includes(requestedSampler) ? requestedSampler : rules.sampler.default,
+            scale: numeric('scale', settings.naisteraCfgScale),
+        };
+        if (rules.cfg_rescale) result.cfg_rescale = numeric('cfg_rescale', settings.naisteraCfgRescale);
+        return result;
+    }
+
     getModelLabel(modelId) {
         return this.modelCatalog.get(String(modelId || ''))?.name || super.getModelLabel(modelId);
     }
@@ -1690,6 +1714,7 @@ export class NaisteraProvider extends Provider {
                 name: String(model.name || model.id),
                 references: model.references !== false,
                 negativePrompt: model.negative_prompt === true,
+                parameters: model.parameters || null,
             }));
 
         this.modelCatalog = new Map(models.map((model) => [model.id, model]));
@@ -1827,6 +1852,7 @@ export class NaisteraProvider extends Provider {
 
         const aspectRatio = options.aspectRatio || settings.naisteraAspectRatio || '1:1';
         const model = normalizeNaisteraModel(options.model || settings.naisteraModel);
+        if (!this.modelCatalog.has(model)) await this.fetchModels();
         if (!this.supportsReferences({ ...settings, naisteraModel: model })) references = [];
         const preset = options.preset || null;
         const wantsVideoTest = Boolean(options.videoTestMode);
@@ -1860,6 +1886,7 @@ export class NaisteraProvider extends Provider {
             prompt: fullPrompt,
             aspect_ratio: aspectRatio,
             model,
+            ...this.getGenerationSettings({ ...settings, naisteraModel: model }, options),
         };
         const negativePrompt = String(options.negativePrompt ?? getEffectiveNegativePrompt(
             settings.naisteraNegativePrompt, { ...settings, naisteraModel: model },

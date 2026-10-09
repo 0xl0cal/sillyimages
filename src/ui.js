@@ -369,6 +369,29 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                 <div></div>
             </div>
 
+            <div id="iig_naistera_generation_options" class="iig-hidden">
+                <div class="flex-row">
+                    <label for="iig_naistera_steps">${t`Steps`}</label>
+                    <input id="iig_naistera_steps" class="text_pole flex1" type="number" min="1" max="28" step="1">
+                    <div></div>
+                </div>
+                <div class="flex-row">
+                    <label for="iig_naistera_sampler">${t`Sampler`}</label>
+                    <select id="iig_naistera_sampler" class="flex1"></select>
+                    <div></div>
+                </div>
+                <div class="flex-row">
+                    <label for="iig_naistera_cfg_scale">${t`Guidance`}</label>
+                    <input id="iig_naistera_cfg_scale" class="text_pole flex1" type="number" min="0" max="10" step="0.1">
+                    <div></div>
+                </div>
+                <div class="flex-row" id="iig_naistera_cfg_rescale_row">
+                    <label for="iig_naistera_cfg_rescale">${t`Guidance rescale`}</label>
+                    <input id="iig_naistera_cfg_rescale" class="text_pole flex1" type="number" min="0" max="1" step="0.05">
+                    <div></div>
+                </div>
+            </div>
+
             ${buildNovelAISettingsHtml(settings)}
 
             <div id="iig_avatar_section" class="iig-settings-card-nested ${settings.apiType !== 'gemini' && settings.apiType !== 'openrouter' ? 'iig-hidden' : ''}">
@@ -1577,6 +1600,19 @@ function bindApiSectionEvents(settings, updateVisibility) {
         saveSettings();
     });
 
+    for (const [id, key] of [
+        ['steps', 'naisteraSteps'], ['cfg_scale', 'naisteraCfgScale'], ['cfg_rescale', 'naisteraCfgRescale'],
+    ]) {
+        document.getElementById(`iig_naistera_${id}`)?.addEventListener('input', (event) => {
+            settings[key] = event.target.value === '' ? null : Number(event.target.value);
+            saveSettings();
+        });
+    }
+    document.getElementById('iig_naistera_sampler')?.addEventListener('change', (event) => {
+        settings.naisteraSampler = event.target.value;
+        saveSettings();
+    });
+
     for (const field of NOVELAI_NUMERIC_FIELDS) {
         document.getElementById(`iig_novelai_${field.id}`)?.addEventListener('input', (event) => {
             settings[field.key] = event.target.value === '' ? '' : Number(event.target.value);
@@ -2660,6 +2696,26 @@ function buildUpdateVisibility(settings) {
         // Naistera-only params
         document.getElementById('iig_naistera_model_row')?.classList.toggle('iig-hidden', !isNaistera);
         document.getElementById('iig_naistera_negative_prompt_row')?.classList.toggle('iig-hidden', !naisteraNegativePromptSupported);
+        const generationRules = isNaistera ? provider?.getGenerationParameters(settings) : null;
+        document.getElementById('iig_naistera_generation_options')?.classList.toggle('iig-hidden', !generationRules);
+        if (generationRules) {
+            const values = provider.getGenerationSettings(settings);
+            for (const [id, key] of [['steps', 'steps'], ['cfg_scale', 'scale'], ['cfg_rescale', 'cfg_rescale']]) {
+                const input = document.getElementById(`iig_naistera_${id}`);
+                const rule = generationRules[key];
+                if (!input || !rule) continue;
+                input.min = rule.min;
+                input.max = rule.max;
+                input.value = values[key];
+                input.disabled = rule.min === rule.max;
+            }
+            const sampler = document.getElementById('iig_naistera_sampler');
+            sampler.replaceChildren(...generationRules.sampler.choices.map(value =>
+                new Option(NOVELAI_SAMPLERS[value] || value, value)));
+            sampler.value = values.sampler;
+            sampler.disabled = generationRules.sampler.choices.length === 1;
+            document.getElementById('iig_naistera_cfg_rescale_row')?.classList.toggle('iig-hidden', !generationRules.cfg_rescale);
+        }
         document.getElementById('iig_novelai_options')?.classList.toggle('iig-hidden', !isNovelAI);
         const isNovelAIV5 = settings.model?.startsWith('nai-diffusion-5-');
         document.getElementById('iig_novelai_skip_cfg_above_sigma_row')?.classList.toggle('iig-hidden', isNovelAIV5);

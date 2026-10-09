@@ -27,6 +27,8 @@
     "Height": "Висота",
     "Steps": "Кроки",
     "CFG scale": "CFG",
+    "Guidance": "Гайданс",
+    "Guidance rescale": "Рескейл гайдансу",
     "Sampler": "Семплер",
     "Sampling method": "Метод семплування",
     "Sampling steps": "Кроки семплування",
