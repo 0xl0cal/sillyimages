@@ -5,16 +5,17 @@ const path = require('node:path');
 const { chromium } = require('playwright');
 
 // Real settings UI/provider. Cover wire settings, Medium locks, retained High
-// values, provider isolation, profiles and desktop/mobile layout.
+// values, provider isolation, profiles and desktop/mobile layout. Direct Medium
+// also covers fixed UC/character negatives, request-only overrides and snapshots.
 const root = path.resolve(__dirname, '..');
 const prefix = '/scripts/extensions/third-party/sillyimages/';
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6JQAAAABJRU5ErkJggg==';
 const samplers = ['k_euler_ancestral', 'k_euler', 'k_dpmpp_2m', 'k_dpmpp_2m_sde', 'k_dpmpp_2s_ancestral', 'k_dpmpp_sde'];
 const parameters = (max, medium = false) => ({
-    steps: { min: medium ? 14 : 1, max, default: max },
+    steps: { min: medium ? 14 : 1, max, default: medium ? 14 : 23 },
     sampler: { choices: medium ? [samplers[0]] : samplers, default: samplers[0] },
     scale: { min: 0, max: 10, default: 7 },
-    cfg_rescale: medium ? null : { min: 0, max: 1, default: 0.7 },
+    cfg_rescale: medium ? null : { min: 0, max: 1, default: 0 },
 });
 const models = [
     {id: 'nano-banana-2', name: 'Nano Banana 2', references: true},
@@ -32,6 +33,7 @@ window.fetch=async(url,init={})=>{
  if(String(url).startsWith('https://')) {
   requests.push({url:String(url),body:init.body?JSON.parse(init.body):null});
   if(String(url).endsWith('/api/models')) return Response.json({models:${JSON.stringify(models)}});
+  if(String(url).endsWith('/ai/generate-image')) return Response.json({images:[{image:'${png}'}]});
   return Response.json({data_url:'data:image/png;base64,${png}'});
  } if(String(url).startsWith('/api/')) return Response.json([]); return realFetch(url,init);
 };
@@ -39,7 +41,7 @@ const settingsModule=await import('${prefix}src/settings.js'); const settings=se
 Object.assign(settings,{apiType:'naistera',endpoint:'https://naistera.org',apiKey:'test',naisteraModel:'novelai-v5',naisteraPolling:false,maxRetries:0});
 const providers=await import('${prefix}src/providers.js'); await providers.resolveActiveProvider(settings).fetchModels();
 const ui=await import('${prefix}src/ui.js'); ui.createSettingsUI();
-window.app={settings,settingsModule,providers,ui};window.ready=true;
+window.app={settings,settingsModule,providers,ui,pipeline:await import('${prefix}src/pipeline.js')};window.ready=true;
 </script></body></html>`;
 const server = createServer((req, res) => {
     let body, type = 'application/javascript';
@@ -73,6 +75,18 @@ const server = createServer((req, res) => {
             await app.providers.resolveActiveProvider(app.settings).generate({prompt: 'a landscape'});
             return requests.filter(r => r.url.endsWith('/api/generate')).at(-1).body;
         });
+        assert.deepEqual(await page.evaluate(() => {
+            const s = app.settingsModule.defaultSettings;
+            return [s.novelaiSteps,s.novelaiCfgScale,s.novelaiCfgRescale,s.novelaiSampler,
+                s.naisteraSteps,s.naisteraCfgScale,s.naisteraCfgRescale,s.naisteraSampler];
+        }), [23,7,0,'k_euler_ancestral',23,7,0,'k_euler_ancestral']);
+        for (const model of ['novelai-v5', 'novelai-v4.5']) {
+            await page.locator('#iig_naistera_model').selectOption(model);
+            const defaults = await generate();
+            assert.deepEqual([defaults.steps,defaults.scale,defaults.cfg_rescale,defaults.sampler], [23,7,0,'k_euler_ancestral']);
+        }
+        await page.locator('#iig_naistera_model').selectOption('novelai-v5');
+        checks.push('both NovelAI sources default to 23 steps, guidance 7, rescale 0, Euler Ancestral');
         await page.locator('#iig_naistera_steps').fill('8');
         await page.locator('#iig_naistera_sampler').selectOption('k_euler');
         await page.locator('#iig_naistera_cfg_scale').fill('4.5');
@@ -119,6 +133,60 @@ const server = createServer((req, res) => {
         body = await generate();
         assert.ok(!('steps' in body) && !('sampler' in body) && !('scale' in body));
         checks.push('Nano Banana payload unchanged');
+        await page.setViewportSize({width:900,height:1000});
+        await page.locator('#iig_api_type').selectOption('novelai');
+        await page.locator('#iig_model_select option[value="nai-diffusion-5-full-medium"]').waitFor({state:'attached'});
+        await page.locator('#iig_model_select').selectOption('nai-diffusion-5-full');
+        await page.locator('#iig_novelai_character_descriptions_mode').selectOption('none');
+        const direct = (options = {}) => page.evaluate(async options => {
+            await app.pipeline.generateImageWithRetry('a landscape | a person', '', null, options);
+            return {body:requests.at(-1).body,snapshot:app.settingsModule.getLastRequestSnapshot()};
+        }, options);
+        let native = await direct();
+        assert.deepEqual([native.body.parameters.steps,native.body.parameters.scale,native.body.parameters.cfg_rescale,native.body.parameters.sampler], [23,7,0,'k_euler_ancestral']);
+        for (const [field,value] of [['steps','28'],['cfg_scale','4.5'],['cfg_rescale','0.25']]) await page.locator('#iig_novelai_'+field).fill(value);
+        await page.locator('#iig_novelai_sampler').selectOption('k_euler');
+        await page.locator('#iig_novelai_negative_prompt').fill('CUSTOM_NEGATIVE | CHARACTER_NEGATIVE');
+        await page.locator('#iig_model_select').selectOption('nai-diffusion-5-full-medium');
+        assert.equal(await page.locator('#iig_novelai_steps').inputValue(),'14');
+        assert.equal(await page.locator('#iig_novelai_steps').isDisabled(),true);
+        assert.equal(await page.locator('#iig_novelai_sampler').inputValue(),'k_euler_ancestral');
+        assert.equal(await page.locator('#iig_novelai_sampler').isDisabled(),true);
+        assert.equal(await page.locator('#iig_novelai_cfg_rescale').isVisible(),false);
+        assert.equal(await page.locator('#iig_novelai_negative_prompt').isVisible(),false);
+        await page.locator('#iig_novelai_cfg_scale').fill('6');
+        native = await direct();
+        assert.equal(native.body.model,'nai-diffusion-5-full-medium');
+        const p = native.body.parameters;
+        assert.deepEqual([p.steps,p.sampler,p.scale,p.ucPreset],[14,'k_euler_ancestral',6,0]);
+        assert.ok(!('cfg_rescale' in p) && !('noise_schedule' in p) && !('skip_cfg_above_sigma' in p));
+        assert.ok(p.negative_prompt.startsWith('lowres, artistic error') && !p.negative_prompt.includes('CUSTOM_NEGATIVE'));
+        assert.equal(p.v4_negative_prompt.caption.base_caption,p.negative_prompt);
+        assert.deepEqual(p.v4_negative_prompt.caption.char_captions.map(c=>c.char_caption),['']);
+        assert.equal(p.v4_prompt.caption.char_captions[0].char_caption,'a person');
+        assert.equal(native.snapshot.negativePrompt,p.negative_prompt);
+        assert.deepEqual([native.snapshot.metadata.steps,native.snapshot.metadata.sampler,native.snapshot.metadata.cfgScale], [14,'k_euler_ancestral',6]);
+        assert.ok(!native.snapshot.metadata.cfgRescale);
+        checks.push('direct Medium: separate model, fixed sampling/UC, adjustable guidance, correct character captions and snapshot');
+        for (const [name,width,height] of [['desktop',900,1000],['mobile',390,844]]) {
+            await page.setViewportSize({width,height});
+            await page.locator('#iig_novelai_options').scrollIntoViewIfNeeded();
+            assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+            await page.locator('#iig_novelai_options').screenshot({path:path.join(artifacts,'direct-medium-'+name+'.png')});
+        }
+        await page.locator('#iig_model_select').selectOption('nai-diffusion-5-full');
+        assert.equal(await page.locator('#iig_novelai_steps').inputValue(),'28');
+        assert.equal(await page.locator('#iig_novelai_sampler').inputValue(),'k_euler');
+        assert.equal(await page.locator('#iig_novelai_cfg_rescale').inputValue(),'0.25');
+        assert.equal(await page.locator('#iig_novelai_negative_prompt').inputValue(),'CUSTOM_NEGATIVE | CHARACTER_NEGATIVE');
+        native = await direct({model:'nai-diffusion-5-full-medium'});
+        assert.equal(native.body.parameters.steps,14);
+        assert.equal(native.snapshot.metadata.model,'nai-diffusion-5-full-medium');
+        assert.equal(await page.evaluate(()=>app.settings.model),'nai-diffusion-5-full');
+        native = await direct();
+        assert.deepEqual([native.body.parameters.steps,native.body.parameters.cfg_rescale,native.body.parameters.sampler], [28,0.25,'k_euler']);
+        assert.equal(native.body.parameters.negative_prompt,'CUSTOM_NEGATIVE');
+        checks.push('High settings restored; request-only Medium override leaves defaults unchanged');
         assert.deepEqual(errors, []);
         writeFileSync(path.join(artifacts,'report.json'),JSON.stringify({passed:true,checks,errors},null,2));
         console.log(JSON.stringify({passed:true,checks,artifacts},null,2));

@@ -29,7 +29,7 @@ import {
     isRetryableHttpStatus,
 } from './utils.js';
 import { buildFinalGenerationPrompt } from './parser.js';
-import { NOVELAI_MODELS, buildNovelAIParameters, validateNovelAIParameters, splitNovelAICharacterPrompts } from './novelai.js';
+import { NOVELAI_MODELS, buildNovelAIParameters, validateNovelAIParameters, splitNovelAICharacterPrompts, isNovelAIMedium } from './novelai.js';
 import { t } from './i18n.js';
 import {
     collectCharacterLibraryReferences,
@@ -2258,7 +2258,7 @@ export class NovelAIProvider extends Provider {
     get displayName() { return 'NovelAI'; }
     get capabilities() { return { ...super.capabilities, referencesMaxCount: 0 }; }
     supportsReferences() { return false; }
-    supportsNegativePrompt() { return true; }
+    supportsNegativePrompt(settings = getSettings()) { return !isNovelAIMedium(settings.model); }
     getModelLabel(model) { return NOVELAI_MODELS[model] || model; }
     async fetchModels() { return Object.keys(NOVELAI_MODELS); }
 

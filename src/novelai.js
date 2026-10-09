@@ -3,10 +3,29 @@ import { t } from './i18n.js';
 // Image model IDs from NovelAI's image client; /oa/v1/models lists text models.
 export const NOVELAI_MODELS = Object.freeze({
     'nai-diffusion-5-full': 'NovelAI V5 Full',
+    'nai-diffusion-5-full-medium': 'NovelAI V5 Full Medium',
     'nai-diffusion-5-curated': 'NovelAI V5 Curated',
     'nai-diffusion-4-5-full': 'NovelAI V4.5 Full',
     'nai-diffusion-4-5-curated': 'NovelAI V4.5 Curated',
 });
+
+export const NOVELAI_MEDIUM_MODEL = 'nai-diffusion-5-full-medium';
+export const NOVELAI_MEDIUM_NEGATIVE = 'lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page';
+
+export function isNovelAIMedium(model) {
+    return model === NOVELAI_MEDIUM_MODEL;
+}
+
+export function resolveNovelAISettings(settings) {
+    // Medium's fixed parameters apply to a request copy; saved High values stay intact.
+    return isNovelAIMedium(settings.model) ? {
+        ...settings,
+        novelaiSteps: 14,
+        novelaiSampler: 'k_euler_ancestral',
+        novelaiCfgRescale: 0,
+        novelaiSkipCfgAboveSigma: 0,
+    } : settings;
+}
 
 export const NOVELAI_SAMPLERS = Object.freeze({
     k_euler_ancestral: 'Euler Ancestral',
@@ -54,6 +73,7 @@ export const NOVELAI_NUMERIC_FIELDS = Object.freeze([
 ]);
 
 export function validateNovelAIParameters(settings) {
+    settings = resolveNovelAISettings(settings);
     const errors = [];
     try { getNovelAIResolution(settings); }
     catch (error) { errors.push(error.message); }
@@ -77,10 +97,12 @@ export function splitNovelAICharacterPrompts(prompt) {
 }
 
 export function buildNovelAIParameters(settings, prompt, negativePrompt, model) {
-    const errors = validateNovelAIParameters({ ...settings, model });
+    settings = resolveNovelAISettings({ ...settings, model });
+    const medium = isNovelAIMedium(model);
+    const errors = validateNovelAIParameters(settings);
     if (errors.length) throw new Error(errors.join('; '));
     const positive = splitNovelAICharacterPrompts(prompt);
-    const negative = splitNovelAICharacterPrompts(negativePrompt);
+    const negative = splitNovelAICharacterPrompts(medium ? NOVELAI_MEDIUM_NEGATIVE : negativePrompt);
     const maxCharacters = model.startsWith('nai-diffusion-5-') ? 22 : 6;
     if (Math.max(positive.characters.length, negative.characters.length) > maxCharacters) {
         throw new Error(t`This NovelAI model supports up to ${maxCharacters} character prompts`);
@@ -103,9 +125,9 @@ export function buildNovelAIParameters(settings, prompt, negativePrompt, model) 
         seed: seed < 0 ? Math.floor(Math.random() * 4294967296) : seed,
         n_samples: 1,
         negative_prompt: negative.base,
-        // No automatic quality or undesired-content tags: the libraries own these.
+        // Medium uses its fixed UC preset; quality tags come from the prompt/style.
         qualityToggle: false,
-        ucPreset: 3,
+        ucPreset: medium ? 0 : 3,
         deliberate_euler_ancestral_bug: false,
         prefer_brownian: true,
         skip_cfg_above_sigma: Number(settings.novelaiSkipCfgAboveSigma) || null,
@@ -120,5 +142,6 @@ export function buildNovelAIParameters(settings, prompt, negativePrompt, model) 
         delete parameters.noise_schedule;
         delete parameters.skip_cfg_above_sigma;
     }
+    if (medium) delete parameters.cfg_rescale;
     return parameters;
 }

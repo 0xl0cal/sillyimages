@@ -74,11 +74,13 @@ Enabled entries can contain an image, a description, or both. **Send reference d
 
 The **Styles & Negatives** library has two tabs: **Styles** and **Negative prompts**. Each tab has its own active entry, search, editor and enable switch. Opening an entry selects it for editing; **Activate** applies it to generation.
 
-An active negative prompt supplies undesired content for direct NovelAI and NovelAI models on Naistera. Disable it to use the custom **Negative prompt** field in **Generation**. Other providers use their own settings.
+An active negative prompt supplies undesired content for V4.5, V5 High and V5 Curated on NovelAI and Naistera. Disable it to use the custom **Negative prompt** field in **Generation**. Medium uses a fixed negative prompt. Other providers use their own settings.
 
 ### Direct NovelAI
 
-Select **NovelAI**, enter a persistent NovelAI API token and choose **V5 Full**, **V5 Curated**, **V4.5 Full** or **V4.5 Curated**. The default endpoint is `https://image.novelai.net`. The image model picker lists these supported models; NovelAI's OpenAI-compatible model endpoint lists text models.
+Select **NovelAI**, enter a persistent NovelAI API token and choose **V5 Full**, **V5 Full Medium**, **V5 Curated**, **V4.5 Full** or **V4.5 Curated**. The default endpoint is `https://image.novelai.net`.
+
+NovelAI and NovelAI through Naistera default to 23 steps, guidance 7, rescale 0 and Euler Ancestral. **V5 Full Medium** uses 14 steps, Euler Ancestral and a fixed negative prompt. Guidance is adjustable. High settings are retained when switching models.
 
 In **Generation**, choose **Small / Normal / Big** and a default aspect ratio. A request's aspect ratio takes priority for that generation; requests without one use the setting. Size comes from settings. The extension converts this pair to width and height when sending the request:
 
@@ -98,7 +100,7 @@ Requests use [`POST /ai/generate-image`](https://image.novelai.net/docs/index.ht
 
 ### Browser checks
 
-With Playwright available to Node (use `NODE_PATH` for an external installation), run `node tests/novelai-e2e.cjs`. Set `IIG_BROWSER_CHANNEL=msedge` to use installed Edge. The test opens the real settings UI and generation pipeline with simulated Tavern state and provider responses. It writes a request report and desktop/mobile screenshots to `tests/artifacts/novelai`.
+With Playwright available to Node (use `NODE_PATH` for an external installation), run `node tests/novelai-e2e.cjs` and `node tests/naistera-parameters-e2e.cjs`. Set `IIG_BROWSER_CHANNEL=msedge` to use installed Edge. The tests open the real settings UI and generation pipeline with simulated Tavern state and provider responses. Reports and desktop/mobile screenshots are written to `tests/artifacts/novelai` and `tests/artifacts/naistera-parameters`.
 
 Run matching and request tests with `node --experimental-vm-modules --test tests/reference-matching.test.cjs`. Tests use an in-memory configuration and simulated HTTP responses.
 

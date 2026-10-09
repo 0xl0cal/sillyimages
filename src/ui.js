@@ -76,7 +76,7 @@ import {
     renderIigBookMacro,
 } from './references.js';
 import { fetchModels, resolveActiveProvider, getActiveProviderMaxReferences, A1111_RESOLUTION_PRESETS } from './providers.js';
-import { NOVELAI_NUMERIC_FIELDS, NOVELAI_SAMPLERS, NOVELAI_NOISE_SCHEDULES, NOVELAI_RESOLUTION_PRESETS, NOVELAI_ASPECT_RATIOS } from './novelai.js';
+import { NOVELAI_NUMERIC_FIELDS, NOVELAI_SAMPLERS, NOVELAI_NOISE_SCHEDULES, NOVELAI_RESOLUTION_PRESETS, NOVELAI_ASPECT_RATIOS, isNovelAIMedium, resolveNovelAISettings } from './novelai.js';
 import { applyImageActionsStyle } from './imageActions.js';
 import { t, translate } from './i18n.js';
 import { buildCharacterLibraryBodyHtml, bindCharacterLibraryEvents } from './characterLibraryUi.js';
@@ -164,7 +164,7 @@ function buildNovelAISettingsHtml(settings) {
             ${selectHtml('character_descriptions_mode', t`Send character descriptions`, 'novelaiCharacterDescriptionsMode', {
                 none: t`Do not send`, 'as-is': t`Send as-is`, 'character-prompt': t`Send as character prompt`,
             })}
-            <div class="flex-row">
+            <div class="flex-row" id="iig_novelai_negative_prompt_row">
                 <label for="iig_novelai_negative_prompt">${t`Negative prompt`}</label>
                 <textarea id="iig_novelai_negative_prompt" class="text_pole textarea_compact flex1" rows="2">${sanitizeForHtml(settings.novelaiNegativePrompt)}</textarea>
                 <div></div>
@@ -2718,6 +2718,22 @@ function buildUpdateVisibility(settings) {
         }
         document.getElementById('iig_novelai_options')?.classList.toggle('iig-hidden', !isNovelAI);
         const isNovelAIV5 = settings.model?.startsWith('nai-diffusion-5-');
+        const isMedium = isNovelAIMedium(settings.model);
+        const effectiveNovelAI = resolveNovelAISettings(settings);
+        const novelaiSteps = document.getElementById('iig_novelai_steps');
+        if (novelaiSteps) {
+            novelaiSteps.min = isMedium ? 14 : 1;
+            novelaiSteps.max = isMedium ? 14 : 50;
+            novelaiSteps.value = effectiveNovelAI.novelaiSteps;
+            novelaiSteps.disabled = isMedium;
+        }
+        const novelaiSampler = document.getElementById('iig_novelai_sampler');
+        if (novelaiSampler) {
+            novelaiSampler.value = effectiveNovelAI.novelaiSampler;
+            novelaiSampler.disabled = isMedium;
+        }
+        document.getElementById('iig_novelai_cfg_rescale_row')?.classList.toggle('iig-hidden', isMedium);
+        document.getElementById('iig_novelai_negative_prompt_row')?.classList.toggle('iig-hidden', isMedium);
         document.getElementById('iig_novelai_skip_cfg_above_sigma_row')?.classList.toggle('iig-hidden', isNovelAIV5);
         document.getElementById('iig_novelai_noise_schedule_row')?.classList.toggle('iig-hidden', isNovelAIV5);
         document.getElementById('iig_novelai_hint')?.classList.toggle('iig-hidden', !isNovelAI);
