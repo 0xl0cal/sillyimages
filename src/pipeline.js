@@ -272,8 +272,9 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
         : settings.apiType === 'xai'
             ? (options?.aspectRatio || settings.xaiAspectRatio)
             : (options?.aspectRatio || settings.aspectRatio);
-    const novelaiResolution = settings.apiType === 'novelai'
-        ? getNovelAIResolution({ ...settings, novelaiAspectRatio: aspectRatio }) : null;
+    const nativeSettings = settings.apiType === 'novelai' ? resolveNovelAISettings(settings) : null;
+    const novelaiResolution = nativeSettings
+        ? getNovelAIResolution({ ...nativeSettings, novelaiAspectRatio: aspectRatio }) : null;
 
     const matchedRefsInfo = (Array.isArray(matchedAdditionalRefs) ? matchedAdditionalRefs : []).map((ref) => ({
         name: String(ref?.name || ''),
@@ -282,7 +283,6 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
         lorebookName: String(ref?._lorebookName || ''),
         reason: ref?._matchReason || null,
     }));
-    const nativeSettings = settings.apiType === 'novelai' ? resolveNovelAISettings(settings) : null;
     const negativePrompt = nativeSettings && isNovelAIMedium(nativeSettings.model)
         ? NOVELAI_MEDIUM_NEGATIVE
         : provider?.supportsNegativePrompt(settings)
@@ -310,7 +310,7 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
             apiType: settings.apiType,
             model,
             aspectRatio,
-            imageSize: settings.apiType === 'novelai' ? settings.novelaiResolution : settings.apiType === 'xai'
+            imageSize: nativeSettings ? nativeSettings.novelaiResolution : settings.apiType === 'xai'
                 ? (options?.imageSize || settings.xaiResolution || '')
                 : (options?.imageSize || settings.imageSize || ''),
             size: novelaiResolution ? `${novelaiResolution.width}x${novelaiResolution.height}` : settings.size || '',

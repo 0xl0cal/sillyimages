@@ -17,14 +17,23 @@ export function isNovelAIMedium(model) {
 }
 
 export function resolveNovelAISettings(settings) {
-    // Medium's fixed parameters apply to a request copy; saved High values stay intact.
-    return isNovelAIMedium(settings.model) ? {
+    const medium = isNovelAIMedium(settings.model);
+    const protectedGeneration = settings.novelaiNeverSpendAnlas !== false;
+    if (!medium && !protectedGeneration) return settings;
+    // Billing limits and Medium constraints never overwrite saved manual settings.
+    return {
         ...settings,
-        novelaiSteps: 14,
-        novelaiSampler: 'k_euler_ancestral',
-        novelaiCfgRescale: 0,
-        novelaiSkipCfgAboveSigma: 0,
-    } : settings;
+        ...(protectedGeneration ? {
+            novelaiResolution: 'normal',
+            novelaiSteps: settings.model?.startsWith('nai-diffusion-4-5-') ? 28 : 23,
+        } : {}),
+        ...(medium ? {
+            novelaiSteps: 14,
+            novelaiSampler: 'k_euler_ancestral',
+            novelaiCfgRescale: 0,
+            novelaiSkipCfgAboveSigma: 0,
+        } : {}),
+    };
 }
 
 export const NOVELAI_SAMPLERS = Object.freeze({

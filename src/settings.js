@@ -322,6 +322,7 @@ export const defaultSettings = Object.freeze({
     naisteraPollIntervalMs: 3000,
     naisteraPollTimeoutMs: 600000,
     // Direct NovelAI text-to-image settings.
+    novelaiNeverSpendAnlas: true,
     novelaiResolution: 'normal',
     novelaiAspectRatio: '2:3',
     novelaiSteps: 23,
@@ -422,6 +423,7 @@ export const CONNECTION_FIELDS = Object.freeze([
     'naisteraPollIntervalMs',
     'naisteraPollTimeoutMs',
     'novelaiResolution',
+    'novelaiNeverSpendAnlas',
     'novelaiAspectRatio',
     'novelaiSteps',
     'novelaiCfgScale',

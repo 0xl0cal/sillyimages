@@ -214,6 +214,8 @@ const server = createServer((req, res) => {
         await page.locator('#iig_api_type').selectOption('novelai');
         await page.waitForFunction(() => document.querySelector('#iig_model_select option[value="nai-diffusion-5-full"]'));
         await page.locator('#iig_model_select').selectOption('nai-diffusion-5-full');
+        assert.equal(await page.locator('#iig_novelai_never_spend_anlas').isChecked(), true);
+        await page.locator('#iig_novelai_never_spend_anlas').uncheck();
         // Cover every pair, obsolete dimension controls, snapshot consistency and invalid choices before HTTP.
         assert.equal(await page.locator('#iig_novelai_resolution').inputValue(), 'normal');
         assert.equal(await page.locator('#iig_novelai_aspect_ratio').inputValue(), '2:3');

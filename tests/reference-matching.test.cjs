@@ -45,7 +45,7 @@ async function loadExtension({ respond } = {}) {
     await providers.evaluate();
     const settingsModule = moduleFor(path.join(sourceDir, 'settings.js')).namespace;
     const settings = settingsModule.getSettings();
-    Object.assign(settings, { apiType: 'naistera', endpoint: 'https://example.test', apiKey: 'test', naisteraModel: 'image-model' });
+    Object.assign(settings, { apiType: 'naistera', endpoint: 'https://example.test', apiKey: 'test', naisteraModel: 'image-model', novelaiNeverSpendAnlas: false });
     return {
         requests, settings, settingsModule, providers: providers.namespace,
         parser: moduleFor(path.join(sourceDir, 'parser.js')).namespace,
@@ -263,7 +263,7 @@ test('negative library overrides fallback only for NovelAI; explicit request ove
 test('native NovelAI sends JSON, structured character captions and configurable parameters', async () => {
     const { settings, providers, requests } = await loadExtension({ respond: () => Response.json({ images: [{ image: 'AA==', seed: 42 }] }, { status: 201 }) });
     Object.assign(settings, {
-        apiType: 'novelai', endpoint: '', model: 'nai-diffusion-4-5-full',
+        apiType: 'novelai', endpoint: '', model: 'nai-diffusion-4-5-full', novelaiNeverSpendAnlas: false,
         novelaiSteps: 28, novelaiCfgScale: 7, novelaiCfgRescale: 0.25,
         novelaiResolution: 'normal', novelaiAspectRatio: '2:3', novelaiSeed: 42,
         novelaiSampler: 'k_euler_ancestral', novelaiNoiseSchedule: 'karras', novelaiSkipCfgAboveSigma: 19,
@@ -305,7 +305,7 @@ test('native NovelAI sends JSON, structured character captions and configurable 
 
 test('native NovelAI rejects invalid inputs without HTTP requests', async () => {
     const { settings, providers, requests } = await loadExtension();
-    Object.assign(settings, { apiType: 'novelai', endpoint: '', model: 'nai-diffusion-4-5-full', novelaiCharacterDescriptionsMode: 'none' });
+    Object.assign(settings, { apiType: 'novelai', endpoint: '', model: 'nai-diffusion-4-5-full', novelaiCharacterDescriptionsMode: 'none', novelaiNeverSpendAnlas: false });
     const provider = providers.resolveActiveProvider(settings);
     assert.ok(provider);
     for (const [key, value] of [

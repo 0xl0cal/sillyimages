@@ -151,6 +151,10 @@ function buildNovelAISettingsHtml(settings) {
         </div>`;
     return `
         <div id="iig_novelai_options" class="iig-settings-card-nested ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}">
+            <label class="checkbox_label" title="${t`Requires active Opus and available free generations.`}">
+                <input type="checkbox" id="iig_novelai_never_spend_anlas" ${settings.novelaiNeverSpendAnlas !== false ? 'checked' : ''}>
+                <span>${t`Never spend Anlas`}</span>
+            </label>
             ${selectHtml('resolution', t`Size`, 'novelaiResolution', Object.fromEntries(Object.entries(NOVELAI_RESOLUTION_PRESETS).map(([value, preset]) => [value, translate(preset.label)])))}
             ${selectHtml('aspect_ratio', t`Aspect ratio`, 'novelaiAspectRatio', Object.fromEntries(NOVELAI_ASPECT_RATIOS.map(ratio => [ratio, ratio])))}
             ${NOVELAI_NUMERIC_FIELDS.map(field => `
@@ -1240,6 +1244,7 @@ function applyProfileValuesToInputs(settings) {
     setVal('iig_novelai_character_descriptions_mode', settings.novelaiCharacterDescriptionsMode);
     setVal('iig_novelai_negative_prompt', settings.novelaiNegativePrompt);
     setVal('iig_novelai_resolution', settings.novelaiResolution);
+    setChk('iig_novelai_never_spend_anlas', settings.novelaiNeverSpendAnlas !== false);
     setVal('iig_novelai_aspect_ratio', settings.novelaiAspectRatio);
     setVal('iig_naistera_character_descriptions_mode', settings.naisteraCharacterDescriptionsMode);
     setVal('iig_naistera_aspect_ratio', settings.naisteraAspectRatio);
@@ -1613,6 +1618,11 @@ function bindApiSectionEvents(settings, updateVisibility) {
         saveSettings();
     });
 
+    document.getElementById('iig_novelai_never_spend_anlas')?.addEventListener('change', (event) => {
+        settings.novelaiNeverSpendAnlas = event.target.checked;
+        saveSettings();
+        updateVisibility();
+    });
     for (const field of NOVELAI_NUMERIC_FIELDS) {
         document.getElementById(`iig_novelai_${field.id}`)?.addEventListener('input', (event) => {
             settings[field.key] = event.target.value === '' ? '' : Number(event.target.value);
@@ -2720,12 +2730,18 @@ function buildUpdateVisibility(settings) {
         const isNovelAIV5 = settings.model?.startsWith('nai-diffusion-5-');
         const isMedium = isNovelAIMedium(settings.model);
         const effectiveNovelAI = resolveNovelAISettings(settings);
+        const protectedGeneration = settings.novelaiNeverSpendAnlas !== false;
+        const novelaiResolution = document.getElementById('iig_novelai_resolution');
+        if (novelaiResolution) {
+            novelaiResolution.value = effectiveNovelAI.novelaiResolution;
+            novelaiResolution.disabled = protectedGeneration;
+        }
         const novelaiSteps = document.getElementById('iig_novelai_steps');
         if (novelaiSteps) {
-            novelaiSteps.min = isMedium ? 14 : 1;
-            novelaiSteps.max = isMedium ? 14 : 50;
+            novelaiSteps.min = isMedium || protectedGeneration ? effectiveNovelAI.novelaiSteps : 1;
+            novelaiSteps.max = isMedium || protectedGeneration ? effectiveNovelAI.novelaiSteps : 50;
             novelaiSteps.value = effectiveNovelAI.novelaiSteps;
-            novelaiSteps.disabled = isMedium;
+            novelaiSteps.disabled = isMedium || protectedGeneration;
         }
         const novelaiSampler = document.getElementById('iig_novelai_sampler');
         if (novelaiSampler) {

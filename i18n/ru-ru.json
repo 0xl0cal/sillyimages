@@ -382,5 +382,10 @@
     "Small": "Маленький",
     "Normal": "Обычный",
     "Big": "Большой",
-    "This model uses text-only references.": "Эта модель использует только текстовые референсы."
+    "This model uses text-only references.": "Эта модель использует только текстовые референсы.",
+    "Never spend Anlas": "Ни в коем случае не тратить Anlas",
+    "Requires active Opus and available free generations.": "Требуется активная подписка Opus и доступные бесплатные генерации.",
+    "Anlas protection: could not verify free generation.": "Защита Anlas: не удалось проверить бесплатную генерацию.",
+    "Anlas protection requires an active Opus subscription.": "Для защиты Anlas требуется активная подписка Opus.",
+    "Anlas protection: the free V5 allowance is unavailable.": "Защита Anlas: бесплатный лимит V5 недоступен."
 }

@@ -28,12 +28,23 @@ const host = `<!doctype html><html><head><link rel="stylesheet" href="${prefix}s
 window.toastr={info(){},success(){},error(){},warning(){}};
 window.context={extensionSettings:{},characters:[],chat:[],characterId:-1,powerUserSettings:{personas:{}},saveSettingsDebounced(){},getRequestHeaders:()=>({'Content-Type':'application/json'})};
 window.SillyTavern={getContext:()=>context}; window.requests=[];
+window.subscription={active:true,tier:3,expiresAt:Math.floor(Date.now()/1000)+86400,usage:{isNegative:false,percent:100}};
+window.subscriptionFailure=''; window.drainAllowance=false;
 const realFetch=fetch.bind(window);
 window.fetch=async(url,init={})=>{
  if(String(url).startsWith('https://')) {
   requests.push({url:String(url),body:init.body?JSON.parse(init.body):null});
   if(String(url).endsWith('/api/models')) return Response.json({models:${JSON.stringify(models)}});
-  if(String(url).endsWith('/ai/generate-image')) return Response.json({images:[{image:'${png}'}]});
+  if(String(url).endsWith('/user/subscription')) {
+   if(subscriptionFailure==='network') throw new Error('offline');
+   if(subscriptionFailure==='http') return new Response('unavailable',{status:503});
+   if(subscriptionFailure==='json') return new Response('invalid JSON');
+   return Response.json(subscription);
+  }
+  if(String(url).endsWith('/ai/generate-image')) {
+   if(drainAllowance){subscription.usage={isNegative:true,percent:0};await new Promise(resolve=>setTimeout(resolve,50));}
+   return Response.json({images:[{image:'${png}'}]});
+  }
   return Response.json({data_url:'data:image/png;base64,${png}'});
  } if(String(url).startsWith('/api/')) return Response.json([]); return realFetch(url,init);
 };
@@ -142,6 +153,94 @@ const server = createServer((req, res) => {
             await app.pipeline.generateImageWithRetry('a landscape | a person', '', null, options);
             return {body:requests.at(-1).body,snapshot:app.settingsModule.getLastRequestSnapshot()};
         }, options);
+        // Cover defaults, per-model locks, wire/snapshot enforcement, restored manual
+        // values, profile isolation, unavailable/unknown free access and concurrent quota use.
+        const protection = page.locator('#iig_novelai_never_spend_anlas');
+        assert.equal(await protection.isChecked(),true);
+        assert.equal(await page.locator('#iig_novelai_steps').isDisabled(),true);
+        assert.equal(await page.locator('#iig_novelai_resolution').isDisabled(),true);
+        await protection.uncheck();
+        await page.locator('#iig_novelai_steps').fill('40');
+        await page.locator('#iig_novelai_resolution').selectOption('big');
+        await protection.check();
+        const guardedRequests=[];
+        for(const [model,steps] of [['nai-diffusion-4-5-full',28],['nai-diffusion-4-5-curated',28],['nai-diffusion-5-full',23],['nai-diffusion-5-curated',23],['nai-diffusion-5-full-medium',14]]) {
+            await page.locator('#iig_model_select').selectOption(model);
+            assert.equal(await page.locator('#iig_novelai_steps').inputValue(),String(steps));
+            assert.equal(await page.locator('#iig_novelai_resolution').inputValue(),'normal');
+            const result=await direct({aspectRatio:'16:9'});
+            assert.deepEqual([result.body.parameters.width,result.body.parameters.height,result.body.parameters.steps],[1344,768,steps]);
+            assert.equal(result.snapshot.metadata.steps,steps);
+            assert.equal(result.snapshot.metadata.imageSize,'normal');
+            assert.equal(result.snapshot.metadata.size,'1344x768');
+            assert.equal(await page.evaluate(()=>app.settings.novelaiSteps),40);
+            assert.equal(await page.evaluate(()=>app.settings.novelaiResolution),'big');
+            guardedRequests.push({model,steps});
+        }
+        await page.locator('#iig_model_select').selectOption('nai-diffusion-5-full');
+        const override=await direct({model:'nai-diffusion-4-5-full',aspectRatio:'1:1',imageSize:'4K'});
+        assert.deepEqual([override.body.parameters.width,override.body.parameters.height,override.body.parameters.steps],[1024,1024,28]);
+        assert.equal(override.snapshot.metadata.steps,28);
+        assert.equal(await page.locator('#iig_novelai_steps').inputValue(),'23');
+        await page.locator('#iig_profile_save_as').click();
+        await protection.uncheck();
+        await page.locator('#iig_profile_select').selectOption(await page.locator('#iig_profile_select').inputValue());
+        assert.equal(await protection.isChecked(),true);
+        assert.equal(await page.locator('#iig_novelai_steps').inputValue(),'23');
+        const blocked=await page.evaluate(async()=>{
+            const saved=structuredClone(subscription), results=[];
+            for(const [name,patch,failure] of [
+                ['no Opus',{tier:2},''], ['inactive',{active:false},''], ['expired',{expiresAt:1},''],
+                ['depleted',{usage:{isNegative:true,percent:0}},''], ['zero',{usage:{isNegative:false,percent:0}},''],
+                ['unknown quota',{usage:null},''], ['malformed quota',{usage:{isNegative:false,percent:'100'}},''],
+                ['network',{},'network'], ['HTTP',{},'http'], ['JSON',{},'json'],
+            ]) {
+                subscription={...saved,...patch};subscriptionFailure=failure;
+                const before=requests.filter(r=>r.url.endsWith('/ai/generate-image')).length;
+                let rejected=false;
+                try {await app.pipeline.generateImageWithRetry('scene','');} catch {rejected=true;}
+                results.push({name,rejected,posts:requests.filter(r=>r.url.endsWith('/ai/generate-image')).length-before});
+            }
+            subscription=structuredClone(saved);subscriptionFailure='';
+            const before=requests.filter(r=>r.url.endsWith('/ai/generate-image')).length;
+            drainAllowance=true;
+            const concurrent=await Promise.allSettled([app.pipeline.generateImageWithRetry('scene',''),app.pipeline.generateImageWithRetry('scene','')]);
+            drainAllowance=false;subscription=structuredClone(saved);
+            const posts=requests.filter(r=>r.url.endsWith('/ai/generate-image')).length-before;
+            const provider=app.providers.resolveActiveProvider(app.settings);
+            drainAllowance=true;
+            let firstFinished=false;
+            const first=provider.generate({prompt:'scene'}).finally(()=>{firstFinished=true;});
+            const controller=new AbortController();
+            const queued=provider.generate({prompt:'scene',options:{signal:controller.signal}});
+            controller.abort();
+            const cancelled=await queued.then(()=>({code:'sent'}),error=>({code:error.code,firstFinished}));
+            await first;drainAllowance=false;subscription=structuredClone(saved);
+            return {results,concurrent:concurrent.map(r=>r.status),posts,cancelled};
+        });
+        assert.ok(blocked.results.every(result=>result.rejected&&result.posts===0),JSON.stringify(blocked));
+        assert.deepEqual(blocked.concurrent,['fulfilled','rejected']);
+        assert.equal(blocked.posts,1);
+        assert.deepEqual(blocked.cancelled,{code:'aborted',firstFinished:false});
+        await page.locator('#iig_model_select').selectOption('nai-diffusion-4-5-full');
+        await page.evaluate(()=>{subscription.usage=null;});
+        await direct();
+        await page.locator('#iig_model_select').selectOption('nai-diffusion-5-full');
+        for(const [name,width,height] of [['desktop',900,1000],['mobile',390,844]]) {
+            await page.setViewportSize({width,height});
+            assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+            await page.locator('#iig_novelai_options').screenshot({path:path.join(artifacts,'anlas-protection-'+name+'.png')});
+        }
+        await protection.uncheck();
+        assert.equal(await page.locator('#iig_novelai_steps').inputValue(),'40');
+        assert.equal(await page.locator('#iig_novelai_resolution').inputValue(),'big');
+        const unguardedCount=await page.evaluate(()=>requests.filter(r=>r.url.endsWith('/user/subscription')).length);
+        await page.evaluate(()=>{subscription.active=false;});
+        await direct();
+        assert.equal(await page.evaluate(()=>requests.filter(r=>r.url.endsWith('/user/subscription')).length),unguardedCount);
+        await page.locator('#iig_novelai_steps').fill('23');
+        await page.locator('#iig_novelai_resolution').selectOption('normal');
+        checks.push('Anlas protection: default/profile, five models, fail-closed subscription/quota checks, serialized requests, manual values restored; Naistera unchanged');
         let native = await direct();
         assert.deepEqual([native.body.parameters.steps,native.body.parameters.scale,native.body.parameters.cfg_rescale,native.body.parameters.sampler], [23,7,0,'k_euler_ancestral']);
         for (const [field,value] of [['steps','28'],['cfg_scale','4.5'],['cfg_rescale','0.25']]) await page.locator('#iig_novelai_'+field).fill(value);
@@ -188,7 +287,7 @@ const server = createServer((req, res) => {
         assert.equal(native.body.parameters.negative_prompt,'CUSTOM_NEGATIVE');
         checks.push('High settings restored; request-only Medium override leaves defaults unchanged');
         assert.deepEqual(errors, []);
-        writeFileSync(path.join(artifacts,'report.json'),JSON.stringify({passed:true,checks,errors},null,2));
+        writeFileSync(path.join(artifacts,'report.json'),JSON.stringify({passed:true,checks,errors,guardedRequests,blocked},null,2));
         console.log(JSON.stringify({passed:true,checks,artifacts},null,2));
     } catch(error) {
         await page.screenshot({path:path.join(artifacts,'failure.png')});
