@@ -757,7 +757,7 @@ function buildStylesSettingsSectionHtml() {
     const bodyHtml = `
         <div class="iig-library-tabs iig-prompt-library-tabs" role="tablist">
             <button type="button" class="menu_button iig-library-tab selected" role="tab" data-style-library="styles" aria-selected="true"><i class="fa-solid fa-palette"></i><span>${t`Styles`}</span></button>
-            <button type="button" class="menu_button iig-library-tab" role="tab" data-style-library="negativePrompts" aria-selected="false"><i class="fa-solid fa-ban"></i><span>${t`Negative prompts`}</span></button>
+            <button type="button" class="menu_button iig-library-tab" role="tab" data-style-library="negativePrompts" aria-selected="false"><i class="fa-solid fa-ban"></i><span>${t`Negatives`}</span></button>
         </div>
         <div class="iig-style-workspace">
             <div class="iig-settings-group iig-style-library">

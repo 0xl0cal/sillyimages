@@ -289,6 +289,11 @@
     margin-bottom: 8px;
 }
 
+.iig-settings .iig-prompt-library-tabs .iig-library-tab,
+.iig-settings .iig-prompt-library-tabs .iig-library-tab > span {
+    white-space: nowrap !important;
+}
+
 .iig-style-library-head {
     flex-wrap: wrap;
 }

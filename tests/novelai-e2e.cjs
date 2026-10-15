@@ -68,6 +68,32 @@ const server = createServer((req, res) => {
         await page.locator('[data-section-id="iig_api_section"] > summary').click();
         await page.locator('[data-section-id="iig_styles_section"] > summary').click();
         assert.equal(await page.locator('[data-section-id="iig_styles_section"] > summary .iig-section-title').textContent(), 'Styles & Negatives');
+        assert.equal(await page.locator('[data-style-library="negativePrompts"] span').textContent(), 'Negatives');
+        // Both tab labels stay on one line, aligned, and inside narrow panels in every locale.
+        await page.addStyleTag({content: '.iig-prompt-library-tabs button{font-size:20px}'});
+        for (const locale of ['en', 'ru-ru', 'uk-ua']) {
+            const translations = locale === 'en' ? {} : JSON.parse(readFileSync(path.join(root, 'i18n', locale+'.json'), 'utf8'));
+            const labels = locale === 'en' ? ['Styles','Negatives'] : [translations.Styles, translations.Negatives];
+            assert.ok(labels.every(label => typeof label === 'string'));
+            await page.locator('.iig-prompt-library-tabs button span').evaluateAll((spans, labels) => spans.forEach((span, index) => span.textContent = labels[index]), labels);
+            for (const width of [320,390,900]) {
+                await page.setViewportSize({width,height:1000});
+                const tabs = await page.locator('.iig-prompt-library-tabs button').evaluateAll(buttons => buttons.map(button => {
+                    const span = button.querySelector('span'), range = document.createRange(); range.selectNodeContents(span);
+                    const rect = button.getBoundingClientRect();
+                    return {top:rect.top,height:rect.height,whiteSpace:getComputedStyle(span).whiteSpace,
+                        lines:new Set(Array.from(range.getClientRects(), rect => Math.round(rect.top))).size,
+                        fits:span.scrollWidth<=span.clientWidth};
+                }));
+                assert.ok(tabs.every(tab => tab.whiteSpace === 'nowrap' && tab.lines === 1 && tab.fits), `${locale}/${width}: ${JSON.stringify(tabs)}`);
+                assert.equal(tabs[0].top,tabs[1].top);
+                assert.equal(tabs[0].height,tabs[1].height);
+                assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+                if(width===390) await page.locator('.iig-prompt-library-tabs').screenshot({path:path.join(artifacts,'prompt-tabs-'+locale+'-mobile.png')});
+            }
+        }
+        await page.locator('.iig-prompt-library-tabs button span').evaluateAll(spans => spans.forEach((span, index) => span.textContent = ['Styles','Negatives'][index]));
+        checks.push('Styles / Negatives tabs fit on one line at 320/390/900px in English, Russian and Ukrainian');
         await page.locator('#iig_api_section .iig-settings-group').evaluateAll(groups => groups.forEach(group => group.open = true));
         const emptyLibraryMetrics = {};
         await page.addStyleTag({content: '.menu_button:not(.disabled):not([disabled]):hover,.menu_button:not(.disabled):not([disabled]).active{background-color:var(--white30a)}'});

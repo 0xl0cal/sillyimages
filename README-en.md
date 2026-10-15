@@ -72,7 +72,7 @@ Enabled entries can contain an image, a description, or both. **Send reference d
 
 ### Styles and negative prompts
 
-The **Styles & Negatives** library has two tabs: **Styles** and **Negative prompts**. Each tab has its own active entry, search, editor and enable switch. Opening an entry selects it for editing; **Activate** applies it to generation.
+The **Styles & Negatives** library has two tabs: **Styles** and **Negatives**. Each tab has its own active entry, search, editor and enable switch. Opening an entry selects it for editing; **Activate** applies it to generation.
 
 An active negative prompt supplies undesired content for V4.5, V5 High and V5 Curated on NovelAI and Naistera. Disable it to use the custom **Negative prompt** field in **Generation**. Medium uses a fixed negative prompt. Other providers use their own settings.
 
