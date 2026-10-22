@@ -25,9 +25,11 @@ const DOUBLE_TAP_MS = 300;
 export function initLightbox() {
     if (document.getElementById(OVERLAY_ID)) return;
 
-    const overlay = document.createElement('div');
+    const overlay = document.createElement('dialog');
     overlay.id = OVERLAY_ID;
     overlay.className = 'iig-lightbox';
+    overlay.hidden = true;
+    overlay.inert = true;
     overlay.setAttribute('aria-hidden', 'true');
     overlay.innerHTML = `
         <div class="iig-lightbox-backdrop"></div>
@@ -78,6 +80,8 @@ export function initLightbox() {
     let wheelEndTimer = null;
     let lastZoomPointX = null;
     let lastZoomPointY = null;
+    let previousBodyOverflow = null;
+    let viewSession = 0;
     const geometry = {
         baseWidth: 0,
         baseHeight: 0,
@@ -205,6 +209,23 @@ export function initLightbox() {
         }
     };
 
+    const cancelInteraction = () => {
+        clearTapCloseTimer();
+        clearWheelEndTimer();
+        if (transformFrame) cancelAnimationFrame(transformFrame);
+        transformFrame = 0;
+        const capturedIds = [...pointers.keys()];
+        pointers.clear();
+        for (const id of capturedIds) {
+            if (imgEl.hasPointerCapture(id)) imgEl.releasePointerCapture(id);
+        }
+        pinchStartDist = 0;
+        swipeActive = false;
+        dragMoved = false;
+        lastTapTime = 0;
+        overlay.classList.remove('interacting');
+    };
+
     const zoomAtPoint = (newScale, pointX, pointY, elastic = false) => {
         newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, newScale));
         if (Math.abs(newScale - scale) < SCALE_EPSILON) return;
@@ -265,6 +286,7 @@ export function initLightbox() {
 
     const showImage = (idx) => {
         if (imageList.length === 0) return;
+        cancelInteraction();
         currentIndex = (idx + imageList.length) % imageList.length;
         const src = imageList[currentIndex];
         currentSourceElement = src;
@@ -275,29 +297,38 @@ export function initLightbox() {
         imgEl.src = getImageSource(src);
         imgEl.alt = caption;
         captionEl.textContent = caption;
-        pointers.clear();
-        clearWheelEndTimer();
         resetZoom(false);
     };
 
     const openAt = (img) => {
-        clearTapCloseTimer();
-        clearWheelEndTimer();
-        lastTapTime = 0;
+        // Native close events are queued; restore scroll ownership before reopening.
+        if (!overlay.open && overlay.classList.contains('open')) close();
+        viewSession++;
+        cancelInteraction();
         lastZoomPointX = null;
         lastZoomPointY = null;
-        pointers.clear();
         imageList = collectImagesFor(img);
-        currentIndex = Math.max(0, imageList.findIndex((x) => x === img));
+        currentIndex = imageList.findIndex((x) => x === img);
         if (currentIndex < 0) {
             imageList = [img];
             currentIndex = 0;
+        }
+        if (!overlay.open) {
+            previousBodyOverflow = ['overflow', 'overflow-x', 'overflow-y'].map(name => ({
+                name, value: document.body.style.getPropertyValue(name),
+                priority: document.body.style.getPropertyPriority(name),
+            }));
+            overlay.hidden = false;
+            overlay.inert = false;
+            // Native top-layer ownership also works when the thumbnail is inside a Tavern modal.
+            overlay.showModal();
+            document.body.style.overflow = 'hidden';
         }
         updateNavVisibility();
         showImage(currentIndex);
         overlay.classList.add('open');
         overlay.setAttribute('aria-hidden', 'false');
-        document.body.style.overflow = 'hidden';
+        overlay.querySelector('.iig-lightbox-close')?.focus({ preventScroll: true });
     };
 
     const close = (e) => {
@@ -305,18 +336,39 @@ export function initLightbox() {
             e.preventDefault();
             e.stopPropagation();
         }
-        clearTapCloseTimer();
-        lastTapTime = 0;
+        if (!overlay.classList.contains('open')) return;
+        viewSession++;
+        cancelInteraction();
         overlay.classList.remove('open');
         overlay.setAttribute('aria-hidden', 'true');
-        document.body.style.overflow = '';
-        imgEl.src = '';
+        overlay.inert = true;
+        if (overlay.open) overlay.close();
+        overlay.hidden = true;
+        if (previousBodyOverflow) {
+            // Restore the exact inline values and priorities owned by the underlying app.
+            for (const { name } of previousBodyOverflow) document.body.style.removeProperty(name);
+            for (const { name, value, priority } of previousBodyOverflow) {
+                if (value) document.body.style.setProperty(name, value, priority);
+            }
+            previousBodyOverflow = null;
+        }
+        imgEl.removeAttribute('src');
         captionEl.textContent = '';
         currentSourceElement = null;
         deleteBtn.hidden = true;
-        resetZoom(false);
+        scale = 1;
+        tx = 0;
+        ty = 0;
+        overlay.classList.remove('zoomed');
+        imgEl.style.removeProperty('transform');
         imageList = [];
     };
+
+    overlay.addEventListener('cancel', close);
+    overlay.addEventListener('close', () => {
+        // A queued close event must not close a viewer that has already reopened.
+        if (!overlay.open) close();
+    });
 
     overlay.querySelector('.iig-lightbox-backdrop')?.addEventListener('click', close);
     overlay.querySelector('.iig-lightbox-close')?.addEventListener('click', close);
@@ -324,6 +376,7 @@ export function initLightbox() {
         e.preventDefault();
         e.stopPropagation();
         const source = currentSourceElement;
+        const deletionSession = viewSession;
         const generationId = String(source?.getAttribute('data-iig-generation-id') || '').trim();
         const characterKey = String(source?.getAttribute('data-iig-generation-key') || '').trim();
         if (!source || !generationId || !characterKey) return;
@@ -356,17 +409,20 @@ export function initLightbox() {
             if (!removed) throw new Error(t`Generation was not found`);
             const gallery = source.closest('[data-iig-lightbox-gallery]');
             source.closest('.iig-library-generation-item')?.remove();
-            imageList = gallery
+            const remainingImages = gallery
                 ? Array.from(gallery.querySelectorAll(GALLERY_IMG_SELECTOR)).filter(getImageSource)
                 : [];
             const count = gallery?.closest('.iig-library-editor-section')?.querySelector('.iig-library-section-count');
-            if (count) count.textContent = String(imageList.length);
-            if (imageList.length === 0) {
-                close();
-            } else {
-                currentIndex = Math.min(currentIndex, imageList.length - 1);
-                updateNavVisibility();
-                showImage(currentIndex);
+            if (count) count.textContent = String(remainingImages.length);
+            if (deletionSession === viewSession && overlay.open) {
+                imageList = remainingImages;
+                if (imageList.length === 0) {
+                    close();
+                } else {
+                    currentIndex = Math.min(currentIndex, imageList.length - 1);
+                    updateNavVisibility();
+                    showImage(currentIndex);
+                }
             }
             toastr.success(t`Generation deleted`, t`Image Generation`);
         } catch (error) {
@@ -404,6 +460,7 @@ export function initLightbox() {
     });
 
     imgEl.addEventListener('wheel', (e) => {
+        if (!overlay.open) return;
         e.preventDefault();
         e.stopPropagation();
         rememberZoomPoint(e.clientX, e.clientY);
@@ -419,6 +476,7 @@ export function initLightbox() {
     }, { passive: false });
 
     imgEl.addEventListener('pointerdown', (e) => {
+        if (!overlay.open) return;
         if (e.pointerType === 'mouse' && e.button !== 0) return;
         if (!pointers.has(e.pointerId) && pointers.size >= 2) return;
         e.preventDefault();
@@ -459,6 +517,7 @@ export function initLightbox() {
     });
 
     imgEl.addEventListener('pointermove', (e) => {
+        if (!overlay.open) return;
         rememberZoomPoint(e.clientX, e.clientY);
         if (!pointers.has(e.pointerId)) return;
         e.preventDefault();
@@ -495,7 +554,7 @@ export function initLightbox() {
 
     const onPointerUp = (e) => {
         if (!pointers.has(e.pointerId)) return;
-        const canceled = e.type === 'pointercancel';
+        const canceled = e.type !== 'pointerup';
         const wasMulti = pointers.size >= 2;
         pointers.delete(e.pointerId);
         if (imgEl.hasPointerCapture(e.pointerId)) imgEl.releasePointerCapture(e.pointerId);
@@ -567,6 +626,7 @@ export function initLightbox() {
 
     imgEl.addEventListener('pointerup', onPointerUp);
     imgEl.addEventListener('pointercancel', onPointerUp);
+    imgEl.addEventListener('lostpointercapture', onPointerUp);
     imgEl.addEventListener('contextmenu', (e) => {
         clearTapCloseTimer();
         lastTapTime = 0;
@@ -574,6 +634,7 @@ export function initLightbox() {
     });
 
     imgEl.addEventListener('load', () => {
+        if (!overlay.open) return;
         refreshGeometry();
         clampPan(false);
         applyTransform(true);
@@ -597,6 +658,7 @@ export function initLightbox() {
 
     document.addEventListener('keydown', (e) => {
         if (!overlay.classList.contains('open')) return;
+        if (e.target instanceof Element && e.target.closest('dialog[open]') !== overlay) return;
         if (e.key === 'Escape') {
             close(e);
         } else if (e.key === 'ArrowLeft' && scale <= MIN_SCALE + SCALE_EPSILON) {
@@ -621,9 +683,9 @@ export function initLightbox() {
             endInteraction();
             resetZoom();
         }
-    });
+    }, { capture: true });
 
-    // Document-level delegation so we survive any rebuild of #chat.
+    // Claim owned thumbnails before generic image handlers can open a second viewer.
     document.addEventListener('click', (e) => {
         const target = /** @type {HTMLElement} */ (e.target);
         const img = /** @type {HTMLImageElement|null} */ (target?.closest(OPENABLE_IMG_SELECTOR));
@@ -635,5 +697,5 @@ export function initLightbox() {
         e.preventDefault();
         e.stopPropagation();
         openAt(img);
-    });
+    }, { capture: true });
 }

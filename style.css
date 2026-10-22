@@ -2659,6 +2659,10 @@ body.iig-actions-hidden .iig-img-actions {
 /* ==================== Lightbox ==================== */
 
 .iig-lightbox {
+    margin: 0;
+    border: 0;
+    max-width: none;
+    max-height: none;
     position: fixed;
     top: 0;
     left: 0;
@@ -2682,6 +2686,16 @@ body.iig-actions-hidden .iig-img-actions {
     -webkit-transform: translateZ(0);
     user-select: none;
     -webkit-user-select: none;
+}
+
+.iig-lightbox[hidden],
+.iig-lightbox [hidden] {
+    display: none;
+}
+
+.iig-lightbox::backdrop {
+    background: transparent;
+    backdrop-filter: none;
 }
 
 .iig-lightbox.open {

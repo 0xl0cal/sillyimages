@@ -108,6 +108,8 @@ With Playwright available to Node (use `NODE_PATH` for an external installation)
 
 Run matching and request tests with `node --experimental-vm-modules --test tests/reference-matching.test.cjs`. Tests use an in-memory configuration and simulated HTTP responses.
 
+Run viewer checks with `node tests/lightbox-e2e.cjs`. The test opens images in desktop and mobile viewports, exercises gestures, closing and reopening, and checks modal dialogs, scrolling, clicks and typing after exit. Images and gallery deletion use local fixtures. Reports and screenshots are written to `tests/artifacts/lightbox`.
+
 Simple mode uses library order; power mode uses descending priority. Image attachments are selected within the provider's reference limit.
 
 Per-request reference limits depend on the model:
