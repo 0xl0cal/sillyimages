@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { createServer } = require('node:http');
 const { readFileSync, mkdirSync, writeFileSync } = require('node:fs');
 const path = require('node:path');
-const { chromium } = require('playwright');
+const { chromium, webkit } = require('playwright');
 
 // Real viewer, CSS, native dialogs and browser pointers. Failures covered:
 // lost scroll ownership, invisible modal hit targets, pending wheel/tap/RAF work,
@@ -18,7 +18,7 @@ header{height:80px;padding:10px}button,input{font:inherit}#chat{height:400px;ove
 #gallery-popup{width:500px;max-width:90vw;background:#302c35;color:#eee}#gallery-popup::backdrop{background:#0008}
 </style></head><body style="overflow:auto !important">
 <header><button id="app-button">App action</button><input id="app-input" aria-label="Chat input"></header>
-<div id="chat">${image('chat-image', "data-iig-instruction='{}'")}${image('chat-image-2', "data-iig-instruction='{}'")}<div class="spacer"></div></div>
+<div id="chat" tabindex="0">${image('chat-image', "data-iig-instruction='{}'")}${image('chat-image-2', "data-iig-instruction='{}'")}<div class="spacer"></div></div>
 <div data-iig-lightbox-gallery id="gallery"><button class="iig-library-generation-item">${image('gallery-image', 'data-iig-lightbox data-iig-generation-id="g1" data-iig-generation-key="char" data-iig-full-src="/user/images/char/image.svg"')}</button>
 <button class="iig-library-generation-item">${image('gallery-image-2', 'data-iig-lightbox data-iig-generation-id="g2" data-iig-generation-key="char"')}</button></div>
 <dialog id="gallery-popup"><button id="popup-action">Popup action</button><div data-iig-lightbox-gallery>${image('popup-image', 'data-iig-lightbox')}</div></dialog>
@@ -64,19 +64,22 @@ const server = createServer((req, res) => {
 });
 
 (async()=>{
-    const artifacts=path.join(__dirname,'artifacts','lightbox');mkdirSync(artifacts,{recursive:true});
+    const engine=process.env.IIG_BROWSER_ENGINE||'chromium';
+    assert.ok(['chromium','webkit'].includes(engine),'IIG_BROWSER_ENGINE must be chromium or webkit');
+    const artifacts=path.join(__dirname,'artifacts',engine==='webkit'?'lightbox-webkit':'lightbox');mkdirSync(artifacts,{recursive:true});
     await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-    const browser=await chromium.launch({headless:true,...(process.env.IIG_BROWSER_CHANNEL?{channel:process.env.IIG_BROWSER_CHANNEL}:{})});
-    const checks=[],errors=[];
+    const browser=await (engine==='webkit'?webkit:chromium).launch({headless:true,...(engine==='chromium'&&process.env.IIG_BROWSER_CHANNEL?{channel:process.env.IIG_BROWSER_CHANNEL}:{})});
+    const checks=[],errors=[],skipped=[];
     let page;
     try {
         for(const [mode,width,height] of [['desktop',900,900],['mobile',390,844]]) {
+            const mobileWebKit=engine==='webkit'&&mode==='mobile';
             const context=await browser.newContext({viewport:{width,height},isMobile:mode==='mobile',hasTouch:true});
             page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));
             await page.goto(`http://127.0.0.1:${server.address().port}`);await page.waitForFunction(()=>window.ready);
             const overlay=page.locator('#iig_lightbox'),full=page.locator('.iig-lightbox-img');
             const open=async(id='chat-image')=>{
-                await page.locator('#'+id).click();
+                if(mode==='mobile')await page.locator('#'+id).tap();else await page.locator('#'+id).click();
                 await page.waitForFunction(()=>document.querySelector('#iig_lightbox').classList.contains('open'));
                 await page.waitForFunction(()=>document.querySelector('.iig-lightbox-img').naturalWidth>0);
                 await page.waitForFunction(()=>getComputedStyle(document.querySelector('#iig_lightbox')).opacity==='1');
@@ -90,10 +93,11 @@ const server = createServer((req, res) => {
                         displayed:getComputedStyle(e).display,source:img.getAttribute('src'),modal:e.matches(':modal')};
                 });
                 assert.deepEqual(state,{overflow:'auto',priority:'important',timers:0,frames:0,captures:[],displayed:'none',source:null,modal:false});
-                await page.locator('#app-button').click();
+                if(mode==='mobile')await page.locator('#app-button').tap();else await page.locator('#app-button').click();
                 await page.locator('#app-input').fill('responsive');
                 await page.locator('#chat').evaluate(e=>e.scrollTop=0);
-                await page.mouse.move(100,250);await page.mouse.wheel(0,150);
+                if(mobileWebKit)await page.locator('#chat').press('ArrowDown');
+                else {await page.mouse.move(100,250);await page.mouse.wheel(0,150);}
                 await page.waitForFunction(()=>document.querySelector('#chat').scrollTop>0);
             };
             assert.equal(await overlay.count(),1);
@@ -106,15 +110,22 @@ const server = createServer((req, res) => {
             await page.waitForFunction(()=>!document.querySelector('#iig_lightbox').open);await released();
             checks.push(mode+': tapping the image closes without leaving a scroll or input lock');
 
+            await open();await full.tap();await full.tap();
+            await page.waitForFunction(()=>document.querySelector('#iig_lightbox').classList.contains('zoomed'));
+            await page.locator('.iig-lightbox-close').tap();await released();
+            checks.push(mode+': double-tap zoom followed by touch close restores app interaction');
+
             await open();await full.tap();await page.keyboard.press('Escape');await open('chat-image-2');
             await page.waitForTimeout(350);assert.equal(await overlay.evaluate(e=>e.open),true);
             await page.keyboard.press('Escape');await released();
             checks.push(mode+': a canceled tap timeout cannot close a reopened viewer');
 
-            await open();const rect=await full.boundingBox();await page.mouse.move(rect.x+rect.width/2,rect.y+rect.height/2);
-            await page.mouse.wheel(0,-120);await page.keyboard.press('Escape');await released();
-            await page.waitForTimeout(150);assert.equal(await page.evaluate(()=>viewerTimers.size+viewerFrames.size),0);
-            checks.push(mode+': Escape during wheel cancels timers and frames');
+            if(!mobileWebKit) {
+                await open();const rect=await full.boundingBox();await page.mouse.move(rect.x+rect.width/2,rect.y+rect.height/2);
+                await page.mouse.wheel(0,-120);await page.keyboard.press('Escape');await released();
+                await page.waitForTimeout(150);assert.equal(await page.evaluate(()=>viewerTimers.size+viewerFrames.size),0);
+                checks.push(mode+': Escape during wheel cancels timers and frames');
+            } else skipped.push(mode+': wheel injection is unsupported in mobile WebKit; post-close scrolling uses a keyboard, not a native swipe');
 
             await open();const drag=await full.boundingBox();await page.mouse.move(drag.x+20,drag.y+20);await page.mouse.down();
             await page.mouse.move(drag.x+60,drag.y+50);await page.keyboard.press('Escape');
@@ -122,14 +133,16 @@ const server = createServer((req, res) => {
             await page.mouse.up();await released();
             checks.push(mode+': closing with a held pointer releases capture');
 
-            const cdp=await context.newCDPSession(page);await open();const box=await full.boundingBox();
-            const x=box.x+box.width/2,y=box.y+box.height/2;
-            await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:x-20,y,id:1},{x:x+20,y,id:2}]});
-            await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:x-50,y,id:1},{x:x+50,y,id:2}]});
-            await page.keyboard.press('Escape');
-            assert.equal(await full.evaluate(e=>[...pointerIds].some(id=>e.hasPointerCapture(id))),false);
-            await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await released();
-            checks.push(mode+': closing mid-pinch releases both touch captures');
+            if(engine==='chromium') {
+                const cdp=await context.newCDPSession(page);await open();const box=await full.boundingBox();
+                const x=box.x+box.width/2,y=box.y+box.height/2;
+                await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:x-20,y,id:1},{x:x+20,y,id:2}]});
+                await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:x-50,y,id:1},{x:x+50,y,id:2}]});
+                await page.keyboard.press('Escape');
+                assert.equal(await full.evaluate(e=>[...pointerIds].some(id=>e.hasPointerCapture(id))),false);
+                await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await released();
+                checks.push(mode+': closing mid-pinch releases both touch captures');
+            } else skipped.push(mode+': native multi-touch injection requires Chromium CDP; physical iPhone pinch is not tested');
 
             await open();await overlay.evaluate(e=>e.close());await page.waitForFunction(()=>!document.querySelector('#iig_lightbox').classList.contains('open'));await released();
             checks.push(mode+': native dialog close runs complete cleanup');
@@ -182,10 +195,10 @@ const server = createServer((req, res) => {
             await context.close();
         }
         assert.deepEqual(errors,[]);
-        writeFileSync(path.join(artifacts,'report.json'),JSON.stringify({passed:true,checks,errors},null,2));
-        console.log(JSON.stringify({passed:true,checks,artifacts},null,2));
+        writeFileSync(path.join(artifacts,'report.json'),JSON.stringify({passed:true,engine,checks,skipped,errors},null,2));
+        console.log(JSON.stringify({passed:true,engine,checks,skipped,artifacts},null,2));
     } catch(error) {
         if(page&&!page.isClosed())await page.screenshot({path:path.join(artifacts,'failure.png')});
-        writeFileSync(path.join(artifacts,'report.json'),JSON.stringify({passed:false,checks,errors,error:String(error)},null,2));throw error;
+        writeFileSync(path.join(artifacts,'report.json'),JSON.stringify({passed:false,engine,checks,skipped,errors,error:String(error)},null,2));throw error;
     } finally {await browser.close();await new Promise(resolve=>server.close(resolve));}
 })().catch(error=>{console.error(error);process.exitCode=1;});

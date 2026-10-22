@@ -110,6 +110,8 @@ Run matching and request tests with `node --experimental-vm-modules --test tests
 
 Run viewer checks with `node tests/lightbox-e2e.cjs`. The test opens images in desktop and mobile viewports, exercises gestures, closing and reopening, and checks modal dialogs, scrolling, clicks and typing after exit. Images and gallery deletion use local fixtures. Reports and screenshots are written to `tests/artifacts/lightbox`.
 
+Set `IIG_BROWSER_ENGINE=webkit` to run the viewer checks with Playwright WebKit. Its report and screenshots are written to `tests/artifacts/lightbox-webkit`. Mobile WebKit checks taps and uses keyboard scrolling; native pinch and swipe scrolling require a physical iPhone check.
+
 Simple mode uses library order; power mode uses descending priority. Image attachments are selected within the provider's reference limit.
 
 Per-request reference limits depend on the model:
