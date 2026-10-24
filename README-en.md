@@ -72,7 +72,7 @@ Enabled entries can contain an image, a description, or both. **Send reference d
 
 ### Deleting generations
 
-In **Character library → Generations**, choose **Select images**, select thumbnails and choose **Delete selected**. **Clear images** deletes the selected character's generations. **Clear all images** deletes extension generations across all folders, including files outside the recent thumbnail list.
+In **Character library → Generations**, choose **Select images**, select thumbnails and choose **Delete selected**. **Clear images** deletes the selected character's generations. In **Debug → Generations**, **Clear all images** deletes extension generations across all folders, including files outside the recent thumbnail list.
 
 Confirmation shows the image count. Saved files are permanently deleted and no longer display in chats. Images used as character, persona or lorebook references are kept, including disabled references. Files that fail to delete remain in the library.
 

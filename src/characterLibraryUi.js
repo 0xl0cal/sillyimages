@@ -342,10 +342,7 @@ export function buildCharacterLibraryBodyHtml() {
                     <input id="iig_library_search" class="text_pole" type="search" placeholder="${t`Search characters and personas`}">
                 </label>
             </div>
-            <div class="iig-library-generation-management">
-                <button type="button" class="menu_button redWarningBG iig-library-generations-clear-all"><i class="fa-solid fa-trash"></i><span>${t`Clear all images`}</span></button>
-                <span class="iig-library-generations-status" role="status" hidden></span>
-            </div>
+            <span class="iig-library-generations-status" role="status" hidden></span>
             <div class="iig-library-layout">
                 <div id="iig_library_entities" class="iig-library-entities"></div>
                 <div id="iig_library_editor_host" class="iig-library-editor-host"></div>
@@ -422,15 +419,21 @@ function updateGenerationControls() {
     }
     const selectAll = editor?.querySelector('.iig-library-generations-select-all');
     if (selectAll) selectAll.textContent = cards.length && generationSelection.ids.size === cards.length ? t`Deselect all` : t`Select all`;
-    document.querySelectorAll('.iig-character-library [class*="iig-library-generations-"]').forEach(button => {
+    document.querySelectorAll('.iig-character-library [class*="iig-library-generations-"], #iig_debug_section .iig-library-generations-clear-all').forEach(button => {
         if (!(button instanceof HTMLButtonElement)) return;
         button.disabled = generationOperationBusy
             || (button.classList.contains('iig-library-generations-delete-selected') && generationSelection.ids.size === 0)
             || (button.classList.contains('iig-library-generations-select') && cards.length === 0)
             || (button.classList.contains('iig-library-generations-select-all') && cards.length === 0);
     });
-    const status = document.querySelector('.iig-library-generations-status');
-    if (status) { status.textContent = generationProgress; status.hidden = !generationProgress; }
+    document.querySelectorAll('.iig-library-generations-status').forEach(status => {
+        status.textContent = generationProgress;
+        status.hidden = !generationProgress;
+    });
+}
+
+export async function clearAllGenerationImages(settings = getSettings()) {
+    await deleteLibraryImages('all', null, settings);
 }
 
 async function deleteLibraryImages(scope, state, settings) {
@@ -464,8 +467,10 @@ async function deleteLibraryImages(scope, state, settings) {
         if (!confirmed) return;
         const result = await deleteGenerationImages(plan, settings, (done, total) => {
             generationProgress = t`Deleting images: ${done}/${total}`;
-            const status = document.querySelector('.iig-library-generations-status');
-            if (status) { status.textContent = generationProgress; status.hidden = false; }
+            document.querySelectorAll('.iig-library-generations-status').forEach(status => {
+                status.textContent = generationProgress;
+                status.hidden = false;
+            });
         });
         deleted = result.deleted > 0;
         if (result.failed.length || result.skipped) {
@@ -760,11 +765,6 @@ export function bindCharacterLibraryEvents(settings = getSettings()) {
             selectedKind = entityButton.getAttribute('data-library-kind') === 'user' ? 'user' : 'char';
             selectedKeys[selectedKind] = String(entityButton.getAttribute('data-library-key') || '');
             await renderCharacterLibrary(settings);
-            return;
-        }
-
-        if (target.closest('.iig-library-generations-clear-all')) {
-            await deleteLibraryImages('all', null, settings);
             return;
         }
 

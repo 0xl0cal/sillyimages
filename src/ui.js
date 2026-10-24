@@ -79,7 +79,7 @@ import { fetchModels, resolveActiveProvider, getActiveProviderMaxReferences, A11
 import { NOVELAI_NUMERIC_FIELDS, NOVELAI_SAMPLERS, NOVELAI_NOISE_SCHEDULES, NOVELAI_RESOLUTION_PRESETS, NOVELAI_ASPECT_RATIOS, isNovelAIMedium, resolveNovelAISettings } from './novelai.js';
 import { applyImageActionsStyle } from './imageActions.js';
 import { t, translate } from './i18n.js';
-import { buildCharacterLibraryBodyHtml, bindCharacterLibraryEvents } from './characterLibraryUi.js';
+import { buildCharacterLibraryBodyHtml, bindCharacterLibraryEvents, clearAllGenerationImages } from './characterLibraryUi.js';
 // Относительный путь: /scripts/extensions/third-party/sillyimages/src/ui.js → /scripts/popup.js
 import { Popup } from '../../../../popup.js';
 
@@ -1061,6 +1061,13 @@ function buildDebugSettingsSectionHtml(settings = getSettings()) {
                     <div id="iig_export_logs" class="menu_button iig-button-inline">
                         <i class="fa-solid fa-download"></i> ${t`Export logs`}
                     </div>
+                </div>
+            </div>
+            <div class="iig-settings-group">
+                <div class="iig-settings-group-title"><i class="fa-solid fa-images"></i><span>${t`Generations`}</span></div>
+                <div class="iig-library-generation-management">
+                    <button type="button" class="menu_button redWarningBG iig-library-generations-clear-all"><i class="fa-solid fa-trash"></i><span>${t`Clear all images`}</span></button>
+                    <span class="iig-library-generations-status" role="status" hidden></span>
                 </div>
             </div>
         </div>
@@ -2634,6 +2641,10 @@ function bindRefInstructionEvents(settings) {
 // ----- Debug section events -----
 
 function bindDebugSectionEvents(settings) {
+    document.querySelector('#iig_debug_section .iig-library-generations-clear-all')?.addEventListener('click', () => {
+        clearAllGenerationImages(settings);
+    });
+
     document.getElementById('iig_max_retries')?.addEventListener('input', (e) => {
         const n = parseInt(e.target.value, 10);
         settings.maxRetries = Number.isFinite(n) && n >= 0 ? n : 3;

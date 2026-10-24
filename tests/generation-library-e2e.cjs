@@ -13,7 +13,7 @@ const prefix = '/scripts/extensions/third-party/sillyimages/';
 const picture = '<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180"><rect width="180" height="180" fill="#557383"/><circle cx="90" cy="70" r="40" fill="#dcc299"/></svg>';
 const host = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="${prefix}style.css"><style>
 :root{--SmartThemeQuoteColor:#c7b89f;--SmartThemeBodyColor:#eee;--SmartThemeBorderColor:#666;--SmartThemeBlurTintColor:#302c35}*{box-sizing:border-box}body{margin:12px;background:#302c35;color:#eee;font:16px sans-serif}.menu_button{background:#444;color:#eee;border:1px solid #666;padding:7px;border-radius:5px;cursor:pointer}.redWarningBG{background:#733737}.text_pole{background:#27232c;color:#eee;border:1px solid #666;padding:6px;border-radius:5px;min-width:0}button,input,textarea{font:inherit}.checkbox_label{display:flex;align-items:center}dialog{max-width:90vw;background:#302c35;color:#eee;border:1px solid #888;border-radius:8px}dialog::backdrop{background:#0009}dialog button{padding:10px;margin:6px}#iig_characters_section{max-width:1100px;margin:auto}
-</style></head><body><div class="iig-settings"><div id="iig_characters_section"></div></div><script type="module">
+</style></head><body><div id="extensions_settings"></div><script type="module">
 window.notes=[];window.toastr=Object.fromEntries(['info','warning','success','error'].map(k=>[k,(...v)=>notes.push([k,...v])]));
 window.context={extensionSettings:{},characters:[{name:'Alpha & One',avatar:'a.png'},{name:'Beta',avatar:'b.png'}],characterId:0,chat:[],powerUserSettings:{personas:{'user.png':'User'}},getRequestHeaders:()=>({'Content-Type':'application/json'}),saveSettingsDebounced(){window.saves=(window.saves||0)+1;}};window.SillyTavern={getContext:()=>context};
 window.requests=[];window.deleteCalls=[];window.failures=[];window.delay=0;window.folderFailure=false;window.invalidListing=false;window.activeDeletes=0;window.peakDeletes=0;
@@ -48,7 +48,10 @@ const entry=(generations,primary='',appearanceItems=[])=>({displayName:'',primar
 const gen=(id,file,folder='Alpha & One')=>({id,imagePath:url(folder,file),prompt:id,createdAt:Date.now()});
 settings.characterReferenceLibrary={characters:{'avatar:a.png':entry([gen('a','iig_a #1.png'),gen('missing','iig_missing.png'),gen('fail','iig_fail.png')],url('Alpha & One','iig_primary.png'),[{id:'ref',type:'image',enabled:false,imagePath:url('Alpha & One','iig_appearance.png'),description:'keep appearance'}]),'avatar:b.png':entry([gen('b','iig_beta.png','Beta'),gen('shared','iig_a #1.png')])},users:{'avatar:user.png':entry([],url('Beta','iig_persona.png'))}};
 settings.lorebooks=[{id:'book',name:'Book',enabled:false,refs:[{id:'ref',imagePath:url('Beta','iig_lore.png'),description:'keep lore'}]}];
-const library=await import('${prefix}src/characterLibraryUi.js');document.querySelector('#iig_characters_section').innerHTML=library.buildCharacterLibraryBodyHtml();library.bindCharacterLibraryEvents(settings);await library.renderCharacterLibrary(settings);
+const library=await import('${prefix}src/characterLibraryUi.js');const ui=await import('${prefix}src/ui.js');ui.createSettingsUI();
+for(const id of location.hash==='#debug-only'?['iig_debug_section']:['iig_characters_section','iig_debug_section'])document.getElementById(id).closest('details').open=true;
+document.querySelectorAll('#iig_debug_section details').forEach(details=>details.open=true);
+if(location.hash!=='#debug-only')await library.renderCharacterLibrary(settings);
 const viewer=await import('${prefix}src/lightbox.js');viewer.initLightbox();window.app={settings,library,settingsModule};window.ready=true;
 </script></body></html>`;
 
@@ -81,6 +84,9 @@ const server=createServer((req,res)=>{
             const ids=()=>page.evaluate(()=>app.settings.characterReferenceLibrary.characters['avatar:a.png'].generations.map(g=>g.id));
             const idle=()=>page.waitForFunction(()=>!document.querySelector('.iig-library-generations-clear-all').disabled&&!document.querySelector('#confirm-delete'));
             await reset();
+            assert.equal(await page.locator('#iig_characters_section .iig-library-generations-clear-all').count(),0);
+            assert.equal(await page.locator('#iig_debug_section .iig-library-generations-clear-all').count(),1);
+            await page.locator('#iig_debug_section').screenshot({path:path.join(artifacts,mode+'-debug.png')});
             await page.evaluate(()=>window.initialThumb=document.querySelector('[data-iig-generation-id="a"]'));
             await click('.iig-library-generations-select');await click('[data-iig-generation-id="a"]');
             assert.equal(await page.locator('#iig_lightbox').evaluate(e=>e.open),false);
@@ -184,6 +190,14 @@ const server=createServer((req,res)=>{
             assert.equal(await page.locator('.iig-library-editor').getAttribute('data-library-key'),'avatar:b.png');
             assert.ok(await page.evaluate(()=>peakDeletes<=3&&peakDeletes>1));
             checks.push(mode+': batch controls stay locked; new generations and character selection survive completion');
+
+            await page.goto('http://127.0.0.1:'+server.address().port+'/#debug-only');await page.reload();await page.waitForFunction(()=>window.ready);
+            assert.equal(await page.locator('.iig-library-generation-item').count(),0);
+            await click('.iig-library-generations-clear-all');await click('#confirm-yes');await idle();
+            assert.deepEqual(await ids(),[]);
+            assert.equal(await page.locator('[data-section-id="iig_characters_section"]').evaluate(e=>e.open),false);
+            assert.deepEqual(await page.evaluate(()=>files.Orphan),['other.png']);
+            checks.push(mode+': Debug cleanup works before opening the character library and leaves it collapsed');
             await context.close();
         }
         assert.deepEqual(errors,[]);writeFileSync(path.join(artifacts,'report.json'),JSON.stringify({passed:true,engine,checks,errors},null,2));console.log(JSON.stringify({passed:true,checks,artifacts},null,2));
