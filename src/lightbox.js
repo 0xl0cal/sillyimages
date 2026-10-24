@@ -691,6 +691,7 @@ export function initLightbox() {
         const img = /** @type {HTMLImageElement|null} */ (target?.closest(OPENABLE_IMG_SELECTOR));
         if (!img) return;
         if (!img.closest('#chat') && !img.closest('[data-iig-lightbox-gallery]')) return;
+        if (img.closest('[data-iig-selection-mode="true"]')) return;
         if (img.classList.contains('iig-error-image')) return;
         const rawSrc = getImageSource(img);
         if (!rawSrc || rawSrc.endsWith('[IMG:GEN]')) return;

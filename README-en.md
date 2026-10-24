@@ -70,6 +70,12 @@ A ref entry has: name (or a comma-separated list of aliases), description, image
 
 Enabled entries can contain an image, a description, or both. **Send reference descriptions from lorebook** adds descriptions to the final prompt. Models without image-reference support receive descriptions from all matching enabled entries, including entries with images. Image previews appear dimmed and upload controls are disabled; names, descriptions, sending rules and enable switches remain editable. Entries without descriptions are not sent to text-only models. Selecting an image-capable model uses the saved image. The `{{iig-book}}` macro includes descriptions available to the selected model. Image attachments follow the model's reference limit.
 
+### Deleting generations
+
+In **Character library → Generations**, choose **Select images**, select thumbnails and choose **Delete selected**. **Clear images** deletes the selected character's generations. **Clear all images** deletes extension generations across all folders, including files outside the recent thumbnail list.
+
+Confirmation shows the image count. Saved files are permanently deleted and no longer display in chats. Images used as character, persona or lorebook references are kept, including disabled references. Files that fail to delete remain in the library.
+
 ### Styles and negative prompts
 
 The **Styles & Negatives** library has two tabs: **Styles** and **Negatives**. Each tab has its own active entry, search, editor and enable switch. Opening an entry selects it for editing; **Activate** applies it to generation.
@@ -111,6 +117,8 @@ Run matching and request tests with `node --experimental-vm-modules --test tests
 Run viewer checks with `node tests/lightbox-e2e.cjs`. The test opens images in desktop and mobile viewports, exercises gestures, closing and reopening, and checks modal dialogs, scrolling, clicks and typing after exit. Images and gallery deletion use local fixtures. Reports and screenshots are written to `tests/artifacts/lightbox`.
 
 Set `IIG_BROWSER_ENGINE=webkit` to run the viewer checks with Playwright WebKit. Its report and screenshots are written to `tests/artifacts/lightbox-webkit`. Mobile WebKit checks taps and uses keyboard scrolling; native pinch and swipe scrolling require a physical iPhone check.
+
+Run bulk deletion checks with `node tests/generation-library-e2e.cjs`; `IIG_BROWSER_ENGINE=webkit` is supported. The test uses the extension library and viewer with an in-memory file API; it does not delete real files. Reports and screenshots are written to `tests/artifacts/generation-library-<engine>`.
 
 Simple mode uses library order; power mode uses descending priority. Image attachments are selected within the provider's reference limit.
 

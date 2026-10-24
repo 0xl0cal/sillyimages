@@ -317,7 +317,8 @@ export async function listCharacterGenerationPaths(characterName) {
         throw new Error((await response.text()) || `HTTP ${response.status}`);
     }
     const files = await response.json();
-    return (Array.isArray(files) ? files : [])
+    if (!Array.isArray(files)) throw new Error('Invalid character image list');
+    return files
         .filter((file) => typeof file === 'string' && /^iig_/i.test(file))
         .map((file) => `/user/images/${encodeURIComponent(folder)}/${encodeURIComponent(file)}`);
 }

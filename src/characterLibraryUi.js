@@ -28,6 +28,7 @@ import {
 } from './parser.js';
 import { t } from './i18n.js';
 import { Popup } from '../../../../popup.js';
+import { deleteGenerationImages, planGenerationImageDeletion } from './generationImages.js';
 
 let selectedKind = 'char';
 let selectedKeys = { char: '', user: '' };
@@ -39,6 +40,9 @@ let searchRenderTimer = null;
 let lastContextSignature = '';
 let libraryRendered = false;
 let libraryImageObserver = null;
+let generationSelection = { key: '', enabled: false, ids: new Set() };
+let generationOperationBusy = false;
+let generationProgress = '';
 const pendingContextSync = { character: false, user: false };
 
 const MAX_RENDERED_ENTITIES = 80;
@@ -245,8 +249,9 @@ function buildGenerationsHtml(entry, key) {
                 const prompt = String(generation.prompt || '').trim();
                 const caption = prompt || t`Generated image`;
                 const imagePath = normalizeStoredImagePath(generation.imagePath);
-                return `<button type="button" class="iig-library-generation-item" title="${sanitizeForHtml(caption)}">
+                return `<button type="button" class="iig-library-generation-item" data-generation-id="${sanitizeForHtml(generation.id)}" title="${sanitizeForHtml(caption)}" aria-label="${sanitizeForHtml(caption)}">
                     <img data-iig-library-src="${sanitizeForHtml(imagePath)}" data-iig-full-src="${sanitizeForHtml(imagePath)}" alt="" data-iig-lightbox data-iig-lightbox-caption="${sanitizeForHtml(caption)}" data-iig-generation-key="${sanitizeForHtml(key)}" data-iig-generation-id="${sanitizeForHtml(generation.id)}" loading="lazy" decoding="async" fetchpriority="low">
+                    <span class="iig-library-generation-check" aria-hidden="true"></span>
                 </button>`;
             }).join('')}
         </div>`;
@@ -309,8 +314,15 @@ function buildEditorHtml(entity, entry) {
                     <strong>${t`Generations`}</strong>
                     <div class="iig-library-row-actions">
                         <span class="iig-library-section-count">${entry.generations.length}</span>
+                        <button type="button" class="menu_button iig-library-generations-select"><i class="fa-solid fa-check-double"></i><span>${t`Select images`}</span></button>
                         <button type="button" class="menu_button iig-library-generations-refresh" title="${t`Refresh generations`}"><i class="fa-solid fa-rotate"></i></button>
+                        <button type="button" class="menu_button redWarningBG iig-library-generations-clear" title="${t`Clear character images`}"><i class="fa-solid fa-trash"></i><span>${t`Clear images`}</span></button>
                     </div>
+                </div>
+                <div class="iig-library-generation-actions" hidden>
+                    <span class="iig-library-generations-selected" role="status"></span>
+                    <button type="button" class="menu_button iig-library-generations-select-all">${t`Select all`}</button>
+                    <button type="button" class="menu_button redWarningBG iig-library-generations-delete-selected"><i class="fa-solid fa-trash"></i><span>${t`Delete selected`}</span></button>
                 </div>
                 ${buildGenerationsHtml(entry, entity.key)}
             </section>` : ''}
@@ -329,6 +341,10 @@ export function buildCharacterLibraryBodyHtml() {
                     <i class="fa-solid fa-magnifying-glass"></i>
                     <input id="iig_library_search" class="text_pole" type="search" placeholder="${t`Search characters and personas`}">
                 </label>
+            </div>
+            <div class="iig-library-generation-management">
+                <button type="button" class="menu_button redWarningBG iig-library-generations-clear-all"><i class="fa-solid fa-trash"></i><span>${t`Clear all images`}</span></button>
+                <span class="iig-library-generations-status" role="status" hidden></span>
             </div>
             <div class="iig-library-layout">
                 <div id="iig_library_entities" class="iig-library-entities"></div>
@@ -376,7 +392,94 @@ async function renderEditor(settings = getSettings(), entities = null) {
         ? getCharacterLibraryEntry(selectedKind, entity.key, settings, { create: false }) || emptyLibraryEntry()
         : emptyLibraryEntry();
     host.innerHTML = buildEditorHtml(entity, entry);
+    updateGenerationControls();
     observeLibraryImages();
+}
+
+function updateGenerationControls() {
+    const editor = document.querySelector('#iig_library_editor_host .iig-library-editor');
+    const key = editor?.getAttribute('data-library-kind') === 'char' ? editor.getAttribute('data-library-key') : '';
+    if (key !== generationSelection.key) generationSelection = { key, enabled: false, ids: new Set() };
+    const cards = [...(editor?.querySelectorAll('.iig-library-generation-item') || [])];
+    const available = new Set(cards.map(card => card.getAttribute('data-generation-id')));
+    generationSelection.ids = new Set([...generationSelection.ids].filter(id => available.has(id)));
+    if (cards.length === 0) generationSelection.enabled = false;
+    for (const card of cards) {
+        card.disabled = generationOperationBusy;
+        if (generationSelection.enabled) card.setAttribute('aria-pressed', String(generationSelection.ids.has(card.getAttribute('data-generation-id'))));
+        else card.removeAttribute('aria-pressed');
+    }
+    const gallery = editor?.querySelector('[data-iig-lightbox-gallery]');
+    if (gallery) gallery.setAttribute('data-iig-selection-mode', String(generationSelection.enabled || generationOperationBusy));
+    const actions = editor?.querySelector('.iig-library-generation-actions');
+    if (actions) actions.hidden = !generationSelection.enabled;
+    const selected = editor?.querySelector('.iig-library-generations-selected');
+    if (selected) selected.textContent = t`Selected: ${generationSelection.ids.size}`;
+    const select = editor?.querySelector('.iig-library-generations-select');
+    if (select) {
+        select.querySelector('span').textContent = generationSelection.enabled ? t`Done` : t`Select images`;
+        select.setAttribute('aria-pressed', String(generationSelection.enabled));
+    }
+    const selectAll = editor?.querySelector('.iig-library-generations-select-all');
+    if (selectAll) selectAll.textContent = cards.length && generationSelection.ids.size === cards.length ? t`Deselect all` : t`Select all`;
+    document.querySelectorAll('.iig-character-library [class*="iig-library-generations-"]').forEach(button => {
+        if (!(button instanceof HTMLButtonElement)) return;
+        button.disabled = generationOperationBusy
+            || (button.classList.contains('iig-library-generations-delete-selected') && generationSelection.ids.size === 0)
+            || (button.classList.contains('iig-library-generations-select') && cards.length === 0)
+            || (button.classList.contains('iig-library-generations-select-all') && cards.length === 0);
+    });
+    const status = document.querySelector('.iig-library-generations-status');
+    if (status) { status.textContent = generationProgress; status.hidden = !generationProgress; }
+}
+
+async function deleteLibraryImages(scope, state, settings) {
+    if (generationOperationBusy) return;
+    generationOperationBusy = true;
+    generationProgress = t`Counting images...`;
+    updateGenerationControls();
+    let deleted = false;
+    try {
+        const plan = await planGenerationImageDeletion({
+            scope, key: state?.key,
+            folder: state?.editor.getAttribute('data-generation-folder') || '',
+            ids: [...generationSelection.ids],
+        }, settings);
+        if (!plan.length) {
+            toastr.info(t`No images to delete.`, t`Image Generation`);
+            return;
+        }
+        const name = state?.entry.displayName || state?.editor.querySelector('.iig-library-display-name')?.placeholder || '';
+        const question = scope === 'all' ? t`Delete all ${plan.length} generated images?`
+            : scope === 'character' ? t`Delete ${plan.length} images for "${name}"?`
+                : t`Delete ${plan.length} selected images?`;
+        generationProgress = '';
+        updateGenerationControls();
+        const confirmed = await Popup.show.confirm(
+            t`Delete images`,
+            `<p>${sanitizeForHtml(question)}</p><p>${t`Saved files will be permanently deleted and will no longer display in chats. Reference images are kept.`}</p>`,
+            // Enter cancels; deletion requires choosing the Delete button.
+            { okButton: t`Delete`, cancelButton: t`Cancel`, defaultResult: 0 },
+        );
+        if (!confirmed) return;
+        const result = await deleteGenerationImages(plan, settings, (done, total) => {
+            generationProgress = t`Deleting images: ${done}/${total}`;
+            const status = document.querySelector('.iig-library-generations-status');
+            if (status) { status.textContent = generationProgress; status.hidden = false; }
+        });
+        deleted = result.deleted > 0;
+        if (result.failed.length || result.skipped) {
+            toastr.warning(t`Deleted: ${result.deleted}. Failed: ${result.failed.length}. Kept as references: ${result.skipped}.`, t`Image Generation`);
+        } else toastr.success(t`Images deleted: ${result.deleted}`, t`Image Generation`);
+    } catch (error) {
+        console.error('[IIG] Failed to delete library images:', error);
+        toastr.error(t`Could not delete images: ${error.message || error}`, t`Image Generation`);
+    } finally {
+        generationOperationBusy = false;
+        generationProgress = '';
+        if (deleted) await renderEditor(settings);
+        else updateGenerationControls();
+    }
 }
 
 export async function renderCharacterLibrary(settings = getSettings()) {
@@ -660,8 +763,45 @@ export function bindCharacterLibraryEvents(settings = getSettings()) {
             return;
         }
 
+        if (target.closest('.iig-library-generations-clear-all')) {
+            await deleteLibraryImages('all', null, settings);
+            return;
+        }
+
         const state = getActiveEditor(settings);
         if (!state) return;
+        if (target.closest('.iig-library-generations-select')) {
+            if (generationOperationBusy) return;
+            generationSelection.enabled = !generationSelection.enabled;
+            generationSelection.ids.clear();
+            updateGenerationControls();
+            return;
+        }
+        if (target.closest('.iig-library-generations-select-all')) {
+            if (generationOperationBusy) return;
+            const ids = [...state.editor.querySelectorAll('.iig-library-generation-item')].map(card => card.getAttribute('data-generation-id'));
+            generationSelection.ids = generationSelection.ids.size === ids.length ? new Set() : new Set(ids);
+            updateGenerationControls();
+            return;
+        }
+        if (target.closest('.iig-library-generations-delete-selected')) {
+            await deleteLibraryImages('selected', state, settings);
+            return;
+        }
+        if (target.closest('.iig-library-generations-clear')) {
+            await deleteLibraryImages('character', state, settings);
+            return;
+        }
+        const generationCard = target.closest('.iig-library-generation-item');
+        if (generationCard) {
+            if (generationOperationBusy) return;
+            if (generationSelection.enabled) {
+                const id = generationCard.getAttribute('data-generation-id');
+                if (!generationSelection.ids.delete(id)) generationSelection.ids.add(id);
+                updateGenerationControls();
+            } else if (!target.closest('img')) generationCard.querySelector('img')?.click();
+            return;
+        }
         const generationsRefresh = target.closest('.iig-library-generations-refresh');
         if (generationsRefresh instanceof HTMLButtonElement && state.kind === 'char') {
             await refreshCharacterGenerations(state, generationsRefresh, settings);
