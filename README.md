@@ -182,9 +182,11 @@ tavern (tavern) — cozy wooden inn
 ### OpenAI-совместимый
 
 - Endpoint: `https://api.openai.com` (любой OpenAI-совместимый прокси).
+- Список моделей: `GET /v1/models`. Стандартный список не указывает поддержку изображений. Выбирайте модель, которую ваш провайдер поддерживает для `/v1/images/generations`.
 - Без референсов → `POST /v1/images/generations` (JSON).
-- С референсами → `POST /v1/images/edits` (multipart). Для gpt-image-* несколько референсов отправляются как `image[]`.
-- Поддерживаемые модели: gpt-image-1, gpt-image-1.5, flux-1-kontext-*, dall-e-2, dall-e-3.
+- С референсами → `POST /v1/images/edits` (multipart). Несколько референсов отправляются как `image[]`; текущий лимит расширения — 5 изображений. PNG/JPEG/WebP передаются с исходным MIME и расширением файла.
+- Поддерживаются актуальные семейства GPT Image и `chatgpt-image-latest`. Совместимо с параметрами DALL·E и Flux Kontext.
+- Маски, потоковая выдача и JSON-вариант редактирования в интерфейсе пока не реализованы.
 
 ### xAI Imagine
 

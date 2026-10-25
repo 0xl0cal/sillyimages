@@ -313,10 +313,11 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
             imageSize: nativeSettings ? nativeSettings.novelaiResolution : settings.apiType === 'xai'
                 ? (options?.imageSize || settings.xaiResolution || '')
                 : (options?.imageSize || settings.imageSize || ''),
-            size: novelaiResolution ? `${novelaiResolution.width}x${novelaiResolution.height}` : settings.size || '',
+            size: novelaiResolution ? `${novelaiResolution.width}x${novelaiResolution.height}`
+                : settings.apiType === 'openai' ? ((options?.size || (settings.openaiSize ?? settings.size)) || 'auto') : settings.size || '',
             quality: settings.apiType === 'novelai' ? '' : settings.apiType === 'xai'
                 ? (options?.quality || settings.xaiQuality || '')
-                : (options?.quality || settings.quality || ''),
+                : (options?.quality || (settings.apiType === 'openai' ? settings.openaiQuality ?? settings.quality : settings.quality) || ''),
             refInstructionApplied,
             ...(Object.keys(naisteraParameters).length ? {
                 steps: naisteraParameters.steps,

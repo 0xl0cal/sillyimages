@@ -58,6 +58,11 @@ function setReferences(settings, refs) {
     settings.lorebooks = [{ id: 'book', name: 'Book', enabled: true, refs }];
 }
 
+const openAIImages = {
+    jpeg: '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDiaKKK+rPDP//Z',
+    webp: 'UklGRjgAAABXRUJQVlA4ICwAAADQAQCdASoBAAEAAUAmJaACdLoB+AADsAD+899n/npmvMH+Tn/xZyMR2XgAAA==',
+};
+
 test('media paths encode filenames and round-trip through URL decoding', async () => {
     const { utils } = await loadExtension();
     for (const raw of [
@@ -362,6 +367,237 @@ test('NovelAI includes matching text records without requesting reference images
     const body = JSON.parse(requests[0].body);
     assert.equal(body.reference_objects, undefined);
     assert.match(body.prompt, /Lenore: silver ring/);
+});
+
+test('OpenAI accepts standard model entries without capability metadata or name heuristics', async () => {
+    const ids = ['custom-model', 'vision-preview', 'runway-custom', 'gpt-image-1'];
+    const { settings, providers } = await loadExtension({
+        respond: () => Response.json({
+            object: 'list',
+            data: ids.map(id => ({ id, object: 'model', created: 0, owned_by: 'example' })),
+        }),
+    });
+    settings.apiType = 'openai';
+    assert.deepEqual(Array.from(await providers.resolveActiveProvider(settings).fetchModels()), ids);
+});
+
+test('OpenAI ignores model entries without usable string IDs', async () => {
+    const { settings, providers } = await loadExtension({
+        respond: () => Response.json({
+            object: 'list',
+            data: [null, {}, { id: null }, { id: 42 }, { id: '' }, { id: '  ' }, { id: 'custom-model' }],
+        }),
+    });
+    settings.apiType = 'openai';
+    assert.deepEqual(Array.from(await providers.resolveActiveProvider(settings).fetchModels()), ['custom-model']);
+});
+
+test('OpenAI distinguishes an empty model catalog from a malformed response', async () => {
+    for (const payload of [{ object: 'list', data: [] }, null, {}, { data: null }, { data: {} }, { data: 'models' }]) {
+        const { settings, providers } = await loadExtension({ respond: () => Response.json(payload) });
+        settings.apiType = 'openai';
+        const provider = providers.resolveActiveProvider(settings);
+        if (Array.isArray(payload?.data)) {
+            assert.deepEqual(Array.from(await provider.fetchModels()), []);
+        } else {
+            await assert.rejects(provider.fetchModels(), /Invalid.*models.*data/i);
+        }
+    }
+});
+
+test('OpenAI model loading propagates HTTP and JSON failures', async () => {
+    for (const [response, pattern] of [
+        [new Response('Forbidden', { status: 403 }), /HTTP 403/],
+        [new Response('not JSON'), /JSON/],
+    ]) {
+        const { settings, providers } = await loadExtension({ respond: () => response.clone() });
+        settings.apiType = 'openai';
+        await assert.rejects(providers.resolveActiveProvider(settings).fetchModels(), pattern);
+        await assert.rejects(providers.fetchModels(), pattern, 'the shared loader must not turn failures into an empty catalog');
+    }
+});
+
+test('specialized catalogs retain their existing image selection rules', async () => {
+    const { settings, providers } = await loadExtension({
+        respond: () => Response.json({ object: 'list', data: [
+            { id: 'grok-imagine-image' }, { id: 'grok-text' }, { id: 'sora-image' },
+            { id: 'custom-model', endpoints: ['/v1/images/generations'] },
+            { id: 'flux-chat', endpoints: ['/v1/chat/completions'] },
+        ] }),
+    });
+    settings.apiType = 'xai';
+    assert.deepEqual(Array.from(await providers.resolveActiveProvider(settings).fetchModels()), ['grok-imagine-image', 'flux-chat']);
+    settings.apiType = 'electronhub';
+    assert.deepEqual(Array.from(await providers.resolveActiveProvider(settings).fetchModels()), ['grok-imagine-image', 'custom-model']);
+});
+
+test('OpenAI preserves JPEG and WebP reference bytes, MIME and filename through collection and multipart edits', async () => {
+    const { settings, providers, requests } = await loadExtension({
+        respond: (url, init) => init.method === 'POST'
+            ? Response.json({ created: 0, data: [{ b64_json: 'AA==' }] })
+            : new Response(Buffer.from(openAIImages[url.endsWith('.jpg') ? 'jpeg' : 'webp'], 'base64'), {
+                headers: { 'Content-Type': url.endsWith('.jpg') ? 'image/jpeg' : 'image/webp' },
+            }),
+    });
+    Object.assign(settings, { apiType: 'openai', model: 'gpt-image-2.5-flare' });
+    const provider = providers.resolveActiveProvider(settings);
+    const references = await provider.collectReferences({ matchedAdditionalRefs: [
+        { imagePath: '/ref.jpg', description: 'portrait' },
+        { imagePath: '/ref.webp', description: 'outfit' },
+    ] });
+    await provider.generate({ prompt: 'A portrait', references });
+    const request = requests.find(request => request.method === 'POST');
+    assert.match(request.url, /\/v1\/images\/edits$/);
+    assert.equal(request.headers['Content-Type'], undefined, 'FormData owns the multipart boundary');
+    assert.equal(request.body.has('moderation'), false);
+    const images = request.body.getAll('image[]');
+    assert.equal(images.length, 2);
+    for (const [index, format] of ['jpeg', 'webp'].entries()) {
+        assert.equal(images[index].type, `image/${format}`);
+        assert.match(images[index].name, format === 'jpeg' ? /\.jpe?g$/ : /\.webp$/);
+        assert.deepEqual(Buffer.from(await images[index].arrayBuffer()), Buffer.from(openAIImages[format], 'base64'));
+    }
+});
+
+test('OpenAI accepts raw base64 JPEG references without relabeling them PNG', async () => {
+    const { settings, providers, requests } = await loadExtension();
+    Object.assign(settings, { apiType: 'openai', model: 'gpt-image-1.5' });
+    await providers.resolveActiveProvider(settings).generate({ prompt: 'Edit portrait', references: [openAIImages.jpeg] });
+    const image = requests.at(-1).body.get('image');
+    assert.equal(image.type, 'image/jpeg');
+    assert.match(image.name, /\.jpe?g$/);
+    assert.deepEqual(Buffer.from(await image.arrayBuffer()), Buffer.from(openAIImages.jpeg, 'base64'));
+});
+
+test('OpenAI rejects raw references with an unsupported image signature before HTTP', async () => {
+    const { settings, providers, requests } = await loadExtension();
+    Object.assign(settings, { apiType: 'openai', model: 'gpt-image-1.5' });
+    await assert.rejects(
+        providers.resolveActiveProvider(settings).generate({ prompt: 'Edit portrait', references: ['AQID'] }),
+        /Unsupported reference image format/i,
+    );
+    assert.equal(requests.length, 0);
+});
+
+test('OpenAI supports current quality values and rejects unsupported choices before sending', async () => {
+    const { settings, providers, requests } = await loadExtension();
+    Object.assign(settings, { apiType: 'openai', model: 'gpt-image-2.5-flare' });
+    const provider = providers.resolveActiveProvider(settings);
+    for (const model of ['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst-2026-09-08']) {
+        settings.model = model;
+        for (const quality of ['xhigh', 'max']) {
+            await provider.generate({ prompt: 'A garden', options: { quality } });
+            assert.equal(JSON.parse(requests.at(-1).body).quality, quality);
+        }
+    }
+    settings.model = 'gpt-image-1.5';
+    await provider.generate({ prompt: 'A garden', options: { quality: 'max' } });
+    assert.equal(JSON.parse(requests.at(-1).body).quality, 'max', 'generic client preserves schema-valid quality without guessing model support');
+    const sent = requests.length;
+    await assert.rejects(provider.generate({ prompt: 'A garden', options: { quality: 'ultra-typo' } }), /quality/i);
+    assert.equal(requests.length, sent);
+    for (const [quality, expected] of [['standard', 'medium'], ['hd', 'high']]) {
+        await provider.generate({ prompt: 'A garden', options: { quality } });
+        assert.equal(JSON.parse(requests.at(-1).body).quality, expected);
+    }
+});
+
+test('OpenAI custom sizes reach GPT Image 2 unchanged and invalid dimensions fail before HTTP', async () => {
+    const { settings, providers, requests } = await loadExtension();
+    Object.assign(settings, { apiType: 'openai', model: 'gpt-image-2', size: '1536x864' });
+    const provider = providers.resolveActiveProvider(settings);
+    await provider.generate({ prompt: 'A landscape' });
+    assert.equal(JSON.parse(requests.at(-1).body).size, '1536x864');
+    for (const size of ['1537x864', '4096x1024', 'wrong-size']) {
+        settings.size = size;
+        const sent = requests.length;
+        await assert.rejects(provider.generate({ prompt: 'A landscape' }), /size|dimension|resolution|aspect|16/i);
+        assert.equal(requests.length, sent, size);
+    }
+});
+
+test('OpenAI unknown IDs do not acquire legacy response_format while legacy DALL-E retains it', async () => {
+    const { settings, providers, requests } = await loadExtension();
+    Object.assign(settings, { apiType: 'openai', model: 'custom-proxy-model', quality: 'standard' });
+    const provider = providers.resolveActiveProvider(settings);
+    await provider.generate({ prompt: 'A landscape' });
+    let body = JSON.parse(requests.at(-1).body);
+    assert.equal(body.model, 'custom-proxy-model');
+    assert.equal(body.quality, 'auto');
+    assert.equal(Object.hasOwn(body, 'response_format'), false);
+    assert.equal(Object.hasOwn(body, 'moderation'), false);
+    await provider.generate({ prompt: 'A landscape', options: { quality: 'max' } });
+    assert.equal(JSON.parse(requests.at(-1).body).quality, 'max', 'unknown IDs retain valid OpenAI quality values');
+
+    settings.model = 'dall-e-3';
+    await provider.generate({ prompt: 'A landscape' });
+    body = JSON.parse(requests.at(-1).body);
+    assert.equal(body.response_format, 'b64_json');
+
+    settings.model = 'chatgpt-image-latest';
+    assert.equal(provider.supportsReferences(settings), true);
+    await provider.generate({ prompt: 'A landscape' });
+    body = JSON.parse(requests.at(-1).body);
+    assert.equal(body.quality, 'medium');
+    assert.equal(Object.hasOwn(body, 'response_format'), false);
+});
+
+test('ElectronHub Flux retains its legacy quality and response_format settings', async () => {
+    const { settings, providers, requests } = await loadExtension();
+    Object.assign(settings, {
+        apiType: 'electronhub', model: 'flux-1-kontext-pro', quality: 'standard', size: '1024x1024',
+        openaiQuality: 'max', openaiSize: '1536x864',
+    });
+    await providers.resolveActiveProvider(settings).generate({ prompt: 'A garden' });
+    const body = JSON.parse(requests.at(-1).body);
+    assert.equal(body.model, 'flux-1-kontext-pro');
+    assert.equal(body.quality, 'standard');
+    assert.equal(body.size, '1024x1024');
+    assert.equal(body.response_format, 'b64_json');
+});
+
+test('OpenAI connection profiles round-trip isolated settings and older profiles fall back to legacy values', async () => {
+    const { settings, settingsModule, providers, requests } = await loadExtension();
+    Object.assign(settings, {
+        apiType: 'openai', model: 'gpt-image-2.5-flare', size: '1024x1024', quality: 'standard',
+        openaiSize: '1536x864', openaiQuality: 'max',
+    });
+    const modern = settingsModule.createConnectionProfile('Modern', settings);
+    Object.assign(settings, { openaiSize: 'auto', openaiQuality: 'low', size: '512x512', quality: 'hd' });
+    settingsModule.loadConnectionProfile(modern.id, settings);
+    assert.equal(settings.openaiSize, '1536x864');
+    assert.equal(settings.openaiQuality, 'max');
+    assert.equal(settings.size, '1024x1024');
+    assert.equal(settings.quality, 'standard');
+    await providers.resolveActiveProvider(settings).generate({ prompt: 'A garden' });
+    assert.equal(JSON.parse(requests.at(-1).body).size, '1536x864');
+    assert.equal(JSON.parse(requests.at(-1).body).quality, 'max');
+
+    settings.connectionProfiles.push({
+        id: 'legacy-openai', name: 'Legacy', apiType: 'openai', endpoint: 'https://example.test',
+        apiKey: 'test', model: 'gpt-image-1.5', size: '1024x1536', quality: 'hd',
+    });
+    settingsModule.loadConnectionProfile('legacy-openai', settings);
+    assert.equal(settings.openaiSize, null);
+    assert.equal(settings.openaiQuality, null);
+    await providers.resolveActiveProvider(settings).generate({ prompt: 'A garden' });
+    assert.equal(JSON.parse(requests.at(-1).body).size, '1024x1536');
+    assert.equal(JSON.parse(requests.at(-1).body).quality, 'high');
+});
+
+test('OpenAI image response output_format determines MIME and XAI keeps its JPEG fallback', async () => {
+    for (const format of ['png', 'jpeg', 'webp']) {
+        const { settings, providers } = await loadExtension({
+            respond: () => Response.json({ created: 0, output_format: format, data: [{ b64_json: 'AA==' }] }),
+        });
+        Object.assign(settings, { apiType: 'openai', model: 'gpt-image-2.5-flare' });
+        assert.equal(await providers.resolveActiveProvider(settings).generate({ prompt: 'A garden' }), `data:image/${format};base64,AA==`);
+    }
+    const { settings, providers } = await loadExtension({
+        respond: () => Response.json({ created: 0, data: [{ b64_json: 'AA==' }] }),
+    });
+    Object.assign(settings, { apiType: 'xai', model: 'grok-imagine-image' });
+    assert.equal(await providers.resolveActiveProvider(settings).generate({ prompt: 'A garden' }), 'data:image/jpeg;base64,AA==');
 });
 
 test('OpenAI sends matching images as multipart attachments', async () => {
