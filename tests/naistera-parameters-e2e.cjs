@@ -29,7 +29,7 @@ window.toastr={info(){},success(){},error(){},warning(){}};
 window.context={extensionSettings:{},characters:[],chat:[],characterId:-1,powerUserSettings:{personas:{}},saveSettingsDebounced(){},getRequestHeaders:()=>({'Content-Type':'application/json'})};
 window.SillyTavern={getContext:()=>context}; window.requests=[];
 window.subscription={active:true,tier:3,expiresAt:Math.floor(Date.now()/1000)+86400,usage:{isNegative:false,percent:100}};
-window.subscriptionFailure=''; window.drainAllowance=false;
+window.subscriptionFailure=''; window.drainAllowance=false; window.drainExtraAllowance=false;
 const realFetch=fetch.bind(window);
 window.fetch=async(url,init={})=>{
  if(String(url).startsWith('https://')) {
@@ -43,6 +43,7 @@ window.fetch=async(url,init={})=>{
   }
   if(String(url).endsWith('/ai/generate-image')) {
    if(drainAllowance){subscription.usage={isNegative:true,percent:0};await new Promise(resolve=>setTimeout(resolve,50));}
+   if(drainExtraAllowance){subscription.usage.purchasedPercent=0;await new Promise(resolve=>setTimeout(resolve,50));}
    return Response.json({images:[{image:'${png}'}]});
   }
   return Response.json({data_url:'data:image/png;base64,${png}'});
@@ -187,6 +188,61 @@ const server = createServer((req, res) => {
         await page.locator('#iig_profile_select').selectOption(await page.locator('#iig_profile_select').inputValue());
         assert.equal(await protection.isChecked(),true);
         assert.equal(await page.locator('#iig_novelai_steps').inputValue(),'23');
+        // Cover independent regular/activated boost balances, malformed fields,
+        // Opus enforcement and rechecking the last boost after a queued request.
+        const allowance=await page.evaluate(async()=>{
+            const saved=structuredClone(subscription),results=[];
+            const cases=[
+                ['regular only',{isNegative:false,percent:100},true],
+                ['regular with zero boost',{isNegative:false,percent:50,purchasedPercent:0},true],
+                ['zero regular with boost',{isNegative:false,percent:0,purchasedPercent:100},true],
+                ['negative regular with boost',{isNegative:true,percent:0,purchasedPercent:100},true],
+                ['maximum boost',{isNegative:true,percent:0,purchasedPercent:400},true],
+                ['boost independently known',{purchasedPercent:100},true],
+                ['regular with malformed boost',{isNegative:false,percent:100,purchasedPercent:'100'},true],
+                ['both depleted',{isNegative:true,percent:0,purchasedPercent:0},false],
+                ['zero without boost',{isNegative:false,percent:0},false],
+                ['unknown balances',null,false],
+                ['string boost',{isNegative:true,percent:0,purchasedPercent:'100'},false],
+                ['negative boost',{isNegative:true,percent:0,purchasedPercent:-100},false],
+                ['null boost',{isNegative:true,percent:0,purchasedPercent:null},false],
+                ['boolean boost',{isNegative:true,percent:0,purchasedPercent:true},false],
+                ['out of range boost',{isNegative:true,percent:0,purchasedPercent:401},false],
+                ['negative regular despite positive percent',{isNegative:true,percent:100,purchasedPercent:0},false],
+            ];
+            for(const [name,usage,allowed]of cases){
+                subscription={...saved,usage};
+                const before=requests.filter(r=>r.url.endsWith('/ai/generate-image')).length;
+                let succeeded=false;try{await app.pipeline.generateImageWithRetry('scene','');succeeded=true;}catch{}
+                results.push({name,usage,allowed,succeeded,posts:requests.filter(r=>r.url.endsWith('/ai/generate-image')).length-before});
+            }
+            const models=[];
+            for(const [model,steps]of [['nai-diffusion-5-full',23],['nai-diffusion-5-curated',23],['nai-diffusion-5-full-medium',14]]){
+                subscription={...saved,usage:{isNegative:true,percent:0,purchasedPercent:100}};
+                let succeeded=false;try{await app.pipeline.generateImageWithRetry('scene','',null,{model});succeeded=true;}catch{}
+                const body=requests.filter(r=>r.url.endsWith('/ai/generate-image')).at(-1)?.body;
+                models.push({model,steps,succeeded,actualModel:body?.model,actualSteps:body?.parameters.steps});
+            }
+            const denied=[];
+            for(const patch of [{tier:2},{active:false},{expiresAt:1}]){
+                subscription={...saved,...patch,usage:{isNegative:true,percent:0,purchasedPercent:100}};
+                const before=requests.filter(r=>r.url.endsWith('/ai/generate-image')).length;
+                let rejected=false;try{await app.pipeline.generateImageWithRetry('scene','');}catch{rejected=true;}
+                denied.push({patch,rejected,posts:requests.filter(r=>r.url.endsWith('/ai/generate-image')).length-before});
+            }
+            subscription={...saved,usage:{isNegative:true,percent:0,purchasedPercent:100}};drainExtraAllowance=true;
+            const before=requests.filter(r=>r.url.endsWith('/ai/generate-image')).length;
+            const queued=await Promise.allSettled([app.pipeline.generateImageWithRetry('scene',''),app.pipeline.generateImageWithRetry('scene','')]);
+            const posts=requests.filter(r=>r.url.endsWith('/ai/generate-image')).length-before;
+            drainExtraAllowance=false;subscription=saved;
+            return{results,models,denied,queued:queued.map(r=>r.status),posts};
+        });
+        writeFileSync(path.join(artifacts,'anlas-allowance.json'),JSON.stringify(allowance,null,2));
+        assert.ok(allowance.results.every(r=>r.succeeded===r.allowed&&r.posts===(r.allowed?1:0)),JSON.stringify(allowance));
+        assert.ok(allowance.models.every(r=>r.succeeded&&r.model===r.actualModel&&r.steps===r.actualSteps),JSON.stringify(allowance.models));
+        assert.ok(allowance.denied.every(r=>r.rejected&&r.posts===0));
+        assert.deepEqual(allowance.queued,['fulfilled','rejected']);assert.equal(allowance.posts,1);
+        checks.push('Anlas protection accepts activated Extra Usage independently of regular charge, validates balances and Opus, and rechecks boosts for queued requests');
         const blocked=await page.evaluate(async()=>{
             const saved=structuredClone(subscription), results=[];
             for(const [name,patch,failure] of [
@@ -287,7 +343,7 @@ const server = createServer((req, res) => {
         assert.equal(native.body.parameters.negative_prompt,'CUSTOM_NEGATIVE');
         checks.push('High settings restored; request-only Medium override leaves defaults unchanged');
         assert.deepEqual(errors, []);
-        writeFileSync(path.join(artifacts,'report.json'),JSON.stringify({passed:true,checks,errors,guardedRequests,blocked},null,2));
+        writeFileSync(path.join(artifacts,'report.json'),JSON.stringify({passed:true,checks,errors,guardedRequests,allowance,blocked},null,2));
         console.log(JSON.stringify({passed:true,checks,artifacts},null,2));
     } catch(error) {
         await page.screenshot({path:path.join(artifacts,'failure.png')});

@@ -102,7 +102,7 @@ Aspect ratios are nominal: dimensions use NovelAI presets and a 64-pixel grid. S
 
 Separate character prompts with `|` or `\|`: `scene | 1boy | 1girl`. **Send character descriptions** controls descriptions from the character/persona library; **Send as character prompt** adds them as separate character captions. Direct NovelAI generates from text and does not attach avatars, image references or image context.
 
-**Never spend Anlas** is enabled by default for direct NovelAI only. It locks the size to **Normal** and steps to **28** for V4.5, **23** for V5 and **14** for V5 Medium. Before each request, the extension checks active Opus access using `GET /user/subscription`; V5 also requires an available free allowance. An unavailable allowance, inactive subscription or failed check stops generation. Protected requests run sequentially. Turning protection off restores manual settings. Connection profiles store the switch.
+**Never spend Anlas** is enabled by default for direct NovelAI only. It locks the size to **Normal** and steps to **28** for V4.5, **23** for V5 and **14** for V5 Medium. Before each request, the extension checks active Opus access using `GET /user/subscription`; V5 requires an available regular allowance or activated **Extra Usage** (`usage.purchasedPercent`). The extension does not buy or activate Usage Boosts. Depleted balances, an inactive subscription or a failed check stop generation. Protected requests run sequentially. Turning protection off restores manual settings. Connection profiles store the switch.
 
 The allowance check and generation are separate API requests. Another client using the same account can change its allowance between them; the check is not a server-side prohibition on spending Anlas.
 

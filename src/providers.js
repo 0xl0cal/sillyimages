@@ -2284,8 +2284,12 @@ async function verifyNovelAIFreeAccess(url, settings, model, signal) {
         });
     }
     const usage = subscription.usage;
-    if (model.startsWith('nai-diffusion-5-') && (usage?.isNegative !== false
-        || typeof usage.percent !== 'number' || !Number.isFinite(usage.percent) || usage.percent <= 0)) {
+    const hasRegularUsage = usage?.isNegative === false
+        && Number.isFinite(usage.percent) && usage.percent > 0;
+    // Activated boosts have a separate 0-400% balance, independent of the regular bar.
+    const hasExtraUsage = Number.isFinite(usage?.purchasedPercent)
+        && usage.purchasedPercent > 0 && usage.purchasedPercent <= 400;
+    if (model.startsWith('nai-diffusion-5-') && !hasRegularUsage && !hasExtraUsage) {
         throw new ProviderError({
             message: t`Anlas protection: the free V5 allowance is unavailable.`,
             code: 'anlas_protection', retryable: false, providerId: 'novelai',
