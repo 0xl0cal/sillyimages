@@ -749,8 +749,10 @@ export async function parseImageTags(text, options = {}) {
         const instructionJson = text.substring(jsonStart, jsonEnd);
 
         // Check if src needs generation
-        const srcMatch = fullImgTag.match(/src\s*=\s*["']?([^"'\s>]+)/i);
-        const srcValue = srcMatch ? srcMatch[1] : '';
+        // Quoted paths may contain spaces; instruction text is not a source attribute.
+        const mediaAttributes = text.substring(mediaStart, jsonStart) + text.substring(jsonEnd, mediaEnd);
+        const srcMatch = mediaAttributes.match(/\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`=]+))/i);
+        const srcValue = srcMatch ? (srcMatch[1] ?? srcMatch[2] ?? srcMatch[3] ?? '') : '';
 
         // Determine if this needs generation
         let needsGeneration = false;

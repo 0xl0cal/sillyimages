@@ -101,6 +101,28 @@ const server = createServer((req,res)=>{
             await page.locator('.iig-img-download').waitFor();
             checks.push(mode+': message regeneration rebinds stripped attributes without replacing unrelated images');
 
+            for (const [name, attribute, renderedSrc, prompt = 'fixture scene', sourceFirst = false] of [
+                ['double-quoted raw path', '"/user/images/Fixture Caf\u00e9 #1/iig.png"', null],
+                ['single-quoted raw path', "'/user/images/Fixture Caf\u00e9 #1/iig.png'", null],
+                ['encoded rendered path', '"/user/images/Fixture Caf\u00e9/iig.png"', '/user/images/Fixture%20Caf%C3%A9/iig.png'],
+                ['unquoted encoded path', '/user/images/Fixture%20Caf%C3%A9/iig.png', null],
+                ['source text inside prompt', '"/user/images/Fixture Caf\u00e9/iig.png"', null, 'fixture mentions src="/decoy.png"'],
+                ['source before instruction', '"/user/images/Fixture Caf\u00e9/iig.png"', null, 'fixture scene', true],
+            ]) {
+                await reset();
+                const instruction = `data-iig-instruction='${JSON.stringify({style:'fixture style',prompt,aspect_ratio:'3:2',image_size:'1K'})}'`;
+                const attributes = sourceFirst ? `src=${attribute}\n${instruction}` : `${instruction}\nsrc=${attribute}`;
+                await source(`<image_lite><div style="max-width:740px;margin:32px auto"><img\n${attributes}\nstyle="display:block;width:100%;height:auto"\nalt="Fixture"\n/></div></image_lite>`);
+                if (renderedSrc) await page.locator('.mes_text img').evaluate((img,src)=>img.setAttribute('src',src),renderedSrc);
+                await click('.iig-regenerate-btn');
+                await page.waitForFunction(()=>!app.pipeline.processingMessages.size && (requests.length>0 || notes.some(n=>n.kind==='error')));
+                assert.equal(await page.evaluate(()=>requests.length),1,name+': regeneration sends a request');
+                await settled();
+                assert.ok(await page.evaluate(()=>context.chat[0].mes.includes('<image_lite>')&&context.chat[0].mes.includes('max-width:740px')));
+                assert.equal(await page.locator('.mes_text img').getAttribute('alt'),'Fixture');
+                checks.push(mode+': '+name+' regenerates inside a custom wrapper without instruction attributes');
+            }
+
             await reset();await source(tag(prefix+'error.svg','first fixture')+tag(prefix+'error.svg','second fixture')+tag(prefix+'error.svg','third fixture'));
             await page.evaluate(()=>{failNext=true;delay=180;});await click('.iig-regenerate-btn');
             await page.waitForFunction(()=>requests.length===2&&document.querySelector('.iig-loading-placeholder'));
