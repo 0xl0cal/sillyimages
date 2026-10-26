@@ -120,6 +120,8 @@ Set `IIG_BROWSER_ENGINE=webkit` to run the viewer checks with Playwright WebKit.
 
 Run bulk deletion checks with `node tests/generation-library-e2e.cjs`; `IIG_BROWSER_ENGINE=webkit` is supported. The test uses the extension library and viewer with an in-memory file API; it does not delete real files. Reports and screenshots are written to `tests/artifacts/generation-library-<engine>`.
 
+Run chat image controls checks with `node tests/chat-image-actions-e2e.cjs`; `IIG_BROWSER_ENGINE=webkit` is supported. The test checks image-click retry, hidden controls, formatting without instruction attributes, and batch regeneration. Provider responses are simulated; reports and screenshots are written to `tests/artifacts/chat-image-actions-<engine>`.
+
 Simple mode uses library order; power mode uses descending priority. Image attachments are selected within the provider's reference limit.
 
 Per-request reference limits depend on the model:
@@ -236,7 +238,7 @@ Line format: `full-name (primary-trigger) — description`. If only one lorebook
 6. The image is saved on the SillyTavern server via `/api/images/upload`.
 7. `src="[IMG:GEN]"` is replaced with the real path, the message is persisted to the chat.
 
-On error an `error.svg` with a tooltip is shown; clicking it triggers manual regeneration. Known errors (moderation, billing, rate-limit, invalid key, unavailable model, timeout) are mapped to human-readable messages.
+Click an error or stopped image to retry, including when action buttons are hidden. Keyboard users can press Enter or Space. Known errors (moderation, billing, rate-limit, invalid key, unavailable model, timeout) are mapped to human-readable messages.
 
 ## Localization
 

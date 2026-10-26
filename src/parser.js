@@ -563,6 +563,63 @@ export function convertLegacyTagsToInstructionFormat(message, tags) {
     return convertedLegacyTags;
 }
 
+export function bindRenderedMediaTags(mesTextEl, tags) {
+    const media = [...mesTextEl.querySelectorAll('img, video')];
+    const marked = media.filter(node => node.hasAttribute('data-iig-instruction'));
+    const used = new Set();
+    const sourceUrl = value => {
+        try { return new URL(value, document.baseURI).href; }
+        catch { return String(value || ''); }
+    };
+    const sourceUrls = tags.map(tag => {
+        if (!tag.isNewFormat) return '';
+        const template = document.createElement('template');
+        template.innerHTML = tag.fullMatch;
+        const src = tag.existingSrc || template.content.querySelector('img, video')?.getAttribute('src');
+        return src ? sourceUrl(src) : '';
+    });
+    return tags.map((tag, index) => {
+        const matchesKind = node => !used.has(node) && node.tagName.toLowerCase() === (tag.mediaTagName || 'img');
+        let node = marked.find(candidate => {
+            if (!matchesKind(candidate)) return false;
+            try {
+                const data = parseInstructionObject(candidate.getAttribute('data-iig-instruction'));
+                return String(data.prompt || '') === tag.prompt && String(data.style || '') === tag.style;
+            } catch { return false; }
+        });
+        if (!node && tag.isNewFormat) {
+            // Only restore metadata on media belonging to this source tag, never a decorative image.
+            const url = sourceUrls[index];
+            const sameSource = media.filter(candidate => candidate.tagName.toLowerCase() === (tag.mediaTagName || 'img')
+                && sourceUrl(candidate.getAttribute('src') || '') === url);
+            const expected = sourceUrls.filter((value, i) => value === url
+                && (tags[i].mediaTagName || 'img') === (tag.mediaTagName || 'img')).length;
+            if (url && sameSource.length === expected) node = sameSource.find(matchesKind);
+        }
+        if (!node && marked.length === tags.length) node = marked.find(matchesKind);
+        if (!node) return null;
+        used.add(node);
+        const instruction = JSON.stringify(buildInstructionData(tag));
+        if (node.getAttribute('data-iig-instruction') !== instruction) node.setAttribute('data-iig-instruction', instruction);
+        if (node.getAttribute('data-iig-tag-index') !== String(index)) node.setAttribute('data-iig-tag-index', String(index));
+        return node;
+    });
+}
+
+export async function restoreMessageImageBindings(message, mesTextEl) {
+    // Loading slots still belong to the previous source; do not reassign their siblings.
+    if (mesTextEl.querySelector('.iig-loading-placeholder')) return [];
+    const source = message?.mes;
+    const blocks = message?.extra?.extblocks;
+    const display = message?.extra?.display_text;
+    if (!String(source || '').includes('data-iig-instruction') && !String(blocks || '').includes('data-iig-instruction')) return [];
+    const tags = await parseMessageImageTags(message, { forceAll: true, quiet: true });
+    if (!mesTextEl.isConnected || mesTextEl.querySelector('.iig-loading-placeholder')
+        || message?.mes !== source || message?.extra?.extblocks !== blocks
+        || message?.extra?.display_text !== display) return [];
+    return bindRenderedMediaTags(mesTextEl, tags);
+}
+
 export function rerenderMessageHtml(context, message, settings, messageId, mesTextEl) {
     if (!mesTextEl) {
         return;
@@ -579,6 +636,7 @@ export function rerenderMessageHtml(context, message, settings, messageId, mesTe
         : getMessageRenderText(message, settings);
 
     mesTextEl.innerHTML = formattedMessage;
+    restoreMessageImageBindings(message, mesTextEl).catch(error => iigLog('WARN', 'Could not restore image controls:', error));
 }
 
 // ----- Core tag parser -----
@@ -596,6 +654,7 @@ export function rerenderMessageHtml(context, message, settings, messageId, mesTe
  */
 export async function parseImageTags(text, options = {}) {
     const { checkExistence = false, forceAll = false } = options;
+    const log = options.quiet ? () => {} : iigLog;
     const tags = [];
 
     // === NEW FORMAT: <img|video data-iig-instruction="{...}" src="..."> ===
@@ -702,7 +761,7 @@ export async function parseImageTags(text, options = {}) {
 
         // Skip error/stopped images - user must click to retry manually (prevents conflict on swipe)
         if ((hasErrorImage || hasStoppedImage) && !forceAll) {
-            iigLog('INFO', `Skipping ${hasStoppedImage ? 'stopped' : 'error'} image (click to retry): ${srcValue.substring(0, 50)}`);
+            log('INFO', `Skipping ${hasStoppedImage ? 'stopped' : 'error'} image (click to retry): ${srcValue.substring(0, 50)}`);
             searchPos = mediaEnd;
             continue;
         }
@@ -710,7 +769,7 @@ export async function parseImageTags(text, options = {}) {
         if (forceAll) {
             // Regeneration mode: include all tags with instruction (user-triggered)
             needsGeneration = true;
-            iigLog('INFO', `Force regeneration mode: including ${srcValue.substring(0, 30)}`);
+            log('INFO', `Force regeneration mode: including ${srcValue.substring(0, 30)}`);
         } else if (hasMarker || !srcValue) {
             // Explicit marker or empty src = needs generation
             needsGeneration = true;
@@ -719,14 +778,14 @@ export async function parseImageTags(text, options = {}) {
             const exists = await checkFileExists(srcValue);
             if (!exists) {
                 // File doesn't exist = LLM hallucinated the path
-                iigLog('WARN', `File does not exist (LLM hallucination?): ${srcValue}`);
+                log('WARN', `File does not exist (LLM hallucination?): ${srcValue}`);
                 needsGeneration = true;
             } else {
-                iigLog('INFO', `Skipping existing image: ${srcValue.substring(0, 50)}`);
+                log('INFO', `Skipping existing image: ${srcValue.substring(0, 50)}`);
             }
         } else if (hasPath) {
             // Has path but not checking existence - skip
-            iigLog('INFO', `Skipping path (no existence check): ${srcValue.substring(0, 50)}`);
+            log('INFO', `Skipping path (no existence check): ${srcValue.substring(0, 50)}`);
             searchPos = mediaEnd;
             continue;
         }
@@ -753,9 +812,9 @@ export async function parseImageTags(text, options = {}) {
                 existingSrc: hasPath ? srcValue : null, // Store existing src for logging
             });
 
-            iigLog('INFO', `Found NEW format tag: ${data.prompt?.substring(0, 50)}`);
+            log('INFO', `Found NEW format tag: ${data.prompt?.substring(0, 50)}`);
         } catch (e) {
-            iigLog('WARN', `Failed to parse instruction JSON: ${instructionJson.substring(0, 100)}`, e.message);
+            log('WARN', `Failed to parse instruction JSON: ${instructionJson.substring(0, 100)}`, e.message);
         }
 
         searchPos = mediaEnd;
@@ -838,9 +897,9 @@ export async function parseImageTags(text, options = {}) {
                 isNewFormat: false,
             });
 
-            iigLog('INFO', `Found LEGACY format tag: ${data.prompt?.substring(0, 50)}`);
+            log('INFO', `Found LEGACY format tag: ${data.prompt?.substring(0, 50)}`);
         } catch (e) {
-            iigLog('WARN', `Failed to parse legacy tag JSON: ${jsonStr.substring(0, 100)}`, e.message);
+            log('WARN', `Failed to parse legacy tag JSON: ${jsonStr.substring(0, 100)}`, e.message);
         }
 
         searchStart = jsonEnd + 1;

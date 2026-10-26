@@ -442,6 +442,16 @@ export function abortableDelay(ms, signal = null) {
 export const ERROR_IMAGE_PATH = '/scripts/extensions/third-party/sillyimages/error.svg';
 export const STOPPED_IMAGE_PATH = '/scripts/extensions/third-party/sillyimages/stopped.svg';
 
+export function getImagePlaceholderKind(src) {
+    try {
+        const url = new URL(src, window.location.href);
+        if (url.origin !== window.location.origin) return '';
+        if (url.pathname === ERROR_IMAGE_PATH) return 'error';
+        if (url.pathname === STOPPED_IMAGE_PATH) return 'stopped';
+    } catch { /* A pending marker is not necessarily a URL. */ }
+    return '';
+}
+
 // ----- Provider error -----
 
 /**

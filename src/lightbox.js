@@ -5,6 +5,7 @@
 import { t } from './i18n.js';
 import { removeCharacterGeneration } from './references.js';
 import { Popup } from '../../../../popup.js';
+import { getImagePlaceholderKind } from './utils.js';
 
 const OVERLAY_ID = 'iig_lightbox';
 const IMG_SELECTOR = 'img[data-iig-instruction]:not(.iig-error-image)';
@@ -694,6 +695,7 @@ export function initLightbox() {
         if (img.closest('[data-iig-selection-mode="true"]')) return;
         if (img.classList.contains('iig-error-image')) return;
         const rawSrc = getImageSource(img);
+        if (getImagePlaceholderKind(rawSrc)) return;
         if (!rawSrc || rawSrc.endsWith('[IMG:GEN]')) return;
         e.preventDefault();
         e.stopPropagation();

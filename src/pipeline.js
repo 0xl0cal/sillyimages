@@ -31,6 +31,7 @@ import {
 } from './utils.js';
 import {
     applyConfiguredStyleToTag,
+    bindRenderedMediaTags,
     buildFinalGenerationPrompt,
     filterPromptReferences,
     buildPersistedImageTag,
@@ -726,6 +727,7 @@ export async function processMessageTags(messageId) {
         rerenderMessageHtml(context, message, settings, messageId, mesTextEl);
         iigLog('INFO', `Converted ${convertedLegacyTags} legacy tag(s) to instruction tags before processing`);
     }
+    bindRenderedMediaTags(mesTextEl, tags);
 
     const processTag = async (tag, index) => {
         const tagId = `iig-${messageId}-${index}`;
@@ -991,12 +993,10 @@ export async function regenerateSingleTag(messageId, tagIndex) {
     tagAbortControllers.set(tagId, controller);
 
     try {
-        const existingMediaList = Array.from(
-            mesTextEl.querySelectorAll('img[data-iig-instruction], video[data-iig-instruction]')
-        );
+        const existingMediaList = bindRenderedMediaTags(mesTextEl, tags);
         const existingMedia = existingMediaList[tagIndex] || null;
         if (!existingMedia) {
-            throw new Error(`Media element at index ${tagIndex} not found in DOM`);
+            throw new Error(t`Could not find image in this message. Reopen the chat and try again.`);
         }
         const instruction = existingMedia.getAttribute('data-iig-instruction');
 
@@ -1117,6 +1117,7 @@ export async function regenerateMessageImages(messageId) {
             iigLog('INFO', `Converted ${convertedLegacyTags} legacy tag(s) to instruction tags before regeneration`);
         }
 
+        const existingMediaList = bindRenderedMediaTags(mesTextEl, tags);
         for (let index = 0; index < tags.length; index++) {
             const tag = tags[index];
             const tagId = `iig-regen-${messageId}-${index}`;
@@ -1128,11 +1129,8 @@ export async function regenerateMessageImages(messageId) {
             tagAbortControllers.set(tagId, controller);
 
             try {
-                const existingMediaList = Array.from(
-                    mesTextEl.querySelectorAll('img[data-iig-instruction], video[data-iig-instruction]')
-                );
-                const existingMedia = existingMediaList[index] || existingMediaList[0] || null;
-                iigLog('INFO', `regen iter[${index}] DOM media count=${existingMediaList.length}, picked=${existingMedia ? (existingMediaList[index] === existingMedia ? `[${index}]` : '[0]-fallback') : 'NONE'}`);
+                const existingMedia = existingMediaList[index] || null;
+                iigLog('INFO', `regen iter[${index}] DOM media count=${existingMediaList.filter(Boolean).length}, picked=${existingMedia ? `[${index}]` : 'NONE'}`);
                 if (existingMedia) {
                     const instruction = existingMedia.getAttribute('data-iig-instruction');
 
@@ -1177,7 +1175,7 @@ export async function regenerateMessageImages(messageId) {
                     toastr.success(readyMsg, t`Image Generation`, { timeOut: 2000 });
                     iigLog('INFO', `regen iter[${index}] complete`);
                 } else {
-                    iigLog('WARN', `regen iter[${index}] skipped: no DOM element found`);
+                    throw new Error(t`Could not find image in this message. Reopen the chat and try again.`);
                 }
             } catch (error) {
                 const wasAborted = error instanceof ProviderError && error.code === 'aborted';

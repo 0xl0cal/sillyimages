@@ -408,5 +408,6 @@
     "Deleting images: ${0}/${1}": "Видалення картинок: ${0}/${1}",
     "Deleted: ${0}. Failed: ${1}. Kept as references: ${2}.": "Видалено: ${0}. Не вдалося видалити: ${1}. Збережено як референси: ${2}.",
     "Images deleted: ${0}": "Видалено картинок: ${0}",
-    "Could not delete images: ${0}": "Не вдалося видалити картинки: ${0}"
+    "Could not delete images: ${0}": "Не вдалося видалити картинки: ${0}",
+    "Could not find image in this message. Reopen the chat and try again.": "Не вдалося знайти картинку в повідомленні. Відкрийте чат знову та повторіть спробу."
 }
