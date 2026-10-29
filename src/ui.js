@@ -75,7 +75,7 @@ import {
     importLorebookFromFile,
     renderIigBookMacro,
 } from './references.js';
-import { fetchModels, resolveActiveProvider, getActiveProviderMaxReferences, A1111_RESOLUTION_PRESETS } from './providers.js';
+import { fetchModels, resolveActiveProvider, getActiveProviderMaxReferences, A1111_RESOLUTION_PRESETS, getOpenAIQualityOptions, getOpenAISizeOptions, normalizeOpenAIQuality } from './providers.js';
 import { NOVELAI_NUMERIC_FIELDS, NOVELAI_SAMPLERS, NOVELAI_NOISE_SCHEDULES, NOVELAI_RESOLUTION_PRESETS, NOVELAI_ASPECT_RATIOS, isNovelAIMedium, resolveNovelAISettings } from './novelai.js';
 import { applyImageActionsStyle } from './imageActions.js';
 import { t, translate } from './i18n.js';
@@ -282,6 +282,8 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                     <option value="1024x1792" ${settings.size === '1024x1792' ? 'selected' : ''}>${t`1024x1792 (Portrait)`}</option>
                     <option value="512x512" ${settings.size === '512x512' ? 'selected' : ''}>${t`512x512 (Small)`}</option>
                 </select>
+                <input type="text" id="iig_openai_size" class="text_pole flex1 iig-hidden" list="iig_openai_sizes" value="${sanitizeForHtml((settings.openaiSize ?? settings.size) || 'auto')}" placeholder="auto / WIDTHxHEIGHT" title="${t`Use auto or a size supported by the selected model (WIDTHxHEIGHT).`}">
+                <datalist id="iig_openai_sizes"></datalist>
                 <div></div>
             </div>
 
@@ -291,6 +293,7 @@ function buildApiSettingsSectionHtml(settings = getSettings()) {
                     <option value="standard" ${settings.quality === 'standard' ? 'selected' : ''}>${t`Standard`}</option>
                     <option value="hd" ${settings.quality === 'hd' ? 'selected' : ''}>${t`HD`}</option>
                 </select>
+                <select id="iig_openai_quality" class="flex1 iig-hidden"></select>
                 <div></div>
             </div>
 
@@ -1231,7 +1234,9 @@ function applyProfileValuesToInputs(settings) {
         modelSelect.value = settings.model || '';
     }
     setVal('iig_size', settings.size);
+    setVal('iig_openai_size', settings.openaiSize ?? settings.size);
     setVal('iig_quality', settings.quality);
+    setVal('iig_openai_quality', settings.openaiQuality ?? settings.quality);
     setVal('iig_aspect_ratio', settings.aspectRatio);
     setVal('iig_image_size', settings.imageSize);
     setVal('iig_xai_aspect_ratio', settings.xaiAspectRatio);
@@ -1528,7 +1533,7 @@ function bindApiSectionEvents(settings, updateVisibility) {
             return models;
         } catch (error) {
             if (announce) {
-                toastr.error(t`Failed to load models`, t`Image Generation`);
+                toastr.error(t`Failed to load models: ${error.message}`, t`Image Generation`);
             }
             return [];
         } finally {
@@ -1571,8 +1576,18 @@ function bindApiSectionEvents(settings, updateVisibility) {
         saveSettings();
     });
 
+    document.getElementById('iig_openai_size')?.addEventListener('input', (e) => {
+        settings.openaiSize = e.target.value;
+        saveSettings();
+    });
+
     document.getElementById('iig_quality')?.addEventListener('change', (e) => {
         settings.quality = e.target.value;
+        saveSettings();
+    });
+
+    document.getElementById('iig_openai_quality')?.addEventListener('change', (e) => {
+        settings.openaiQuality = e.target.value;
         saveSettings();
     });
 
@@ -2672,6 +2687,60 @@ function bindDebugSectionEvents(settings) {
 
 // ----- Visibility recomputation -----
 
+function syncOpenAIParameterControls(settings) {
+    const isOpenAI = settings.apiType === 'openai';
+    const legacySize = document.getElementById('iig_size');
+    const openaiSize = document.getElementById('iig_openai_size');
+    const legacyQuality = document.getElementById('iig_quality');
+    const quality = document.getElementById('iig_openai_quality');
+    legacySize?.classList.toggle('iig-hidden', isOpenAI);
+    openaiSize?.classList.toggle('iig-hidden', !isOpenAI);
+    legacyQuality?.classList.toggle('iig-hidden', isOpenAI);
+    quality?.classList.toggle('iig-hidden', !isOpenAI);
+    const sizeLabel = document.querySelector('#iig_size_row label');
+    if (sizeLabel) sizeLabel.htmlFor = isOpenAI ? 'iig_openai_size' : 'iig_size';
+    const qualityLabel = document.querySelector('#iig_quality_row label');
+    if (qualityLabel) qualityLabel.htmlFor = isOpenAI ? 'iig_openai_quality' : 'iig_quality';
+
+    if (isOpenAI) {
+        if (openaiSize && document.activeElement !== openaiSize) openaiSize.value = (settings.openaiSize ?? settings.size) || 'auto';
+        const suggestions = document.getElementById('iig_openai_sizes');
+        const sizes = getOpenAISizeOptions(settings.model);
+        if (suggestions && suggestions.dataset.sizes !== JSON.stringify(sizes)) {
+            suggestions.replaceChildren(...sizes.map(size => new Option(size, size)));
+            suggestions.dataset.sizes = JSON.stringify(sizes);
+        }
+    } else if (settings.apiType === 'electronhub' && legacySize) {
+        if (settings.size && !Array.from(legacySize.options).some(option => option.value === settings.size)) {
+            legacySize.add(new Option(`${settings.size} ${t`(custom)`}`, settings.size));
+        }
+        legacySize.value = settings.size || '';
+    }
+
+    if (!isOpenAI || !quality) return;
+    const values = getOpenAIQualityOptions(settings.model);
+    let selected = (settings.openaiQuality ?? settings.quality) || 'auto';
+    try {
+        selected = normalizeOpenAIQuality(selected, settings.model) || 'auto';
+    } catch {
+        // Keep incompatible saved/profile settings visible for correction.
+    }
+    const labels = {
+        auto: t`Auto`, low: t`Low`, medium: t`Medium`, high: t`High`,
+        xhigh: t`Extra high`, max: t`Maximum`, standard: t`Standard`, hd: t`HD`,
+    };
+    const options = values.map(value => ({ value, label: labels[value] || value }));
+    if (!values.includes(selected)) {
+        options.push({ value: selected, label: `${selected} ${t`(unsupported)`}` });
+    }
+    const signature = JSON.stringify(options);
+    if (quality.dataset.options !== signature) {
+        quality.replaceChildren(...options.map(option => new Option(option.label, option.value)));
+        quality.dataset.options = signature;
+    }
+    quality.value = selected;
+}
+
 function buildUpdateVisibility(settings) {
     return () => {
         const apiType = settings.apiType;
@@ -2712,6 +2781,7 @@ function buildUpdateVisibility(settings) {
         // принимает тот же формат JSON на /v1/images/{generations,edits}.
         document.getElementById('iig_size_row')?.classList.toggle('iig-hidden', !(isOpenAI || isElectronHub));
         document.getElementById('iig_quality_row')?.classList.toggle('iig-hidden', !(isOpenAI || isElectronHub));
+        syncOpenAIParameterControls(settings);
         document.getElementById('iig_xai_options')?.classList.toggle('iig-hidden', !isXAI);
 
         // Naistera-only params

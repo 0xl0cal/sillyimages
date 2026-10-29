@@ -23,6 +23,8 @@ import {
     imageUrlToBase64,
     imageUrlToDataUrl,
     base64ToBlob,
+    parseImageDataUrl,
+    convertDataUrlToPng,
     fetchWithTimeout,
     abortableDelay,
     ProviderError,
@@ -65,6 +67,7 @@ export function getActiveProviderMaxReferences(settings = getSettings()) {
     }
     if (apiType === 'openai' || apiType === 'electronhub') {
         const kind = classifyOpenAIModel(settings.model);
+        if (apiType === 'openai' && settings.model && kind === 'unknown') return MAX_GENERATION_REFERENCE_IMAGES;
         return getOpenAIModelMaxReferences(kind) || 0;
     }
     if (apiType === 'gemini') {
@@ -412,10 +415,10 @@ export class Provider {
     }
 
     /**
-     * Возвращает список id моделей, доступных для генерации.
+     * Возвращает список id моделей из каталога провайдера.
      *
      * Базовая реализация — OpenAI-совместимый `GET {endpoint}/v1/models`
-     * + фильтр по `isImageModel`. Провайдеры, у которых формат другой
+     * Провайдеры, у которых формат другой
      * (OpenRouter, hypothetical custom endpoints), переопределяют.
      *
      * @returns {Promise<string[]>}
@@ -442,8 +445,11 @@ export class Provider {
         }
 
         const data = await response.json();
-        const models = data.data || [];
-        return models.filter(m => isImageModel(m.id)).map(m => m.id);
+        if (!Array.isArray(data?.data)) {
+            throw new Error(t`Invalid /v1/models response: expected a data array`);
+        }
+        return data.data.map(model => model?.id)
+            .filter(id => typeof id === 'string' && id.trim().length > 0);
     }
 }
 
@@ -460,6 +466,8 @@ const OPENAI_REQUEST_TIMEOUT_MS = 600_000;
 function classifyOpenAIModel(modelId) {
     const id = String(modelId || '').toLowerCase().trim();
     // Сначала специфичные подстроки, потом общие.
+    if (id.includes('gpt-image-2.5')) return 'gpt-image-2.5';
+    if (id.includes('gpt-image-2')) return 'gpt-image-2';
     if (id.includes('gpt-image-1.5') || id.includes('gpt-image-1-5')) return 'gpt-image-1.5';
     if (id.includes('gpt-image-1-mini')) return 'gpt-image-1-mini';
     if (id.includes('gpt-image-1')) return 'gpt-image-1';
@@ -475,8 +483,73 @@ function classifyOpenAIModel(modelId) {
  * множественные референсы через `image[]`.
  */
 function isGptImageFamily(kind) {
-    return kind === 'gpt-image-1.5' || kind === 'gpt-image-1-mini'
-        || kind === 'gpt-image-1' || kind === 'gpt-image';
+    return kind.startsWith('gpt-image');
+}
+
+const OPENAI_IMAGE_QUALITIES = Object.freeze(['auto', 'low', 'medium', 'high', 'xhigh', 'max']);
+const OPENAI_IMAGE_SIZES = Object.freeze(['auto', '1024x1024', '1536x1024', '1024x1536']);
+
+export function getOpenAIQualityOptions(modelId) {
+    const kind = classifyOpenAIModel(modelId);
+    return kind.startsWith('dall-e') ? [...OPENAI_IMAGE_QUALITIES, 'standard', 'hd'] : [...OPENAI_IMAGE_QUALITIES];
+}
+
+export function getOpenAISizeOptions(modelId) {
+    const kind = classifyOpenAIModel(modelId);
+    if (kind === 'dall-e-2') return ['256x256', '512x512', '1024x1024'];
+    if (kind === 'dall-e-3') return ['1024x1024', '1792x1024', '1024x1792'];
+    return [...OPENAI_IMAGE_SIZES];
+}
+
+export function normalizeOpenAIQuality(value, modelId) {
+    const quality = String(value || 'auto').trim().toLowerCase();
+    const kind = classifyOpenAIModel(modelId);
+    if (quality === 'standard' && !kind.startsWith('dall-e')) return isGptImageFamily(kind) ? 'medium' : 'auto';
+    if (quality === 'hd' && !kind.startsWith('dall-e')) return 'high';
+    if (getOpenAIQualityOptions(modelId).includes(quality)) return quality;
+    throw new Error(t`Unsupported image quality: ${quality}`);
+}
+
+function normalizeOpenAISize(value, modelId) {
+    const size = String(value || 'auto').trim().toLowerCase();
+    if (size === 'auto') return size;
+    const match = /^(\d+)x(\d+)$/.exec(size);
+    if (!match || Number(match[1]) <= 0 || Number(match[2]) <= 0) {
+        throw new Error(t`Image size must use WIDTHxHEIGHT or auto`);
+    }
+    const width = Number(match[1]);
+    const height = Number(match[2]);
+    if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height)) {
+        throw new Error(t`Image size must use WIDTHxHEIGHT or auto`);
+    }
+    const kind = classifyOpenAIModel(modelId);
+    if (kind === 'gpt-image-2' || kind === 'gpt-image-2.5') {
+        if (width % 16 || height % 16) throw new Error(t`Image dimensions must be divisible by 16`);
+        if (width / height < 1 / 3 || width / height > 3) {
+            throw new Error(t`Image aspect ratio must be between 1:3 and 3:1`);
+        }
+        if (Math.max(width, height) > 3840 || width * height > 3840 * 2160) {
+            throw new Error(t`Image size exceeds the maximum resolution of 3840x2160`);
+        }
+    }
+    return size;
+}
+
+function openAIAspectRatioToSize(aspect, modelKind) {
+    if (aspect === 'auto') return 'auto';
+    if (modelKind !== 'gpt-image-2' && modelKind !== 'gpt-image-2.5') return aspectRatioToSize(aspect, modelKind);
+    const match = /^(\d+):(\d+)$/.exec(String(aspect || ''));
+    if (!match) return null;
+    let width = Number(match[1]);
+    let height = Number(match[2]);
+    if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0) return null;
+    if (width === height) return '1024x1024';
+    const gcd = (a, b) => b ? gcd(b, a % b) : a;
+    const divisor = gcd(width, height);
+    width /= divisor;
+    height /= divisor;
+    const scale = Math.floor(1536 / (Math.max(width, height) * 16)) * 16;
+    return scale > 0 ? `${width * scale}x${height * scale}` : null;
 }
 
 /**
@@ -501,8 +574,7 @@ function getOpenAIModelMaxReferences(kind) {
 function aspectRatioToSize(aspect, modelKind) {
     if (!aspect) return null;
 
-    // gpt-image-1.5 и gpt-image-1-mini и gpt-image-1: фиксированный список.
-    if (modelKind === 'gpt-image-1.5' || modelKind === 'gpt-image-1-mini' || modelKind === 'gpt-image-1' || modelKind === 'gpt-image') {
+    if (isGptImageFamily(modelKind)) {
         const map = {
             '1:1': '1024x1024',
             '16:9': '1536x1024',
@@ -680,7 +752,8 @@ function extractImageFromResult(result, base64MimeType = 'image/png') {
     }
     const imageObj = dataList[0];
     if (imageObj?.b64_json) {
-        return `data:${base64MimeType};base64,${imageObj.b64_json}`;
+        const mimeType = { png: 'image/png', jpeg: 'image/jpeg', webp: 'image/webp' }[result.output_format] || base64MimeType;
+        return `data:${mimeType};base64,${imageObj.b64_json}`;
     }
     if (imageObj?.url) {
         return imageObj.url;
@@ -723,6 +796,31 @@ async function collectImageEditReferences({ messageId, matchedAdditionalRefs = [
     return refs;
 }
 
+async function prepareOpenAIReference(reference, index) {
+    const source = getReferenceImage(reference);
+    if (!source) throw new Error(t`Reference image is empty`);
+    let { base64Data, mimeType } = source.startsWith('data:')
+        ? parseImageDataUrl(source) : { base64Data: source, mimeType: '' };
+    let blob = base64ToBlob(base64Data, mimeType);
+    const header = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+    // Читаем необработанный код base64 и исправляем на правильный тип файла
+    if (header[0] === 0x89 && header[1] === 0x50 && header[2] === 0x4e && header[3] === 0x47) mimeType = 'image/png';
+    else if (header[0] === 0xff && header[1] === 0xd8 && header[2] === 0xff) mimeType = 'image/jpeg';
+    else if (header[0] === 0x52 && header[1] === 0x49 && header[2] === 0x46 && header[3] === 0x46
+        && header[8] === 0x57 && header[9] === 0x45 && header[10] === 0x42 && header[11] === 0x50) mimeType = 'image/webp';
+    else if (header[0] === 0x47 && header[1] === 0x49 && header[2] === 0x46) mimeType = 'image/gif';
+    if (!mimeType) throw new Error(t`Unsupported reference image format`);
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(mimeType)) {
+        const converted = parseImageDataUrl(await convertDataUrlToPng(`data:${mimeType};base64,${base64Data}`));
+        base64Data = converted.base64Data;
+        mimeType = converted.mimeType;
+    }
+    blob = base64ToBlob(base64Data, mimeType);
+    if (blob.size >= 50 * 1024 * 1024) throw new Error(t`Reference image must be smaller than 50 MB`);
+    const extension = mimeType === 'image/jpeg' ? 'jpg' : mimeType.split('/')[1];
+    return { blob, filename: `reference-${index}.${extension}` };
+}
+
 export class OpenAIProvider extends Provider {
     get id() { return 'openai'; }
     get displayName() { return 'OpenAI'; }
@@ -733,14 +831,17 @@ export class OpenAIProvider extends Provider {
         // dall-e-2 формально умеет /edits с одним image, но мы не делаем
         // под него исключение — UI проще.
         const kind = classifyOpenAIModel(settings.model);
+        if (this.id === 'openai' && settings.model && kind === 'unknown') return true;
         return isGptImageFamily(kind) || kind === 'flux-kontext';
     }
 
     async collectReferences({ prompt: _prompt, messageId, matchedAdditionalRefs = [] }) {
-        const modelKind = classifyOpenAIModel(getSettings().model);
+        const settings = getSettings();
+        if (!this.supportsReferences(settings)) return [];
+        const modelKind = classifyOpenAIModel(settings.model);
         // Flux Kontext принимает только 1 reference; gpt-image-* — до MAX.
         const maxRefs = getOpenAIModelMaxReferences(modelKind) || MAX_GENERATION_REFERENCE_IMAGES;
-        return collectImageEditReferences({ messageId, matchedAdditionalRefs }, maxRefs, 'base64');
+        return collectImageEditReferences({ messageId, matchedAdditionalRefs }, maxRefs, 'dataUrl');
     }
 
     async generate({ prompt, style, references = [], options = {} }) {
@@ -758,10 +859,17 @@ export class OpenAIProvider extends Provider {
         }
 
         const modelKind = classifyOpenAIModel(settings.model);
-        const requestedSize = options.aspectRatio
-            ? (aspectRatioToSize(options.aspectRatio, modelKind) || settings.size)
-            : settings.size;
-        const quality = normalizeQualityForModel(options.quality || settings.quality, modelKind);
+        const aspectSize = options.aspectRatio && (this.id === 'openai'
+            ? openAIAspectRatioToSize(options.aspectRatio, modelKind) : aspectRatioToSize(options.aspectRatio, modelKind));
+        const savedSize = this.id === 'openai' ? settings.openaiSize ?? settings.size : settings.size;
+        const savedQuality = this.id === 'openai' ? settings.openaiQuality ?? settings.quality : settings.quality;
+        const selectedSize = aspectSize || options.size || savedSize;
+        const requestedSize = this.id === 'openai' ? normalizeOpenAISize(selectedSize, settings.model) : selectedSize;
+        const quality = this.id === 'openai'
+            ? normalizeOpenAIQuality(options.quality || savedQuality, settings.model)
+            : normalizeQualityForModel(options.quality || savedQuality, modelKind);
+        const maxInputImages = modelKind === 'flux-kontext' || modelKind === 'dall-e-2' ? 1 : 16;
+        if (references.length > maxInputImages) throw new Error(t`Too many reference images: maximum ${maxInputImages}`);
 
         iigLog(
             'INFO',
@@ -810,10 +918,8 @@ export class OpenAIProvider extends Provider {
         if (size) body.size = size;
         if (quality) body.quality = quality;
 
-        // response_format=b64_json поддерживается dall-e-*. Для gpt-image-* OpenAI
-        // возвращает b64 всегда, параметр игнорируется/отклоняется — не отправляем
-        // его для семейства gpt-image-*, чтобы не словить 400 на строгих прокси.
-        if (!isGptImageFamily(modelKind)) {
+        // OpenAI-compatable id: GPT Image не принимает больше эти параметры
+        if (this.id === 'openai' ? modelKind === 'dall-e-2' || modelKind === 'dall-e-3' : !isGptImageFamily(modelKind)) {
             body.response_format = 'b64_json';
         }
 
@@ -860,21 +966,13 @@ export class OpenAIProvider extends Provider {
         form.append('n', '1');
         if (size) form.append('size', size);
         if (quality) form.append('quality', quality);
-        // moderation поддерживает только gpt-image-1 family (см. _generateWithGenerations).
-        if (isGptImageFamily(modelKind)) form.append('moderation', 'low');
+        // В оригинальной схеме нет этого поля больше. оставьте если нужно, но я считаю, что всё должно быть по актуальной спецификации https://github.com/openai/openai-openapi
+        if (this.id !== 'openai' && isGptImageFamily(modelKind)) form.append('moderation', 'low');
 
-        // GPT Image family: поле `image[]` для множественных референсов
-        // (OpenAI gpt-image-1 / 1.5 / 2 поддерживает multi-image edit).
-        // Остальные (dall-e-2, unknown): одиночный `image`.
-        if (isGptImageFamily(modelKind) && references.length > 1) {
-            references.forEach((ref, idx) => {
-                const blob = base64ToBlob(getReferenceImage(ref), 'image/png');
-                // OpenAI принимает повторный `image[]` как массив.
-                form.append('image[]', blob, `reference-${idx}.png`);
-            });
-        } else {
-            const blob = base64ToBlob(getReferenceImage(references[0]), 'image/png');
-            form.append('image', blob, 'reference-0.png');
+        // edit эндпоинт принимает one image or repeated image[] parts.
+        for (let index = 0; index < references.length; index++) {
+            const { blob, filename } = await prepareOpenAIReference(references[index], index);
+            form.append(references.length > 1 ? 'image[]' : 'image', blob, filename);
         }
 
         let response;
@@ -945,6 +1043,10 @@ export class XAIProvider extends Provider {
             referencesMaxCount: XAI_MAX_REFERENCE_IMAGES,
             referencesFormat: 'dataUrl',
         };
+    }
+
+    async fetchModels() {
+        return (await super.fetchModels()).filter(isImageModel);
     }
 
     supportsReferences(settings) {
@@ -2451,8 +2553,7 @@ export async function fetchModels() {
         return await provider.fetchModels();
     } catch (error) {
         console.error('[IIG] Failed to fetch models:', error);
-        toastr.error(t`Failed to load models: ${error.message}`, t`Image Generation`);
-        return [];
+        throw error;
     }
 }
 

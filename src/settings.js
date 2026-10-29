@@ -292,6 +292,8 @@ export const defaultSettings = Object.freeze({
     model: '',
     size: '1024x1024',
     quality: 'standard',
+    openaiSize: null,
+    openaiQuality: null,
     maxRetries: 0, // No auto-retry - user clicks error image to retry manually
     retryDelay: 1000,
     // Nano-banana specific
@@ -398,6 +400,8 @@ export const CONNECTION_FIELDS = Object.freeze([
     'model',
     'size',
     'quality',
+    'openaiSize',
+    'openaiQuality',
     'aspectRatio',
     'imageSize',
     'xaiAspectRatio',

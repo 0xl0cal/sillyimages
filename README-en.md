@@ -184,9 +184,11 @@ Line format: `full-name (primary-trigger) — description`. If only one lorebook
 ### OpenAI-compatible
 
 - Endpoint: `https://api.openai.com` (or any OpenAI-compatible proxy).
+- Model list: `GET /v1/models`. The standard list does not indicate image support. Select a model your provider supports for `/v1/images/generations`.
 - Without references → `POST /v1/images/generations` (JSON).
-- With references → `POST /v1/images/edits` (multipart). For gpt-image-* several references are sent as `image[]`.
-- Supported models: gpt-image-1, gpt-image-1.5, flux-1-kontext-*, dall-e-2, dall-e-3.
+- With references → `POST /v1/images/edits` (multipart). Multiple references use `image[]`; the extension currently limits requests to 5 images. PNG/JPEG/WebP inputs retain their original MIME type and file extension.
+- Current GPT Image families and `chatgpt-image-latest` are supported. Compatible with DALL·E and Flux Kontext parameters.
+- Masks, streaming, and JSON image-edit requests are not yet implemented in the UI.
 
 ### xAI Imagine
 
