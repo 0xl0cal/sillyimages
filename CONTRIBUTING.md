@@ -7,9 +7,12 @@ The extension runs as browser ES modules inside SillyTavern. There is no build s
 - `index.js` initializes settings, events and views.
 - `settings.js` owns `extensionSettings.inline_image_gen`, connection profiles, prompt libraries and lorebooks.
 - `modelCapabilities.js` classifies model families and normalizes model-dependent parameters without network or DOM access.
-- `providers.js` owns provider registration, transports and reference collection policies. Each policy specifies avatar order, format and limits.
+- `providers.js` owns provider registration, active capabilities and shared UI entry points. Registration order and public exports are stable.
+- `openaiProviders.js`, `geminiProvider.js`, `openrouterProvider.js`, `naisteraProvider.js` and `novelaiProvider.js` own protocol-specific transport behavior. OpenAI, xAI and Electron Hub share one module for compatible image edit workflows.
+- `providerReferences.js` owns input reference order, format, limits and prompt descriptions. `imageResponse.js` decodes compatible image response envelopes.
 - `providerBase.js` owns the common provider contract, generation URL construction and network error classification. `a1111.js` owns AUTOMATIC1111/Forge generation and catalog requests.
 - `references.js` owns character/persona libraries, reference descriptions, context images and imports.
+- `referenceTransfer.js` owns image downloads, the `iig-lorebook` v1 interchange format, file/URL imports and browser downloads. Local file paths, record IDs and image data do not belong in exported lorebooks.
 - `avatarPicker.js` owns the avatar catalog and synchronized provider dropdowns. Concurrent catalog reads share one pending request; settled requests do not prevent an explicit refresh. Selection updates classes on existing rows, and catalog changes replace the rows in one batch.
 - `parser.js` reads message instructions and associates source tags with rendered media.
 - `pipeline.js` owns generation locks, retries, cancellation and persistence. New generation, single retry and batch retry share the media lifecycle.

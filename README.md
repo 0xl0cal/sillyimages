@@ -262,11 +262,16 @@ i18n/*.json        — переводы
 src/
   settings.js      — дефолты, логгер, профили, лорбуки, стили
   utils.js         — data URL / base64 / upload / ProviderError
-  providers.js     — Provider base + OpenAI/xAI/Gemini/OpenRouter/ElectronHub/Naistera
+  providers.js     — реестр провайдеров и выбор активного источника
+  openaiProviders.js — OpenAI, xAI и Electron Hub
+  geminiProvider.js / openrouterProvider.js — генерация и каталоги моделей
+  naisteraProvider.js / novelaiProvider.js — Наистера и прямой NovelAI
+  providerReferences.js / imageResponse.js — входные референсы и разбор ответов
   modelCapabilities.js — семейства моделей, лимиты и параметры
   providerBase.js  — контракт провайдера, адреса запросов и сетевые ошибки
   a1111.js         — генерация и каталоги AUTOMATIC1111 / Forge
   references.js    — аватары, previous-context, лорбук UI, макрос, import/export
+  referenceTransfer.js — импорт/экспорт лорбуков и загрузка референсов
   avatarPicker.js  — каталог аватаров и синхронизация выпадающих списков
   parser.js        — парсер тегов, JSON-инструкции, matcher
   pipeline.js      — генерация с retry, обработка сообщения, перегенерация

@@ -55,18 +55,13 @@ import {
     openReferenceImportModal,
     closeReferenceImportModal,
     importAdditionalReferencesFromUrls,
-    downloadReferenceImageFromUrl,
-    buildLorebookExportJson,
-    lorebookFileNameFromTitle,
-    triggerBrowserDownload,
-    importLorebookFromUrl,
-    importLorebookFromFile,
     renderIigBookMacro,
 } from './references.js';
 import { fetchModels, resolveActiveProvider, getActiveProviderMaxReferences, A1111_RESOLUTION_PRESETS } from './providers.js';
 import { NOVELAI_NUMERIC_FIELDS, NOVELAI_SAMPLERS, NOVELAI_NOISE_SCHEDULES, NOVELAI_RESOLUTION_PRESETS, NOVELAI_ASPECT_RATIOS, isNovelAIMedium, resolveNovelAISettings } from './novelai.js';
 import { applyImageActionsStyle } from './imageActions.js';
 import { t, translate } from './i18n.js';
+import { downloadReferenceImageFromUrl, buildLorebookExportJson, lorebookFileNameFromTitle, triggerBrowserDownload, importLorebookFromUrl, importLorebookFromFile } from './referenceTransfer.js';
 import {
     buildUserAvatarDropdownControl, syncUserAvatarSelection, syncActivePersonaAvatarMode,
     refreshUserAvatarSelects, getUserAvatarDropdownConfigs, closeUserAvatarDropdowns,
@@ -1799,17 +1794,23 @@ function bindLorebookBarEvents(settings) {
         refreshLorebookBar(settings);
     });
 
-    async function afterLorebookImport(stats) {
-        refreshLorebookBar(settings);
-        refreshAdditionalReferencesList();
-        const tail = stats.imagesFailed > 0
-            ? ` (${t`${stats.imagesFailed} images failed to download`})`
-            : '';
-        toastr.success(
-            t`Imported ${stats.refsCount} refs, ${stats.imagesDownloaded} images downloaded${tail}`,
-            t`Image Generation`,
-            { timeOut: 4000 },
-        );
+    async function importAndRenderLorebook(importer, source) {
+        try {
+            const stats = await importer(source);
+            refreshLorebookBar(settings);
+            refreshAdditionalReferencesList();
+            const tail = stats.imagesFailed > 0
+                ? ` (${t`${stats.imagesFailed} images failed to download`})`
+                : '';
+            toastr.success(
+                t`Imported ${stats.refsCount} refs, ${stats.imagesDownloaded} images downloaded${tail}`,
+                t`Image Generation`,
+                { timeOut: 4000 },
+            );
+        } catch (error) {
+            console.error('[IIG] Lorebook import failed:', error);
+            toastr.error(t`Import error: ${error.message || error}`, t`Image Generation`);
+        }
     }
 
     document.getElementById('iig_lorebook_import_url')?.addEventListener('click', async () => {
@@ -1820,13 +1821,7 @@ function bindLorebookBarEvents(settings) {
         if (typeof url !== 'string') return;
         const trimmed = url.trim();
         if (!trimmed) return;
-        try {
-            const stats = await importLorebookFromUrl(trimmed);
-            await afterLorebookImport(stats);
-        } catch (error) {
-            console.error('[IIG] Lorebook import failed:', error);
-            toastr.error(t`Import error: ${error.message || error}`, t`Image Generation`);
-        }
+        await importAndRenderLorebook(importLorebookFromUrl, trimmed);
     });
 
     document.getElementById('iig_lorebook_import_file_input')?.addEventListener('change', async (e) => {
@@ -1835,13 +1830,7 @@ function bindLorebookBarEvents(settings) {
         const file = input.files?.[0];
         input.value = '';
         if (!file) return;
-        try {
-            const stats = await importLorebookFromFile(file);
-            await afterLorebookImport(stats);
-        } catch (error) {
-            console.error('[IIG] Lorebook import failed:', error);
-            toastr.error(t`Import error: ${error.message || error}`, t`Image Generation`);
-        }
+        await importAndRenderLorebook(importLorebookFromFile, file);
     });
 
     document.getElementById('iig_lorebook_export')?.addEventListener('click', async () => {

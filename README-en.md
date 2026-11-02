@@ -262,11 +262,16 @@ i18n/*.json        — translations
 src/
   settings.js      — defaults, logger, profiles, lorebooks, styles
   utils.js         — data URL / base64 / upload / ProviderError
-  providers.js     — Provider base + OpenAI/xAI/Gemini/OpenRouter/ElectronHub/Naistera
+  providers.js     — provider registry and active source selection
+  openaiProviders.js — OpenAI, xAI and Electron Hub
+  geminiProvider.js / openrouterProvider.js — generation and model discovery
+  naisteraProvider.js / novelaiProvider.js — Naistera and direct NovelAI
+  providerReferences.js / imageResponse.js — input references and response decoding
   modelCapabilities.js — model families, limits and parameters
   providerBase.js  — provider contract, request URLs and transport errors
   a1111.js         — AUTOMATIC1111 / Forge generation and catalogs
   references.js    — avatars, previous context, lorebook UI, macro, import/export
+  referenceTransfer.js — lorebook interchange and reference downloads
   avatarPicker.js  — avatar catalog and synchronized dropdowns
   parser.js        — tag parser, JSON instructions, matcher
   pipeline.js      — generation with retry, message processing, regeneration

@@ -2,7 +2,6 @@ import { getSettings, saveSettings } from './settings.js';
 import {
     addCharacterLibraryAppearanceItem,
     deleteCharacterLibraryEntry,
-    downloadReferenceImageFromUrl,
     getCharacterLibraryEntry,
     getCharacterReferenceKeyForCharacter,
     getCurrentCharacterReferenceKey,
@@ -25,6 +24,7 @@ import {
     getMessageRenderText,
 } from './parser.js';
 import { t } from './i18n.js';
+import { downloadReferenceImageFromUrl } from './referenceTransfer.js';
 import { fetchUserAvatars, getCachedUserAvatars } from './avatarPicker.js';
 import { Popup } from '../../../../popup.js';
 import { deleteGenerationImages, planGenerationImageDeletion } from './generationImages.js';
