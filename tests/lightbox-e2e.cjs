@@ -23,7 +23,9 @@ header{height:80px;padding:10px}button,input{font:inherit}#chat{height:400px;ove
 <button class="iig-library-generation-item">${image('gallery-image-2', 'data-iig-lightbox data-iig-generation-id="g2" data-iig-generation-key="char"')}</button></div>
 <dialog id="gallery-popup"><button id="popup-action">Popup action</button><div data-iig-lightbox-gallery>${image('popup-image', 'data-iig-lightbox')}</div></dialog>
 <div class="spacer"></div><script type="module">
-window.toastr={success(){},error(){}};window.SillyTavern={getContext:()=>({getRequestHeaders:()=>({'Content-Type':'application/json'})})};
+window.toastr={success(){},error(){},info(){}};
+window.context={extensionSettings:{},getRequestHeaders:()=>({'Content-Type':'application/json'}),saveSettingsDebounced(){if(!context.extensionSettings.inline_image_gen.characterReferenceLibrary.characters.char.generations.some(item=>item.id==='g1'))removed.push({key:'char',id:'g1'});}};
+window.SillyTavern={getContext:()=>context};
 window.actions=0;document.querySelector('#app-button').onclick=()=>actions++;
 document.querySelector('#popup-action').onclick=()=>actions++;
 window.removed=[];window.pointerIds=new Set();
@@ -42,6 +44,8 @@ window.confirmDeletion=()=>new Promise(resolve=>{
  dlg.querySelector('button').onclick=()=>finish(true);dlg.addEventListener('cancel',e=>{e.preventDefault();finish(false);});
  document.body.append(dlg);dlg.showModal();
 });
+const {getSettings}=await import('${prefix}src/settings.js');
+getSettings().characterReferenceLibrary={characters:{char:{primary:{},appearanceItems:[],generations:[{id:'g1',imagePath:'/user/images/char/image.svg'},{id:'g2',imagePath:'/image.svg'}]}},users:{}};
 const {initLightbox}=await import('${prefix}src/lightbox.js');initLightbox();initLightbox();
 window.genericImageClicks=0;document.querySelector('#chat').addEventListener('click',e=>{if(e.target.matches('img'))genericImageClicks++;});
 window.ready=true;
@@ -52,7 +56,6 @@ const server = createServer((req, res) => {
     else if (req.url === '/image.svg' || req.url === '/user/images/char/image.svg') { body = picture; type = 'image/svg+xml'; }
     else if (req.url === '/scripts/i18n.js') body = 'export const t=(s,...v)=>String.raw({raw:s},...v);export const translate=s=>s;';
     else if (req.url === '/scripts/popup.js') body = 'export class Popup {static show={confirm:()=>window.confirmDeletion()};}';
-    else if (req.url === prefix+'src/references.js') body = 'export function removeCharacterGeneration(key,id){window.removed.push({key,id});return {id};}';
     else if (req.url === '/api/images/delete') { body = '{}'; type = 'application/json'; }
     else if (req.url.startsWith(prefix)) {
         const file = path.resolve(root, decodeURIComponent(req.url.slice(prefix.length)));

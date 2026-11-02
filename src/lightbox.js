@@ -3,7 +3,7 @@
  */
 
 import { t } from './i18n.js';
-import { removeCharacterGeneration } from './references.js';
+import { planGenerationImageDeletion, deleteGenerationImages } from './generationImages.js';
 import { Popup } from '../../../../popup.js';
 import { getImagePlaceholderKind } from './utils.js';
 
@@ -407,36 +407,30 @@ export function initLightbox() {
         const deletionSession = viewSession;
         const generationId = String(source?.getAttribute('data-iig-generation-id') || '').trim();
         const characterKey = String(source?.getAttribute('data-iig-generation-key') || '').trim();
-        if (!source || !generationId || !characterKey) return;
-        const confirmed = await Popup.show.confirm(t`Delete this generation?`, t`Confirm`);
-        if (!confirmed) return;
+        if (!source || !generationId || !characterKey || deleteBtn.disabled) return;
         deleteBtn.disabled = true;
         try {
-            const rawPath = getImageSource(source);
-            const resolved = new URL(rawPath, window.location.origin);
-            const isLocalGeneration = resolved.origin === window.location.origin
-                && resolved.pathname.startsWith('/user/images/');
-            if (isLocalGeneration) {
-                let localPath = resolved.pathname;
-                try {
-                    localPath = decodeURIComponent(localPath);
-                } catch (_error) {
-                    // The raw pathname is still valid when it has no encoded characters.
-                }
-                const context = SillyTavern.getContext();
-                const response = await fetch('/api/images/delete', {
-                    method: 'POST',
-                    headers: context.getRequestHeaders(),
-                    body: JSON.stringify({ path: localPath }),
-                });
-                if (!response.ok && response.status !== 404) {
-                    throw new Error((await response.text().catch(() => '')) || `HTTP ${response.status}`);
+            const sourceUrl = new URL(getImageSource(source), window.location.origin).href;
+            const plan = (await planGenerationImageDeletion({ scope: 'selected', key: characterKey, ids: [generationId] }))
+                .filter(image => new URL(image.imagePath, window.location.origin).href === sourceUrl);
+            if (!plan.length) {
+                toastr.info(t`No images to delete.`, t`Image Generation`);
+                return;
+            }
+            const confirmed = await Popup.show.confirm(t`Delete this generation?`, t`Confirm`, { defaultResult: 0 });
+            if (!confirmed) return;
+            const result = await deleteGenerationImages(plan);
+            if (result.failed.length) throw result.failed[0].error;
+            if (!result.deleted) {
+                toastr.info(t`No images to delete.`, t`Image Generation`);
+                return;
+            }
+            const gallery = source.closest('[data-iig-lightbox-gallery]');
+            for (const image of gallery?.querySelectorAll(GALLERY_IMG_SELECTOR) || []) {
+                if (new URL(getImageSource(image), window.location.origin).href === sourceUrl) {
+                    image.closest('.iig-library-generation-item')?.remove();
                 }
             }
-            const removed = removeCharacterGeneration(characterKey, generationId);
-            if (!removed) throw new Error(t`Generation was not found`);
-            const gallery = source.closest('[data-iig-lightbox-gallery]');
-            source.closest('.iig-library-generation-item')?.remove();
             const remainingImages = gallery
                 ? Array.from(gallery.querySelectorAll(GALLERY_IMG_SELECTOR)).filter(getImageSource)
                 : [];

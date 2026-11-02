@@ -1,4 +1,4 @@
-import { getSettings, saveSettings } from './settings.js';
+import { getSettings, getSettingsRevision, saveSettings } from './settings.js';
 import { getCharacterReferenceLibrary } from './references.js';
 import { listCharacterGenerationPaths } from './utils.js';
 
@@ -92,11 +92,18 @@ export async function planGenerationImageDeletion({ scope, key = '', folder = ''
 
 export async function deleteGenerationImages(plan, settings = getSettings(), onProgress = () => {}) {
     const deleted = new Set();
+    let revision = -1;
+    let protectedPaths;
     let completed = 0;
     const results = await mapLimited(plan, async image => {
         try {
-            // A reference may have been assigned while confirmation was open.
-            if (referenceImages(settings).has(image.identity)) return { skipped: image.imagePath };
+            // Edits publish a revision before the next asynchronous delete begins.
+            const currentRevision = getSettingsRevision(settings);
+            if (revision !== currentRevision) {
+                protectedPaths = referenceImages(settings);
+                revision = currentRevision;
+            }
+            if (protectedPaths.has(image.identity)) return { skipped: image.imagePath };
             if (image.localPath) {
                 const response = await fetch('/api/images/delete', {
                     method: 'POST', headers: SillyTavern.getContext().getRequestHeaders(),

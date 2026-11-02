@@ -652,8 +652,16 @@ export function getSettings() {
     return context.extensionSettings[MODULE_NAME];
 }
 
+const settingsRevisions = new WeakMap();
+
+export function getSettingsRevision(settings = getSettings()) {
+    return settingsRevisions.get(settings) || 0;
+}
+
 export function saveSettings() {
     const context = SillyTavern.getContext();
+    const settings = context.extensionSettings[MODULE_NAME];
+    if (settings) settingsRevisions.set(settings, getSettingsRevision(settings) + 1);
     context.saveSettingsDebounced();
 }
 
