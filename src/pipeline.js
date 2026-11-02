@@ -51,6 +51,8 @@ import {
 } from './providers.js';
 import {
     getReferenceDescription,
+    getReferenceSource,
+    buildAvatarReferencePromptBlock,
     getReferenceImage,
     recordCharacterGeneration,
     buildCharacterDescriptionPromptBlock,
@@ -198,37 +200,6 @@ function refToPreviewDataUrl(ref) {
     return value.startsWith('data:') ? value : `data:image/png;base64,${value}`;
 }
 
-function referenceSource(ref) {
-    if (ref && typeof ref === 'object' && !Array.isArray(ref)) {
-        return String(ref.source || '').trim();
-    }
-    return '';
-}
-
-function buildAvatarReferenceSnapshotBlock(references = [], settings = getSettings()) {
-    if (settings.sendRefDescriptions === false) {
-        return '';
-    }
-
-    const lines = references
-        .map((ref, index) => {
-            const source = referenceSource(ref);
-            if (source !== 'char' && source !== 'user') {
-                return '';
-            }
-            const description = getReferenceDescription(ref);
-            if (!description) {
-                return '';
-            }
-            const label = source === 'char' ? '{{char}} avatar' : '{{user}} avatar';
-            return `- Reference ${index + 1} (${label}): ${description}`;
-        })
-        .filter(Boolean);
-
-    return lines.length > 0
-        ? `Character reference descriptions:\n${lines.join('\n')}`
-        : '';
-}
 
 /**
  * Строит snapshot финального запроса для in-memory отображения в UI.
@@ -244,7 +215,7 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
         { wrapStyle },
     );
     if (settings.apiType === 'openai' || settings.apiType === 'xai' || settings.apiType === 'electronhub') {
-        const avatarDescriptions = buildAvatarReferenceSnapshotBlock(references, settings);
+        const avatarDescriptions = buildAvatarReferencePromptBlock(references, settings);
         if (avatarDescriptions) {
             snapshotPrompt = `${snapshotPrompt}\n\n${avatarDescriptions}`.trim();
         }
@@ -303,7 +274,7 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
             dataUrl: refToPreviewDataUrl(ref),
             label: `ref ${index + 1}`,
             description: getReferenceDescription(ref),
-            source: referenceSource(ref),
+            source: getReferenceSource(ref),
         })),
         matchedRefs: matchedRefsInfo,
         metadata: {
@@ -548,7 +519,7 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
     iigLog('INFO', `References collected for ${settings.apiType}: ${references.length} ref(s)`);
     for (let i = 0; i < references.length; i++) {
         const ref = references[i];
-        const src = referenceSource(ref) || '?';
+        const src = getReferenceSource(ref) || '?';
         const desc = getReferenceDescription(ref);
         const img = getReferenceImage(ref);
         const imgInfo = img.startsWith('data:')

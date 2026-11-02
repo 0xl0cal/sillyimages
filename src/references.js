@@ -162,6 +162,18 @@ export function getReferenceSource(ref) {
     return '';
 }
 
+export function buildAvatarReferencePromptBlock(references = [], settings = getSettings()) {
+    if (settings.sendRefDescriptions === false) return '';
+    const lines = references.map((ref, index) => {
+        const source = getReferenceSource(ref);
+        const description = getReferenceDescription(ref);
+        if (!['char', 'user'].includes(source) || !description) return '';
+        const label = source === 'char' ? '{{char}} avatar' : '{{user}} avatar';
+        return `- Reference ${index + 1} (${label}): ${description}`;
+    }).filter(Boolean);
+    return lines.length ? `Character reference descriptions:\n${lines.join('\n')}` : '';
+}
+
 export function getCurrentCharacterReferenceKey() {
     try {
         const context = SillyTavern.getContext();

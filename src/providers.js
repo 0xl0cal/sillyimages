@@ -37,6 +37,8 @@ import {
     makeReferenceObject,
     getReferenceImage,
     getReferenceDescription,
+    getReferenceSource,
+    buildAvatarReferencePromptBlock,
     buildCharacterDescriptionPromptBlock,
 } from './references.js';
 
@@ -101,38 +103,6 @@ function additionalReferenceDescription(ref, settings = getSettings()) {
         return '';
     }
     return String(ref?.description || ref?.name || '').trim();
-}
-
-function referenceSource(ref) {
-    if (ref && typeof ref === 'object' && !Array.isArray(ref)) {
-        return String(ref.source || '').trim();
-    }
-    return '';
-}
-
-function buildAvatarReferencePromptBlock(references = [], settings = getSettings()) {
-    if (settings.sendRefDescriptions === false) {
-        return '';
-    }
-
-    const lines = references
-        .map((ref, index) => {
-            const source = referenceSource(ref);
-            if (source !== 'char' && source !== 'user') {
-                return '';
-            }
-            const description = getReferenceDescription(ref);
-            if (!description) {
-                return '';
-            }
-            const label = source === 'char' ? '{{char}} avatar' : '{{user}} avatar';
-            return `- Reference ${index + 1} (${label}): ${description}`;
-        })
-        .filter(Boolean);
-
-    return lines.length > 0
-        ? `Character reference descriptions:\n${lines.join('\n')}`
-        : '';
 }
 
 function appendPromptBlock(prompt, block) {
@@ -689,17 +659,15 @@ function extractImageFromResult(result, base64MimeType = 'image/png') {
     throw new Error(`Response data[0] has no b64_json or url. data[0] keys: ${Object.keys(imageObj || {}).join(',')}`);
 }
 
-async function collectImageEditReferences({ messageId, matchedAdditionalRefs = [] }, maxRefs, format = 'base64') {
+async function collectProviderReferences({ messageId, matchedAdditionalRefs = [] }, maxRefs, format = 'base64', avatars = [['char', 'sendCharAvatar'], ['user', 'sendUserAvatar']]) {
     const settings = getSettings();
     const refs = [];
-
-    const characterRefs = settings.sendCharAvatar
-        ? await collectCharacterLibraryReferences('char', format, settings)
-        : [];
-    const userRefs = settings.sendUserAvatar
-        ? await collectCharacterLibraryReferences('user', format, settings)
-        : [];
-    appendAvatarReferenceGroups(refs, [characterRefs, userRefs]);
+    const groups = [];
+    // Both primary avatars precede appearance images; provider order is explicit.
+    for (const [kind, enabledKey] of avatars) {
+        groups.push(settings[enabledKey] ? await collectCharacterLibraryReferences(kind, format, settings) : []);
+    }
+    appendAvatarReferenceGroups(refs, groups);
 
     for (const ref of matchedAdditionalRefs) {
         if (refs.length >= maxRefs) break;
@@ -740,7 +708,7 @@ export class OpenAIProvider extends Provider {
         const modelKind = classifyOpenAIModel(getSettings().model);
         // Flux Kontext принимает только 1 reference; gpt-image-* — до MAX.
         const maxRefs = getOpenAIModelMaxReferences(modelKind) || MAX_GENERATION_REFERENCE_IMAGES;
-        return collectImageEditReferences({ messageId, matchedAdditionalRefs }, maxRefs, 'base64');
+        return collectProviderReferences({ messageId, matchedAdditionalRefs }, maxRefs, 'base64');
     }
 
     async generate({ prompt, style, references = [], options = {} }) {
@@ -952,7 +920,7 @@ export class XAIProvider extends Provider {
     }
 
     async collectReferences({ prompt: _prompt, messageId, matchedAdditionalRefs = [] }) {
-        return collectImageEditReferences(
+        return collectProviderReferences(
             { messageId, matchedAdditionalRefs },
             XAI_MAX_REFERENCE_IMAGES,
             'dataUrl',
@@ -1047,38 +1015,9 @@ export class GeminiProvider extends Provider {
     get id() { return 'gemini'; }
     get displayName() { return 'Gemini / nano-banana'; }
 
-    async collectReferences({ prompt: _prompt, messageId, matchedAdditionalRefs = [] }) {
-        const settings = getSettings();
-        const caps = getGeminiCapabilities(settings.model);
-        const maxRefs = caps.maxReferences;
-        const refs = [];
-
-        const userRefs = settings.sendUserAvatar
-            ? await collectCharacterLibraryReferences('user', 'base64', settings)
-            : [];
-        const characterRefs = settings.sendCharAvatar
-            ? await collectCharacterLibraryReferences('char', 'base64', settings)
-            : [];
-        appendAvatarReferenceGroups(refs, [userRefs, characterRefs]);
-
-        for (const ref of matchedAdditionalRefs) {
-            if (refs.length >= maxRefs) break;
-            const imagePath = normalizeStoredImagePath(ref.imagePath);
-            if (!imagePath) continue;
-            const b64 = await imageUrlToBase64(imagePath);
-            if (b64) refs.push(makeReferenceObject(b64, additionalReferenceDescription(ref, settings), 'additional'));
-        }
-
-        if (settings.imageContextEnabled) {
-            const contextCount = normalizeImageContextCount(settings.imageContextCount);
-            const contextRefs = await collectPreviousContextReferences(messageId, 'base64', contextCount);
-            refs.push(...contextRefs.map((ref) => makeReferenceObject(ref, '', 'context')));
-        }
-
-        if (refs.length > maxRefs) {
-            refs.length = maxRefs;
-        }
-        return refs;
+    async collectReferences(ctx) {
+        const maxRefs = getGeminiCapabilities(getSettings().model).maxReferences;
+        return collectProviderReferences(ctx, maxRefs, 'base64', [['user', 'sendUserAvatar'], ['char', 'sendCharAvatar']]);
     }
 
     async generate({ prompt, style, references = [], options = {} }) {
@@ -1325,38 +1264,9 @@ export class OpenRouterProvider extends Provider {
         return errors;
     }
 
-    async collectReferences({ prompt: _prompt, messageId, matchedAdditionalRefs = [] }) {
-        const settings = getSettings();
-        const caps = getOpenRouterCapabilities(settings.model);
-        const maxRefs = caps.maxReferences;
-        const refs = [];
-
-        const userRefs = settings.sendUserAvatar
-            ? await collectCharacterLibraryReferences('user', 'dataUrl', settings)
-            : [];
-        const characterRefs = settings.sendCharAvatar
-            ? await collectCharacterLibraryReferences('char', 'dataUrl', settings)
-            : [];
-        appendAvatarReferenceGroups(refs, [userRefs, characterRefs]);
-
-        for (const ref of matchedAdditionalRefs) {
-            if (refs.length >= maxRefs) break;
-            const imagePath = normalizeStoredImagePath(ref.imagePath);
-            if (!imagePath) continue;
-            const d = await imageUrlToDataUrl(imagePath);
-            if (d) refs.push(makeReferenceObject(d, additionalReferenceDescription(ref, settings), 'additional'));
-        }
-
-        if (settings.imageContextEnabled) {
-            const contextCount = normalizeImageContextCount(settings.imageContextCount);
-            const contextRefs = await collectPreviousContextReferences(messageId, 'dataUrl', contextCount);
-            refs.push(...contextRefs.map((ref) => makeReferenceObject(ref, '', 'context')));
-        }
-
-        if (refs.length > maxRefs) {
-            refs.length = maxRefs;
-        }
-        return refs;
+    async collectReferences(ctx) {
+        const maxRefs = getOpenRouterCapabilities(getSettings().model).maxReferences;
+        return collectProviderReferences(ctx, maxRefs, 'dataUrl', [['user', 'sendUserAvatar'], ['char', 'sendCharAvatar']]);
     }
 
     async generate({ prompt, style, references = [], options = {} }) {
@@ -1809,34 +1719,14 @@ export class NaisteraProvider extends Provider {
         if (!this.supportsReferences({ ...settings, naisteraModel: normalizedModel })) {
             return [];
         }
-        const refs = [];
-
-        const userRefs = settings.naisteraSendUserAvatar
-            ? await collectCharacterLibraryReferences('user', 'dataUrl', settings)
-            : [];
-        const characterRefs = settings.naisteraSendCharAvatar
-            ? await collectCharacterLibraryReferences('char', 'dataUrl', settings)
-            : [];
-        appendAvatarReferenceGroups(refs, [userRefs, characterRefs]);
-
-        for (const ref of matchedAdditionalRefs) {
-            const imagePath = normalizeStoredImagePath(ref.imagePath);
-            if (!imagePath) continue;
-            const d = await imageUrlToDataUrl(imagePath);
-            if (!d) continue;
-            refs.push(makeReferenceObject(d, additionalReferenceDescription(ref, settings), 'additional'));
-        }
-
-        if (settings.imageContextEnabled) {
-            const contextCount = normalizeImageContextCount(settings.imageContextCount);
-            const contextRefs = await collectPreviousContextReferences(messageId, 'dataUrl', contextCount);
-            refs.push(...contextRefs.map((ref) => makeReferenceObject(ref, '', 'context')));
-        }
+        const refs = await collectProviderReferences({ messageId, matchedAdditionalRefs }, Infinity, 'dataUrl', [
+            ['user', 'naisteraSendUserAvatar'], ['char', 'naisteraSendCharAvatar'],
+        ]);
 
         const descriptionMode = normalizeNaisteraCharacterDescriptionsMode(settings.naisteraCharacterDescriptionsMode);
         if (descriptionMode !== 'as-is') {
             return refs.map((ref) => {
-                const source = referenceSource(ref);
+                const source = getReferenceSource(ref);
                 return source === 'char' || source === 'user'
                     ? makeReferenceObject(getReferenceImage(ref), '', source)
                     : ref;
