@@ -33,7 +33,7 @@ export function initImageActions() {
     initializedChats.add(chat);
 
     applyImageActionsStyle();
-    const scan = root => scanAndAttach(root).catch(error => iigLog('WARN', 'Could not refresh image controls:', error));
+    const scan = (root, bindings = true) => scanAndAttach(root, bindings).catch(error => iigLog('WARN', 'Could not refresh image controls:', error));
     scan(chat);
 
     chat.addEventListener('click', async (event) => {
@@ -53,16 +53,17 @@ export function initImageActions() {
         img.click();
     });
 
-    const dirtyRoots = new Set();
+    const dirtyRoots = new Map();
     let scanFrame = null;
-    const scheduleScan = (root) => {
-        dirtyRoots.add(root.closest('.mes') || root);
+    const scheduleScan = (root, bindings = true) => {
+        if (bindings) root = root.closest('.mes') || root;
+        dirtyRoots.set(root, dirtyRoots.get(root) || bindings);
         if (scanFrame !== null) return;
         scanFrame = requestAnimationFrame(() => {
             scanFrame = null;
             const roots = [...dirtyRoots];
             dirtyRoots.clear();
-            for (const dirtyRoot of roots) scan(dirtyRoot);
+            for (const [dirtyRoot, bindings] of roots) scan(dirtyRoot, bindings);
         });
     };
 
@@ -77,20 +78,22 @@ export function initImageActions() {
                 }
             }
             if (m.type === 'attributes' && m.target instanceof HTMLImageElement && m.target.closest('.mes_text')) {
-                scheduleScan(m.target);
+                const bindings = m.attributeName !== 'class' || !m.target.hasAttribute('data-iig-tag-index')
+                    || !m.target.hasAttribute('data-iig-instruction');
+                scheduleScan(m.target, bindings);
             }
         }
     });
     observer.observe(chat, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'class', 'data-iig-instruction'] });
 }
 
-async function scanAndAttach(root) {
+async function scanAndAttach(root, bindings = true) {
     if (!root || typeof root.querySelectorAll !== 'function') return;
     if (!root.isConnected) return;
     const messageRoot = root.closest('.mes');
     const messages = messageRoot ? [messageRoot] : [...root.querySelectorAll('.mes')];
     const context = SillyTavern.getContext();
-    for (const messageEl of messages) {
+    for (const messageEl of bindings ? messages : []) {
         const messageId = Number.parseInt(messageEl.getAttribute('mesid') || '', 10);
         const message = context.chat?.[messageId];
         const mesTextEl = messageEl.querySelector('.mes_text');

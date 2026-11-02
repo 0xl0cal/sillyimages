@@ -267,21 +267,22 @@ export function bindStylesSectionEvents(settings) {
         const selectedStyle = getSelectedStyle(settings);
         const target = event.target;
         if (!selectedStyle || !(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) return;
-        if (target.id === 'iig_style_name') updateStyle(selectedStyle.id, { name: target.value }, styleLibraryTab);
-        if (target.id === 'iig_style_value') updateStyle(selectedStyle.id, { value: target.value }, styleLibraryTab);
+        const updated = target.id === 'iig_style_name'
+            ? updateStyle(selectedStyle.id, { name: target.value }, styleLibraryTab)
+            : target.id === 'iig_style_value' ? updateStyle(selectedStyle.id, { value: target.value }, styleLibraryTab) : null;
+        if (!updated) return;
         saveSettings();
         const row = [...document.querySelectorAll('#iig_style_presets .iig-style-item')]
             .find((item) => item.getAttribute('data-style-id') === selectedStyle.id);
-        const updated = ensureStyles(settings, styleLibraryTab).find((style) => style.id === selectedStyle.id);
         if (row && updated) {
             const title = row.querySelector('strong');
             const preview = row.querySelector('small');
             if (title) title.textContent = updated.name;
             if (preview) preview.textContent = getStylePreview(updated.value);
             row.setAttribute('data-style-search', `${updated.name} ${updated.value}`.toLowerCase());
-            filterStyleList();
+            if (styleSearchQuery) filterStyleList();
         }
-        syncNegativePromptInputs(settings);
+        if (styleLibraryTab === 'negativePrompts') syncNegativePromptInputs(settings);
     });
 
     document.getElementById('iig_style_editor')?.addEventListener('click', async (event) => {

@@ -779,16 +779,24 @@ function promptLibraryDefaultName(kind, index) {
     return kind === 'negativePrompts' ? t`Negative prompt ${index + 1}` : t`Style ${index + 1}`;
 }
 
+const normalizedStyles = new WeakSet();
+
 export function ensureStyles(settings = getSettings(), kind = 'styles') {
     if (!Array.isArray(settings[kind])) {
         settings[kind] = [];
     }
 
-    settings[kind] = settings[kind].map((style, index) => ({
-        id: String(style?.id || `iig-style-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`),
-        name: String(style?.name || '').trim() || promptLibraryDefaultName(kind, index),
-        value: String(style?.value || '').trim(),
-    }));
+    for (let index = 0; index < settings[kind].length; index++) {
+        const style = settings[kind][index];
+        if (normalizedStyles.has(style)) continue;
+        const normalized = {
+            id: String(style?.id || `iig-style-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`),
+            name: String(style?.name || '').trim() || promptLibraryDefaultName(kind, index),
+            value: String(style?.value || '').trim(),
+        };
+        settings[kind][index] = normalized;
+        normalizedStyles.add(normalized);
+    }
 
     const activeKey = getPromptLibraryActiveKey(kind);
     if (!settings[kind].some((style) => style.id === settings[activeKey])) {
@@ -807,6 +815,7 @@ export function createStyle(name = '', kind = 'styles') {
         value: '',
     };
     styles.push(style);
+    normalizedStyles.add(style);
     return style;
 }
 

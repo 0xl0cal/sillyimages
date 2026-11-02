@@ -48,6 +48,13 @@ let generationProgress = '';
 const pendingContextSync = { character: false, user: false };
 
 const MAX_RENDERED_ENTITIES = 80;
+const entityCatalogs = { char: null, user: null };
+
+function catalogSignature(activeKey, labels, library) {
+    return JSON.stringify([activeKey, labels, Object.entries(library).map(([key, entry]) => [
+        key, Boolean(entry), String(entry?.displayName || ''),
+    ])]);
+}
 
 function emptyLibraryEntry() {
     return {
@@ -87,8 +94,11 @@ function getEntityLibraryMetadata(kind, key, settings) {
 function getCharacterEntities(settings = getSettings()) {
     const context = getContext();
     const characters = Array.isArray(context?.characters) ? context.characters : [];
-    const entities = new Map();
     const activeKey = getCurrentCharacterReferenceKey();
+    const library = settings.characterReferenceLibrary?.characters || {};
+    const signature = catalogSignature(activeKey, characters.map(character => [character?.name || '', character?.avatar || '']), library);
+    if (entityCatalogs.char?.signature === signature) return entityCatalogs.char.entities;
+    const entities = new Map();
     characters.forEach((character, index) => {
         const key = getCharacterReferenceKeyForCharacter(character, index);
         const { displayName, configured } = getEntityLibraryMetadata('char', key, settings);
@@ -104,7 +114,6 @@ function getCharacterEntities(settings = getSettings()) {
         });
     });
 
-    const library = settings.characterReferenceLibrary?.characters || {};
     for (const key of Object.keys(library)) {
         if (entities.has(key)) continue;
         const { displayName } = getEntityLibraryMetadata('char', key, settings);
@@ -120,13 +129,17 @@ function getCharacterEntities(settings = getSettings()) {
             configured: true,
         });
     }
-    return [...entities.values()].sort((a, b) => a.title.localeCompare(b.title));
+    entityCatalogs.char = { signature, entities: [...entities.values()].sort((a, b) => a.title.localeCompare(b.title)) };
+    return entityCatalogs.char.entities;
 }
 
 async function getUserEntities(settings = getSettings()) {
     let avatars = getCachedUserAvatars();
     if (avatars.length === 0) avatars = await fetchUserAvatars();
     const activeKey = await getCurrentUserReferenceKey(settings);
+    const library = settings.characterReferenceLibrary?.users || {};
+    const signature = catalogSignature(activeKey, avatars.map(file => [file, getPersonaTitle(file)]), library);
+    if (entityCatalogs.user?.signature === signature) return entityCatalogs.user.entities;
     const entities = new Map();
     for (const avatarFile of avatars) {
         const key = getUserReferenceKeyForAvatar(avatarFile);
@@ -144,7 +157,6 @@ async function getUserEntities(settings = getSettings()) {
         });
     }
 
-    const library = settings.characterReferenceLibrary?.users || {};
     for (const key of Object.keys(library)) {
         if (entities.has(key)) continue;
         const { displayName } = getEntityLibraryMetadata('user', key, settings);
@@ -161,7 +173,8 @@ async function getUserEntities(settings = getSettings()) {
             configured: true,
         });
     }
-    return [...entities.values()].sort((a, b) => a.title.localeCompare(b.title));
+    entityCatalogs.user = { signature, entities: [...entities.values()].sort((a, b) => a.title.localeCompare(b.title)) };
+    return entityCatalogs.user.entities;
 }
 
 async function getEntities(kind = selectedKind, settings = getSettings()) {

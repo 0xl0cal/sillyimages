@@ -54,6 +54,10 @@ Character/persona searches read display metadata only. Normalize created, import
 
 Reference collection consumes images lazily up to the provider limit. Take the first successful image from each enabled avatar in provider order, then appearance images, additional references and context images. Do not fetch or encode images beyond the remaining budget.
 
+`fetchWithTimeout` owns the response consumer as well as the HTTP request. Consume JSON, text or blobs inside its callback; the deadline and abort signal stay attached through decoding. Each exit releases listeners and closes the request. Reference downloads use a 15-second deadline, and their HTTP requests and FileReaders share the generation signal. Naistera discovery uses 15 seconds, generation uses 10 minutes, and polling requests consume only their remaining deadline.
+
+Styles and negatives retain array and record identity after normalization. Character/persona catalogs reuse sorted entities while their names, avatars, configured titles and active keys match the current metadata signature. Message hydration caches parsed instructions by source and external-block mode; class-only image updates refresh controls without rebinding. Ordinary messages skip generation snapshots, and image requests copy only the selected character/persona appearances.
+
 Character list rows are reconciled by kind and reference key. Matching rows and avatars retain their DOM identity; filtering removes unmatched rows. Visible previews upgrade when card dimensions or pixel density require a larger size bucket, keeping the displayed image until its replacement is ready. Shrinking a card does not trigger a lower-resolution decode.
 
 ## Verification
