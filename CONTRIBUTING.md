@@ -8,6 +8,7 @@ The extension runs as browser ES modules inside SillyTavern. There is no build s
 - `settings.js` owns `extensionSettings.inline_image_gen`, connection profiles, prompt libraries and lorebooks.
 - `modelCapabilities.js` classifies model families and normalizes model-dependent parameters without network or DOM access.
 - `providers.js` owns provider registration, transports and reference collection policies. Each policy specifies avatar order, format and limits.
+- `providerBase.js` owns the common provider contract, generation URL construction and network error classification. `a1111.js` owns AUTOMATIC1111/Forge generation and catalog requests.
 - `references.js` owns character/persona libraries, reference descriptions, context images and imports.
 - `parser.js` reads message instructions and associates source tags with rendered media.
 - `pipeline.js` owns generation locks, retries, cancellation and persistence. New generation, single retry and batch retry share the media lifecycle.
@@ -20,6 +21,8 @@ The extension runs as browser ES modules inside SillyTavern. There is no build s
 Treat storage keys, profile fields, lorebook entries, character/persona library entries and saved message instructions as public contracts. Retain their names, types and meanings. Runtime refactoring does not introduce schema versions, rewrite stored collections or require an upgrade migration.
 
 Keep provider-specific reference order and limits explicit. Primary avatars precede appearance images; additional references precede context images. Requests and the debug snapshot use the same avatar description builder.
+
+A1111 model catalog failures propagate to the caller. Optional catalogs return their configured fallback on empty, malformed, HTTP or network responses. The connection check only requires a successful HTTP status. Preserve these distinctions when sharing catalog requests.
 
 Bind a rendered image to its source instruction before generation. Preserve tag order for identical instructions. Do not guess between ambiguous media or copy arbitrary source HTML attributes into the rendered DOM. Keep source indexes stable while loading placeholders replace images.
 

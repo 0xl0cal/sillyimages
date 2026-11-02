@@ -264,6 +264,8 @@ src/
   utils.js         — data URL / base64 / upload / ProviderError
   providers.js     — Provider base + OpenAI/xAI/Gemini/OpenRouter/ElectronHub/Naistera
   modelCapabilities.js — model families, limits and parameters
+  providerBase.js  — provider contract, request URLs and transport errors
+  a1111.js         — AUTOMATIC1111 / Forge generation and catalogs
   references.js    — avatars, previous context, lorebook UI, macro, import/export
   parser.js        — tag parser, JSON instructions, matcher
   pipeline.js      — generation with retry, message processing, regeneration
