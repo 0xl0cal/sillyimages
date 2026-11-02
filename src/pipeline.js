@@ -1,13 +1,4 @@
-/**
- * Центральный pipeline генерации:
- *   - `generateImageWithRetry` — подготовка референсов через активный провайдер,
- *     одиночный вызов с retry'ем, без веток apiType.
- *   - `processMessageTags` — обработка нового сообщения от LLM.
- *   - `regenerateMessageImages` — принудительная перегенерация всех тегов в сообщении.
- *
- * Общий helper `persistGeneratedMedia` убирает дубликат блока сохранения
- * изображения/видео (раньше был в обеих процедурах).
- */
+/** Generation, retry and persistence scoped to one message and API configuration. */
 
 import {
     getSettings,
@@ -56,6 +47,8 @@ import {
     getReferenceImage,
     recordCharacterGeneration,
     buildCharacterDescriptionPromptBlock,
+    captureReferenceContext,
+    getCurrentCharacterReferenceKey,
 } from './references.js';
 import { t } from './i18n.js';
 
@@ -308,8 +301,7 @@ function buildRequestSnapshot({ prompt, style, references, matchedAdditionalRefs
     };
 }
 
-// Set of messageIds currently being processed (shared between processMessageTags
-// and regenerate to prevent double-runs).
+// Message objects retain ownership across parsing, dispatch and saving.
 export const processingMessages = new Set();
 
 const tagAbortControllers = new Map();
@@ -423,12 +415,10 @@ export function createErrorPlaceholder(tagId, errorMessage, tagInfo, friendlyInf
     return img;
 }
 
-// ----- Shared helper: сохранение media на сервер (общий для process + regenerate) -----
+// ----- Media persistence -----
 
 /**
- * Сохраняет generated media (image или video) на сервер SillyTavern и возвращает
- * пути к файлам. Ранее этот блок дублировался в `processMessageTags` и
- * `regenerateMessageImages`.
+ * Saves generated images/video to SillyTavern and returns their stored paths.
  *
  * @param {any} generated — результат provider.generate (string data URL | { kind:'video', ... })
  * @param {HTMLElement} statusEl — DOM-элемент, куда пишем текстовый статус
@@ -437,7 +427,7 @@ export function createErrorPlaceholder(tagId, errorMessage, tagInfo, friendlyInf
  */
 export async function persistGeneratedMedia(generated, statusEl, meta) {
     const { messageId, tagIndex, mode } = meta;
-    const apiType = getSettings().apiType;
+    const { apiType = getSettings().apiType, characterName } = meta;
 
     let persistedSrc = '';
     let persistedPosterSrc = '';
@@ -449,6 +439,7 @@ export async function persistGeneratedMedia(generated, statusEl, meta) {
             tagIndex,
             mode: `${mode}-video`,
             apiType,
+            characterName,
         });
         if (generated.posterDataUrl) {
             if (statusEl) statusEl.textContent = t`Saving preview...`;
@@ -457,6 +448,7 @@ export async function persistGeneratedMedia(generated, statusEl, meta) {
                 tagIndex,
                 mode: `${mode}-video-poster`,
                 apiType,
+                characterName,
             });
         }
     } else {
@@ -466,6 +458,7 @@ export async function persistGeneratedMedia(generated, statusEl, meta) {
             tagIndex,
             mode,
             apiType,
+            characterName,
         });
     }
 
@@ -474,11 +467,31 @@ export async function persistGeneratedMedia(generated, statusEl, meta) {
 
 // ----- Main generate (provider dispatch + retry loop) -----
 
-export async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {}) {
-    validateSettings();
+function snapshotGenerationSettings(source = getSettings()) {
+    const settings = Object.fromEntries(Object.entries(source).filter(([, value]) => value === null || typeof value !== 'object'));
+    for (const key of ['styles', 'negativePrompts', 'lorebooks']) settings[key] = structuredClone(source[key] || []);
+    const copyEntry = entry => structuredClone({ primary: entry?.primary, appearanceItems: entry?.appearanceItems || [], generations: [] });
+    const charKey = getCurrentCharacterReferenceKey();
+    const library = source.characterReferenceLibrary || {};
+    settings.characterReferenceLibrary = {
+        characters: library.characters?.[charKey] ? { [charKey]: copyEntry(library.characters[charKey]) } : {},
+        users: Object.fromEntries(Object.entries(library.users || {}).map(([key, entry]) => [key, copyEntry(entry)])),
+    };
+    return settings;
+}
 
-    const settings = getSettings();
-    const provider = resolveActiveProvider(settings);
+function checkGenerationOwnership(options) {
+    if (options.signal?.aborted || options.isCurrent?.() === false) {
+        throw new ProviderError({ message: t`Generation stopped by user`, code: 'aborted', retryable: false });
+    }
+}
+
+export async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {}) {
+    const settings = options.settings || snapshotGenerationSettings();
+    validateSettings(settings);
+    checkGenerationOwnership(options);
+
+    const provider = resolveActiveProvider(settings)?.createRequest(settings);
     if (!provider) {
         throw new Error(t`Unknown API: ${settings.apiType}`);
     }
@@ -486,7 +499,7 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
     const maxRetries = settings.maxRetries;
     const baseDelay = settings.retryDelay;
 
-    let matchedAdditionalRefs = getMatchedAdditionalReferences(prompt);
+    let matchedAdditionalRefs = getMatchedAdditionalReferences(prompt, settings);
     if (matchedAdditionalRefs.length > 0) {
         iigLog(
             'INFO',
@@ -495,12 +508,17 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
     }
 
     // Собираем референсы средствами провайдера.
+    const referenceContext = await captureReferenceContext(settings, options.messageId);
+    checkGenerationOwnership(options);
     const references = await provider.collectReferences({
         prompt,
         messageId: options.messageId,
         matchedAdditionalRefs,
         providerOptions: options,
+        settings,
+        referenceContext,
     });
+    checkGenerationOwnership(options);
     const effectiveModelSettings = options.model
         ? { ...settings, [settings.apiType === 'naistera' ? 'naisteraModel' : 'model']: options.model }
         : settings;
@@ -511,10 +529,12 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
             includeChar: true,
             includeUser: true,
             references,
+            referenceContext,
             mode: settings.apiType === 'novelai' ? settings.novelaiCharacterDescriptionsMode : naisteraDescriptionMode,
         }, settings)
         : '';
     const wrapStyle = !(settings.apiType === 'novelai' || (settings.apiType === 'naistera' && isNaisteraNovelAIModel(effectiveModelSettings.naisteraModel)));
+    checkGenerationOwnership(options);
 
     iigLog('INFO', `References collected for ${settings.apiType}: ${references.length} ref(s)`);
     for (let i = 0; i < references.length; i++) {
@@ -558,14 +578,7 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
     const externalSignal = options.signal || null;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        if (externalSignal?.aborted) {
-            throw new ProviderError({
-                message: t`Generation stopped by user`,
-                code: 'aborted',
-                retryable: false,
-                providerId: settings.apiType || '',
-            });
-        }
+        checkGenerationOwnership(options);
         try {
             const statusText = attempt > 0
                 ? t`Generating (retry ${attempt}/${maxRetries})...`
@@ -576,6 +589,7 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
                 prompt,
                 style,
                 references,
+                settings: effectiveModelSettings,
                 options: {
                     ...options,
                     matchedAdditionalRefs,
@@ -584,6 +598,7 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
                     signal: externalSignal,
                 },
             });
+            checkGenerationOwnership(options);
 
             if (generated && typeof generated === 'object' && generated.kind === 'video') {
                 iigLog(
@@ -614,9 +629,7 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
             lastError = error;
             iigLog('ERROR', `Generation attempt ${attempt + 1} failed:`, error);
 
-            // ProviderError даёт `retryable` явно. Для прочих ошибок (напр.
-            // всплывших из saveImageToFile / внутренностей JS) — fallback на
-            // прежнюю regex-эвристику, чтобы не потерять привычное поведение.
+            // Provider errors declare retryability; transport errors use message hints.
             let isRetryable;
             if (error instanceof ProviderError) {
                 isRetryable = error.retryable;
@@ -643,23 +656,28 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
 }
 
 async function generateTagMedia({
-    tag, tagIndex, messageId, message, settings, loadingPlaceholder, signal,
+    tag, tagIndex, messageId, message, settings, loadingPlaceholder, signal, owner,
     instruction = getInstructionAttributeValue(tag), mode = 'regenerate',
 }) {
     const statusEl = loadingPlaceholder.querySelector('.iig-status');
     const generated = await generateImageWithRetry(
         tag.prompt, tag.style,
         status => { statusEl.textContent = status; },
-        { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset, messageId, signal },
+        { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset, messageId, signal, settings, isCurrent: owner.isCurrent },
     );
-    const { persistedSrc, persistedPosterSrc } = await persistGeneratedMedia(generated, statusEl, { messageId, tagIndex, mode });
-    if (!isGeneratedVideoResult(generated)) recordCharacterGeneration(persistedSrc, tag.prompt, settings);
+    checkGenerationOwnership({ signal, isCurrent: owner.isCurrent });
+    const { persistedSrc, persistedPosterSrc } = await persistGeneratedMedia(generated, statusEl, {
+        messageId, tagIndex, mode, apiType: settings.apiType, characterName: owner.characterName,
+    });
+    checkGenerationOwnership({ signal, isCurrent: owner.isCurrent });
+    if (!isGeneratedVideoResult(generated)) recordCharacterGeneration(persistedSrc, tag.prompt, owner.liveSettings, owner.characterKey);
     const media = createGeneratedMediaElement(isGeneratedVideoResult(generated)
         ? { ...generated, dataUrl: persistedSrc, posterDataUrl: persistedPosterSrc || generated.posterDataUrl || '' }
         : persistedSrc, tag);
     if (instruction) media.setAttribute('data-iig-instruction', instruction);
     loadingPlaceholder.replaceWith(media);
     replaceTagInMessageSource(message, tag, buildPersistedMediaTag(tag, generated, persistedSrc, persistedPosterSrc));
+    owner.capture();
     return generated;
 }
 
@@ -670,342 +688,146 @@ function stopTagGeneration(message, tag, tagId, loadingPlaceholder) {
     toastr.info(t`Generation stopped`, t`Image Generation`, { timeOut: 2000 });
 }
 
-// ----- Process message tags (on AI message rendered) -----
+// Message identity scopes locks to the owning chat, not its numeric row index.
+const activeOperations = new Set();
+let operationId = 0;
 
-export async function processMessageTags(messageId) {
+export function cancelStaleMessageGenerations() {
+    for (const owner of activeOperations) {
+        if (!owner.isCurrent()) for (const controller of owner.controllers) controller.abort('user-cancel');
+    }
+}
+
+async function runMessageGeneration(messageId, { forceAll = false, tagIndex = null } = {}) {
     const context = SillyTavern.getContext();
-    const settings = getSettings();
-
-    if (!settings.enabled) return;
-
-    if (processingMessages.has(messageId)) {
-        iigLog('WARN', `Message ${messageId} is already being processed, skipping`);
+    const liveSettings = getSettings();
+    if (!forceAll && !liveSettings.enabled) return;
+    const chat = context.chat;
+    const message = chat[messageId];
+    if (!message) {
+        if (forceAll) toastr.error(t`Message not found`, t`Image Generation`);
+        return;
+    }
+    if (!forceAll && message.is_user && !liveSettings.processUserMessages) return;
+    if (processingMessages.has(message)) {
+        if (forceAll) toastr.info(t`Message is already being processed`, t`Image Generation`);
         return;
     }
 
-    const message = context.chat[messageId];
-    if (!message) return;
-    // User messages are processed only when the toggle is on.
-    if (message.is_user && !settings.processUserMessages) return;
-
-    const tags = await parseMessageImageTags(message, { checkExistence: true });
-    iigLog('INFO', `parseImageTags returned: ${tags.length} tags (message ${messageId}, is_user=${!!message.is_user})`);
-    for (let i = 0; i < tags.length; i++) {
-        const t = tags[i];
-        const promptPreview = String(t.prompt || '').substring(0, 60);
-        const srcPreview = String(t.existingSrc || '').substring(0, 50);
-        iigLog('INFO', `  tag[${i}] prompt="${promptPreview}" newFormat=${!!t.isNewFormat} src="${srcPreview}"`);
-    }
-    if (tags.length === 0) {
-        iigLog('INFO', 'No tags found by parser');
-        return;
-    }
-
-    processingMessages.add(messageId);
-    iigLog('INFO', `Found ${tags.length} image tag(s) in message ${messageId}`);
-    toastr.info(t`Tags found: ${tags.length}. Generating...`, t`Image Generation`, { timeOut: 3000 });
-
-    // DOM is ready because we use CHARACTER_MESSAGE_RENDERED event
-    const messageElement = document.querySelector(`#chat .mes[mesid="${messageId}"]`);
-    if (!messageElement) {
-        console.error('[IIG] Message element not found for ID:', messageId);
-        toastr.error(t`Could not locate message element`, t`Image Generation`);
-        processingMessages.delete(messageId);
-        return;
-    }
-
-    const mesTextEl = messageElement.querySelector('.mes_text');
-    if (!mesTextEl) {
-        processingMessages.delete(messageId);
-        return;
-    }
-
-    const convertedLegacyTags = convertLegacyTagsToInstructionFormat(message, tags);
-
-    if (convertedLegacyTags > 0) {
-        rerenderMessageHtml(context, message, settings, messageId, mesTextEl);
-        iigLog('INFO', `Converted ${convertedLegacyTags} legacy tag(s) to instruction tags before processing`);
-    }
-    const renderedMedia = bindRenderedMediaTags(mesTextEl, tags);
-
-    const processTag = async (tag, index) => {
-        const tagId = `iig-${messageId}-${index}`;
-        applyConfiguredStyleToTag(tag, settings);
-
-        iigLog('INFO', `Processing tag ${index}: ${tag.fullMatch.substring(0, 50)}`);
-
-        const loadingPlaceholder = createLoadingPlaceholder(tagId);
-        const targetElement = renderedMedia[index] || null;
-
-        if (targetElement) {
-            const parent = targetElement.parentElement;
-            if (parent) {
-                const parentStyle = window.getComputedStyle(parent);
-                if (parentStyle.display === 'flex' || parentStyle.display === 'grid') {
-                    loadingPlaceholder.style.alignSelf = 'center';
-                }
-            }
-            targetElement.replaceWith(loadingPlaceholder);
-            iigLog('INFO', `Loading placeholder shown (replaced target element)`);
-        } else {
-            iigLog('WARN', `Could not find target element, appending placeholder as fallback`);
-            mesTextEl.appendChild(loadingPlaceholder);
-        }
-
-        const controller = new AbortController();
-        tagAbortControllers.set(tagId, controller);
-
-        try {
-            const generated = await generateTagMedia({
-                tag, tagIndex: index, messageId, message, settings, loadingPlaceholder,
-                signal: controller.signal, mode: 'generate',
-            });
-
-            iigLog('INFO', `Successfully generated ${isGeneratedVideoResult(generated) ? 'video' : 'image'} for tag ${index}`);
-            const readyMsg = isGeneratedVideoResult(generated)
-                ? t`Video ${index + 1}/${tags.length} ready`
-                : t`Image ${index + 1}/${tags.length} ready`;
-            toastr.success(readyMsg, t`Image Generation`, { timeOut: 2000 });
-        } catch (error) {
-            const wasAborted = error instanceof ProviderError && error.code === 'aborted';
-            if (wasAborted) {
-                iigLog('INFO', `Generation stopped by user for tag ${index}`);
-                stopTagGeneration(message, tag, tagId, loadingPlaceholder);
-            } else {
-                iigLog('ERROR', `Failed to generate image for tag ${index}:`, error);
-                const friendly = formatProviderError(error);
-
-                const errorPlaceholder = createErrorPlaceholder(tagId, error.message, tag, friendly);
-                loadingPlaceholder.replaceWith(errorPlaceholder);
-
-                if (tag.isNewFormat) {
-                    const errorTag = buildPersistedImageTag(tag, ERROR_IMAGE_PATH);
-                    replaceTagInMessageSource(message, tag, errorTag);
-                } else {
-                    const errorMarker = `[IMG:ERROR:${error.message.substring(0, 50)}]`;
-                    replaceTagInMessageSource(message, tag, errorMarker);
-                }
-                iigLog('INFO', `Marked tag as failed in message.mes`);
-
-                toastr.error(friendly.message, friendly.title);
-            }
-        } finally {
-            tagAbortControllers.delete(tagId);
-        }
+    const settings = snapshotGenerationSettings(liveSettings);
+    const characterKey = getCurrentCharacterReferenceKey();
+    const characterName = context.characters?.[context.characterId]?.name || 'generated';
+    const id = ++operationId;
+    let source, externalSource, swipe;
+    const owner = {
+        controllers: new Set(), liveSettings, characterKey, characterName,
+        capture() { source = message.mes; externalSource = message.extra?.extblocks; swipe = message.swipe_id; },
+        isCurrent() {
+            const current = SillyTavern.getContext();
+            return current.chat === chat && current.chat[messageId] === message
+                && getCurrentCharacterReferenceKey() === characterKey
+                && message.mes === source && message.extra?.extblocks === externalSource && message.swipe_id === swipe;
+        },
     };
-
+    owner.capture();
+    // Acquire before parsing or any other await; retain ownership through saving.
+    processingMessages.add(message);
+    activeOperations.add(owner);
+    let mesTextEl;
+    let dirty = false;
     try {
-        // Process in source order so identical tags are persisted to matching slots.
-        for (let index = 0; index < tags.length; index++) {
-            await processTag(tags[index], index);
-        }
-    } finally {
-        processingMessages.delete(messageId);
-        iigLog('INFO', `Finished processing message ${messageId}`);
-    }
-
-    await context.saveChat();
-
-    if (typeof context.messageFormatting === 'function') {
-        rerenderMessageHtml(context, message, settings, messageId, mesTextEl);
-        console.log('[IIG] Message re-rendered via messageFormatting');
-    } else {
-        const freshMessageEl = document.querySelector(`#chat .mes[mesid="${messageId}"] .mes_text`);
-        if (freshMessageEl && message.mes) {
-            console.log('[IIG] Attempting manual refresh...');
-        }
-    }
-}
-
-// ----- Regenerate (user-triggered) -----
-
-/**
- * Regenerate a single image identified by (messageId, tagIndex).
- * tagIndex matches the order of tags returned by parseMessageImageTags.
- */
-export async function regenerateSingleTag(messageId, tagIndex) {
-    const context = SillyTavern.getContext();
-    const settings = getSettings();
-    const message = context.chat[messageId];
-
-    if (!message) {
-        toastr.error(t`Message not found`, t`Image Generation`);
-        return;
-    }
-
-    const tags = await parseMessageImageTags(message, { forceAll: true });
-    if (tagIndex < 0 || tagIndex >= tags.length) {
-        toastr.warning(t`Tag not found`, t`Image Generation`);
-        return;
-    }
-
-    if (processingMessages.has(messageId)) {
-        toastr.info(t`Message is already being processed`, t`Image Generation`);
-        return;
-    }
-    processingMessages.add(messageId);
-
-    const messageElement = document.querySelector(`#chat .mes[mesid="${messageId}"]`);
-    const mesTextEl = messageElement?.querySelector('.mes_text');
-    if (!mesTextEl) {
-        processingMessages.delete(messageId);
-        return;
-    }
-
-    const convertedLegacyTags = convertLegacyTagsToInstructionFormat(message, tags);
-    if (convertedLegacyTags > 0) {
-        rerenderMessageHtml(context, message, settings, messageId, mesTextEl);
-    }
-
-    const tag = tags[tagIndex];
-    const tagId = `iig-regen-${messageId}-${tagIndex}`;
-    applyConfiguredStyleToTag(tag, settings);
-
-    let loadingPlaceholder = null;
-    const controller = new AbortController();
-    tagAbortControllers.set(tagId, controller);
-
-    try {
-        const existingMediaList = bindRenderedMediaTags(mesTextEl, tags);
-        const existingMedia = existingMediaList[tagIndex] || null;
-        if (!existingMedia) {
-            throw new Error(t`Could not find image in this message. Reopen the chat and try again.`);
-        }
-        const instruction = existingMedia.getAttribute('data-iig-instruction');
-
-        loadingPlaceholder = createLoadingPlaceholder(tagId);
-        existingMedia.replaceWith(loadingPlaceholder);
-
-        const generated = await generateTagMedia({
-            tag, tagIndex: tagIndex, messageId, message, settings, loadingPlaceholder,
-            signal: controller.signal, instruction,
-        });
-
-        const readyMsg = isGeneratedVideoResult(generated)
-            ? t`Video ready`
-            : t`Image ready`;
-        toastr.success(readyMsg, t`Image Generation`, { timeOut: 2000 });
-    } catch (error) {
-        const wasAborted = error instanceof ProviderError && error.code === 'aborted';
-        if (wasAborted) {
-            iigLog('INFO', `Single-tag regeneration stopped by user for tag ${tagIndex}`);
-            stopTagGeneration(message, tag, tagId, loadingPlaceholder);
-        } else {
-            iigLog('ERROR', `Single-tag regeneration failed for tag ${tagIndex}:`, error);
-            const friendly = formatProviderError(error);
-            toastr.error(friendly.message, friendly.title);
-        }
-    } finally {
-        tagAbortControllers.delete(tagId);
-        processingMessages.delete(messageId);
-        await context.saveChat();
-        rerenderMessageHtml(context, message, settings, messageId, mesTextEl);
-    }
-}
-
-export async function regenerateMessageImages(messageId) {
-    const context = SillyTavern.getContext();
-    const settings = getSettings();
-    const message = context.chat[messageId];
-
-    if (!message) {
-        toastr.error(t`Message not found`, t`Image Generation`);
-        return;
-    }
-
-    if (processingMessages.has(messageId)) {
-        toastr.info(t`Message is already being processed`, t`Image Generation`);
-        return;
-    }
-
-    processingMessages.add(messageId);
-
-    try {
-        const tags = await parseMessageImageTags(message, { forceAll: true });
-
-        iigLog('INFO', `regenerateMessageImages(messageId=${messageId}): parser found ${tags.length} tag(s)`);
-        for (let i = 0; i < tags.length; i++) {
-            iigLog('INFO', `  tag[${i}] prompt: "${String(tags[i].prompt || '').substring(0, 60)}"`);
-        }
-
-        if (tags.length === 0) {
-            toastr.warning(t`No tags to regenerate`, t`Image Generation`);
+        const tags = await parseMessageImageTags(message, { forceAll, checkExistence: !forceAll, settings });
+        if (!owner.isCurrent()) return;
+        if (!tags.length) {
+            if (forceAll) toastr.warning(t`No tags to regenerate`, t`Image Generation`);
             return;
         }
-
-        iigLog('INFO', `Regenerating ${tags.length} images in message ${messageId}`);
-        toastr.info(t`Regenerating ${tags.length} images...`, t`Image Generation`);
-
-        const messageElement = document.querySelector(`#chat .mes[mesid="${messageId}"]`);
-        if (!messageElement) {
-            iigLog('WARN', `regenerateMessageImages: .mes[mesid="${messageId}"] not found in DOM`);
+        if (tagIndex !== null && (tagIndex < 0 || tagIndex >= tags.length)) {
+            toastr.warning(t`Tag not found`, t`Image Generation`);
             return;
         }
-
-        const mesTextEl = messageElement.querySelector('.mes_text');
+        mesTextEl = document.querySelector(`#chat .mes[mesid="${messageId}"] .mes_text`);
         if (!mesTextEl) {
-            iigLog('WARN', `regenerateMessageImages: .mes_text not found inside message ${messageId}`);
+            toastr.error(t`Could not locate message element`, t`Image Generation`);
             return;
         }
+        dirty = convertLegacyTagsToInstructionFormat(message, tags) > 0;
+        owner.capture();
+        if (dirty) rerenderMessageHtml(context, message, settings, messageId, mesTextEl);
+        const renderedMedia = bindRenderedMediaTags(mesTextEl, tags);
+        const indices = tagIndex === null ? tags.map((_, index) => index) : [tagIndex];
+        if (forceAll && tagIndex === null) toastr.info(t`Regenerating ${tags.length} images...`, t`Image Generation`);
+        else if (!forceAll) toastr.info(t`Tags found: ${tags.length}. Generating...`, t`Image Generation`, { timeOut: 3000 });
 
-        const convertedLegacyTags = convertLegacyTagsToInstructionFormat(message, tags);
-        if (convertedLegacyTags > 0) {
-            rerenderMessageHtml(context, message, settings, messageId, mesTextEl);
-            iigLog('INFO', `Converted ${convertedLegacyTags} legacy tag(s) to instruction tags before regeneration`);
-        }
-
-        const existingMediaList = bindRenderedMediaTags(mesTextEl, tags);
-        for (let index = 0; index < tags.length; index++) {
+        for (const index of indices) {
+            if (!owner.isCurrent()) break;
             const tag = tags[index];
-            const tagId = `iig-regen-${messageId}-${index}`;
-            applyConfiguredStyleToTag(tag, settings);
-            iigLog('INFO', `regen iter[${index}/${tags.length - 1}] start: prompt="${String(tag.prompt || '').substring(0, 40)}"`);
-
-            let loadingPlaceholder = null;
+            const tagId = 'iig-' + id + '-' + messageId + '-' + index;
             const controller = new AbortController();
+            owner.controllers.add(controller);
             tagAbortControllers.set(tagId, controller);
-
+            let loadingPlaceholder = null;
             try {
-                const existingMedia = existingMediaList[index] || null;
-                iigLog('INFO', `regen iter[${index}] DOM media count=${existingMediaList.filter(Boolean).length}, picked=${existingMedia ? `[${index}]` : 'NONE'}`);
+                applyConfiguredStyleToTag(tag, settings);
+                const existingMedia = renderedMedia[index];
+                if (forceAll && !existingMedia) throw new Error(t`Could not find image in this message. Reopen the chat and try again.`);
+                const instruction = existingMedia?.getAttribute('data-iig-instruction') || getInstructionAttributeValue(tag);
+                loadingPlaceholder = createLoadingPlaceholder(tagId);
                 if (existingMedia) {
-                    const instruction = existingMedia.getAttribute('data-iig-instruction');
-
-                    loadingPlaceholder = createLoadingPlaceholder(tagId);
+                    const parent = existingMedia.parentElement;
+                    if (parent && ['flex', 'grid'].includes(getComputedStyle(parent).display)) loadingPlaceholder.style.alignSelf = 'center';
                     existingMedia.replaceWith(loadingPlaceholder);
-
-                    const generated = await generateTagMedia({
-                        tag, tagIndex: index, messageId, message, settings, loadingPlaceholder,
-                        signal: controller.signal, instruction,
-                    });
-
-                    const readyMsg = isGeneratedVideoResult(generated)
-                        ? t`Video ${index + 1}/${tags.length} ready`
-                        : t`Image ${index + 1}/${tags.length} ready`;
-                    toastr.success(readyMsg, t`Image Generation`, { timeOut: 2000 });
-                    iigLog('INFO', `regen iter[${index}] complete`);
-                } else {
-                    throw new Error(t`Could not find image in this message. Reopen the chat and try again.`);
-                }
+                } else mesTextEl.appendChild(loadingPlaceholder);
+                const generated = await generateTagMedia({
+                    tag, tagIndex: index, messageId, message, settings, loadingPlaceholder, owner,
+                    signal: controller.signal, instruction, mode: forceAll ? 'regenerate' : 'generate',
+                });
+                dirty = true;
+                const ready = tagIndex !== null
+                    ? (isGeneratedVideoResult(generated) ? t`Video ready` : t`Image ready`)
+                    : (isGeneratedVideoResult(generated) ? t`Video ${index + 1}/${tags.length} ready` : t`Image ${index + 1}/${tags.length} ready`);
+                toastr.success(ready, t`Image Generation`, { timeOut: 2000 });
             } catch (error) {
-                const wasAborted = error instanceof ProviderError && error.code === 'aborted';
-                if (wasAborted) {
-                    iigLog('INFO', `regen iter[${index}] stopped by user`);
+                if (!owner.isCurrent()) break;
+                if (error instanceof ProviderError && error.code === 'aborted') {
                     stopTagGeneration(message, tag, tagId, loadingPlaceholder);
+                    dirty = true;
                 } else {
-                    iigLog('ERROR', `Regeneration failed for tag ${index}:`, error);
+                    iigLog('ERROR', 'Generation failed for tag ' + index + ':', error);
                     const friendly = formatProviderError(error);
+                    if (!forceAll) {
+                        loadingPlaceholder?.replaceWith(createErrorPlaceholder(tagId, error.message, tag, friendly));
+                        replaceTagInMessageSource(message, tag, tag.isNewFormat
+                            ? buildPersistedImageTag(tag, ERROR_IMAGE_PATH)
+                            : '[IMG:ERROR:' + String(error.message).substring(0, 50) + ']');
+                        dirty = true;
+                    }
                     toastr.error(friendly.message, friendly.title);
                 }
+                owner.capture();
             } finally {
                 tagAbortControllers.delete(tagId);
+                owner.controllers.delete(controller);
             }
         }
-
-        await context.saveChat();
-        rerenderMessageHtml(context, message, settings, messageId, mesTextEl);
-        iigLog('INFO', `Regeneration complete for message ${messageId}`);
+        if (owner.isCurrent()) {
+            if (dirty) await context.saveChat();
+            if (owner.isCurrent()) rerenderMessageHtml(context, message, settings, messageId, mesTextEl);
+        }
     } finally {
-        processingMessages.delete(messageId);
+        activeOperations.delete(owner);
+        processingMessages.delete(message);
     }
+}
+
+export function processMessageTags(messageId) {
+    return runMessageGeneration(messageId);
+}
+
+export function regenerateSingleTag(messageId, tagIndex) {
+    return runMessageGeneration(messageId, { forceAll: true, tagIndex });
+}
+
+export function regenerateMessageImages(messageId) {
+    return runMessageGeneration(messageId, { forceAll: true });
 }

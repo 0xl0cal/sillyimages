@@ -26,6 +26,15 @@ export class NaisteraProvider extends Provider {
     get id() { return 'naistera'; }
     get displayName() { return 'Naistera'; }
 
+    createRequest(settings) {
+        const provider = Object.assign(new NaisteraProvider(), this);
+        const sameConnection = !this.catalogConnection || this.catalogConnection.endpoint === getEffectiveEndpoint(settings)
+            && this.catalogConnection.apiKey === settings.apiKey;
+        provider.modelCatalog = new Map(sameConnection ? structuredClone([...this.modelCatalog]) : []);
+        provider.requestScoped = true;
+        return provider;
+    }
+
     get capabilities() {
         return {
             ...super.capabilities,
@@ -88,8 +97,8 @@ export class NaisteraProvider extends Provider {
         return { ...this.modelCatalogStatus };
     }
 
-    async fetchModels() {
-        const settings = { ...getSettings() };
+    async fetchModels(config = getSettings()) {
+        const settings = { ...config };
         const requestId = this.catalogRequestId = (this.catalogRequestId || 0) + 1;
         const endpoint = getEffectiveEndpoint(settings).replace(/\/$/, '');
         const url = `${endpoint}/api/models`;
@@ -129,10 +138,12 @@ export class NaisteraProvider extends Provider {
             }));
 
         const current = getSettings();
-        if (requestId !== this.catalogRequestId || current.apiKey !== settings.apiKey || getEffectiveEndpoint(current).replace(/\/$/, '') !== endpoint) {
+        if (requestId !== this.catalogRequestId || (!this.requestScoped
+            && (current.apiKey !== settings.apiKey || getEffectiveEndpoint(current).replace(/\/$/, '') !== endpoint))) {
             return models.map(model => model.id);
         }
         this.modelCatalog = new Map(models.map((model) => [model.id, model]));
+        this.catalogConnection = { endpoint, apiKey: settings.apiKey };
         this.modelCatalogStatus = {
             authenticated: payload?.authenticated === true,
             tier: payload?.tier || null,
@@ -213,18 +224,17 @@ export class NaisteraProvider extends Provider {
         });
     }
 
-    async collectReferences({ prompt: _prompt, messageId, matchedAdditionalRefs = [], providerOptions = {} }) {
-        const settings = getSettings();
+    async collectReferences({ prompt: _prompt, messageId, matchedAdditionalRefs = [], providerOptions = {}, settings = getSettings(), referenceContext = null }) {
         const normalizedModel = normalizeNaisteraModel(providerOptions.model || settings.naisteraModel);
         if (!this.modelCatalog.has(normalizedModel)) {
-            await this.fetchModels().catch((error) => {
+            await this.fetchModels(settings).catch((error) => {
                 iigLog('WARN', `Naistera model metadata unavailable: ${error?.message || error}`);
             });
         }
         if (!this.supportsReferences({ ...settings, naisteraModel: normalizedModel })) {
             return [];
         }
-        const refs = await collectProviderReferences({ messageId, matchedAdditionalRefs }, Infinity, 'dataUrl', [
+        const refs = await collectProviderReferences({ messageId, matchedAdditionalRefs, settings, referenceContext }, Infinity, 'dataUrl', [
             ['user', 'naisteraSendUserAvatar'], ['char', 'naisteraSendCharAvatar'],
         ]);
 
@@ -240,14 +250,13 @@ export class NaisteraProvider extends Provider {
         return refs;
     }
 
-    async generate({ prompt, style, references = [], options = {} }) {
-        const settings = getSettings();
+    async generate({ prompt, style, references = [], options = {}, settings = getSettings() }) {
         const endpoint = getEffectiveEndpoint(settings);
         const url = endpoint.endsWith('/api/generate') ? endpoint : `${endpoint}/api/generate`;
 
         const aspectRatio = options.aspectRatio || settings.naisteraAspectRatio || '1:1';
         const model = normalizeNaisteraModel(options.model || settings.naisteraModel);
-        if (!this.modelCatalog.has(model)) await this.fetchModels();
+        if (!this.modelCatalog.has(model)) await this.fetchModels(settings);
         if (!this.supportsReferences({ ...settings, naisteraModel: model })) references = [];
         const preset = options.preset || null;
         const wantsVideoTest = Boolean(options.videoTestMode);

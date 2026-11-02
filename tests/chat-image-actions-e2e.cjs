@@ -40,7 +40,7 @@ const server = createServer((req,res)=>{
     if(req.url==='/'){body=host;type='text/html';}
     else if(req.url.startsWith('/user/images/')||req.url==='/decoration.png'){body=Buffer.from(png,'base64');type='image/png';}
     else if(req.url==='/scripts/i18n.js')body='export const t=(s,...v)=>String.raw({raw:s},...v);export const translate=s=>s;';
-    else if(req.url==='/scripts/popup.js')body='export class Popup {static show={confirm:async()=>true,input:async()=>null};}';
+    else if(req.url==='/scripts/popup.js')body='export class Popup {static show={confirm:async()=>{await window.confirmHook?.();return window.confirmResult??true;},input:async()=>null};}';
     else if(req.url.startsWith(prefix)){
         const file=path.resolve(root,decodeURIComponent(req.url.split('?')[0].slice(prefix.length)));
         if(!file.startsWith(root+path.sep)){res.writeHead(403).end();return;}
@@ -49,7 +49,8 @@ const server = createServer((req,res)=>{
     }else{res.writeHead(404).end();return;}
     res.writeHead(200,{'Content-Type':type});res.end(body);
 });
-(async()=>{
+module.exports = { server, prefix, png, tag };
+if (require.main === module) (async()=>{
     const engine=process.env.IIG_BROWSER_ENGINE||'chromium';
     const artifacts=path.join(__dirname,'artifacts','chat-image-actions-'+engine);mkdirSync(artifacts,{recursive:true});
     await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));

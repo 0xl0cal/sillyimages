@@ -30,15 +30,14 @@ export class OpenAIProvider extends Provider {
         return isGptImageFamily(kind) || kind === 'flux-kontext';
     }
 
-    async collectReferences({ prompt: _prompt, messageId, matchedAdditionalRefs = [] }) {
-        const modelKind = classifyOpenAIModel(getSettings().model);
+    async collectReferences(ctx) {
+        const modelKind = classifyOpenAIModel((ctx.settings || getSettings()).model);
         // Flux Kontext принимает только 1 reference; gpt-image-* — до MAX.
         const maxRefs = getOpenAIModelMaxReferences(modelKind) || MAX_GENERATION_REFERENCE_IMAGES;
-        return collectProviderReferences({ messageId, matchedAdditionalRefs }, maxRefs, 'base64');
+        return collectProviderReferences(ctx, maxRefs, 'base64');
     }
 
-    async generate({ prompt, style, references = [], options = {} }) {
-        const settings = getSettings();
+    async generate({ prompt, style, references = [], options = {}, settings = getSettings() }) {
         let fullPrompt = buildFinalGenerationPrompt(prompt, style, options.matchedAdditionalRefs || [], settings);
         fullPrompt = appendPromptBlock(fullPrompt, buildAvatarReferencePromptBlock(references, settings));
 
@@ -245,16 +244,15 @@ export class XAIProvider extends Provider {
         return String(settings.model || '').toLowerCase().includes('grok-imagine-image');
     }
 
-    async collectReferences({ prompt: _prompt, messageId, matchedAdditionalRefs = [] }) {
+    async collectReferences(ctx) {
         return collectProviderReferences(
-            { messageId, matchedAdditionalRefs },
+            ctx,
             XAI_MAX_REFERENCE_IMAGES,
             'dataUrl',
         );
     }
 
-    async generate({ prompt, style, references = [], options = {} }) {
-        const settings = getSettings();
+    async generate({ prompt, style, references = [], options = {}, settings = getSettings() }) {
         let fullPrompt = buildFinalGenerationPrompt(prompt, style, options.matchedAdditionalRefs || [], settings);
         fullPrompt = appendPromptBlock(fullPrompt, buildAvatarReferencePromptBlock(references, settings));
 

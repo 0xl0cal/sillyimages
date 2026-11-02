@@ -37,7 +37,7 @@ export function getMessageRenderText(message, settings = getSettings()) {
 }
 
 export async function parseMessageImageTags(message, options = {}) {
-    const settings = getSettings();
+    const settings = options.settings || getSettings();
     const tags = [];
 
     const mainTags = await parseImageTags(message?.mes || '', options);
@@ -307,8 +307,7 @@ export function filterPromptReferences(refs = [], supportsImageReferences = true
         .map(ref => ({ ...ref, imagePath: '' }));
 }
 
-export function getMatchedAdditionalReferences(prompt) {
-    const settings = getSettings();
+export function getMatchedAdditionalReferences(prompt, settings = getSettings()) {
     const isPowerMode = settings.additionalReferencesMode === 'power';
     const refs = getMatchingLorebooks(settings)
         .flatMap((book) => book.refs.map((ref) => ({ ...ref, _lorebookName: book.name })))

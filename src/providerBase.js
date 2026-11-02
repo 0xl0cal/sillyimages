@@ -5,6 +5,8 @@ import { isImageModel } from './modelCapabilities.js';
 import { t } from './i18n.js';
 
 export class Provider {
+    createRequest(_settings) { return this; }
+
     get id() { throw new Error('Provider.id not implemented'); }
     get displayName() { return this.id; }
     get capabilities() {

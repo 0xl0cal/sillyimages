@@ -75,7 +75,7 @@ export class NovelAIProvider extends Provider {
     }
 
     async generate(args) {
-        const settings = { ...getSettings() };
+        const settings = { ...(args.settings || getSettings()) };
         if (settings.novelaiNeverSpendAnlas === false) return this.#generateRequest(args, settings);
         // Recheck the allowance after earlier guarded requests finish using it.
         const task = this.#noAnlasQueue.then(() => this.#generateRequest(args, settings));

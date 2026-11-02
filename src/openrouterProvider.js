@@ -68,12 +68,11 @@ export class OpenRouterProvider extends Provider {
     }
 
     async collectReferences(ctx) {
-        const maxRefs = getOpenRouterCapabilities(getSettings().model).maxReferences;
+        const maxRefs = getOpenRouterCapabilities((ctx.settings || getSettings()).model).maxReferences;
         return collectProviderReferences(ctx, maxRefs, 'dataUrl', [['user', 'sendUserAvatar'], ['char', 'sendCharAvatar']]);
     }
 
-    async generate({ prompt, style, references = [], options = {} }) {
-        const settings = getSettings();
+    async generate({ prompt, style, references = [], options = {}, settings = getSettings() }) {
         const url = buildGenerationUrl(settings, '/chat/completions');
 
         const model = settings.model;

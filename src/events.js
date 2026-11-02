@@ -3,7 +3,7 @@
  */
 
 import { getSettings, iigLog } from './settings.js';
-import { processMessageTags, regenerateMessageImages } from './pipeline.js';
+import { processMessageTags, regenerateMessageImages, cancelStaleMessageGenerations } from './pipeline.js';
 import { t } from './i18n.js';
 
 // ----- Regenerate button (three-dots menu) -----
@@ -108,6 +108,7 @@ export function subscribeEvents() {
     console.log('[IIG] MESSAGE_SWIPED:', context.event_types.MESSAGE_SWIPED);
 
     context.eventSource.on(context.event_types.CHAT_CHANGED, () => {
+        cancelStaleMessageGenerations();
         iigLog('INFO', 'CHAT_CHANGED event - adding buttons to existing messages');
         setTimeout(() => addButtonsToExistingMessages(), 100);
     });

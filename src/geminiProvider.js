@@ -42,12 +42,11 @@ export class GeminiProvider extends Provider {
     get displayName() { return 'Gemini / nano-banana'; }
 
     async collectReferences(ctx) {
-        const maxRefs = getGeminiCapabilities(getSettings().model).maxReferences;
+        const maxRefs = getGeminiCapabilities((ctx.settings || getSettings()).model).maxReferences;
         return collectProviderReferences(ctx, maxRefs, 'base64', [['user', 'sendUserAvatar'], ['char', 'sendCharAvatar']]);
     }
 
-    async generate({ prompt, style, references = [], options = {} }) {
-        const settings = getSettings();
+    async generate({ prompt, style, references = [], options = {}, settings = getSettings() }) {
         const model = settings.model;
         const caps = getGeminiCapabilities(model);
         const url = buildGenerationUrl(settings, `/v1beta/models/${model}:generateContent`);

@@ -34,6 +34,10 @@ Bind a rendered image to its source instruction before generation. Preserve tag 
 
 Initial generation persists an error placeholder for retry. A failed regeneration retains the stored image. Cancellation persists a stopped placeholder. Always release generation controllers and locks. Viewer closure releases timers, frames, pointer capture, modal state and scroll locks.
 
+Acquire generation ownership by message identity before parsing and retain it through saving. Chat replacement, source edits and swipes cancel stale work without writing to another chat. Each request owns its API settings, prompt libraries, matched references and selected appearances; generation histories and connection profiles stay outside the snapshot. Retries reuse that configuration. Naistera catalog metadata is request-owned, while NovelAI allowance checks share one serialized queue.
+
+Viewer and library deletion use the same path plan and protection check. Deleting a file removes its links from every character/persona history. Reference paths are indexed per operation and settings revision. Call `saveSettings()` after reference edits so asynchronous deletion observes the new protections. Revisions and ownership state live only in memory.
+
 Viewer geometry is sampled at gesture start, image load and viewport resize. Pointer/wheel movement uses cached dimensions and batches transforms into animation frames. Original image files and viewer sources are not resized or recompressed.
 
 The viewer retains at most four original image resources and 32 megapixels between sessions to reuse decodes. This bounded cache trades idle memory for reopening speed and clears on pagehide. Library previews retain their viewport resources under the modal and reconcile visibility after it closes.
@@ -46,7 +50,9 @@ Catalog responses apply only to the current request and connection identity. Pro
 
 Catalog error notifications use the same request ownership as catalog data. Library list and editor renders capture their kind and revision before asynchronous reads. Reference uploads resolve the current entry and item by key after saving the file; deleted targets are not recreated. Completion updates the matching preview in place and preserves editor input and focus.
 
-Character/persona searches read display metadata only. Full entry normalization belongs to the selected editor, not list construction. Do not traverse generation histories to filter names or load a collapsed library when toggling active-persona mode.
+Character/persona searches read display metadata only. Normalize created, imported or replaced entries once on first read; keep entry, item and history identities stable during editing. Do not traverse generation histories to filter names or load a collapsed library when toggling active-persona mode.
+
+Reference collection consumes images lazily up to the provider limit. Take the first successful image from each enabled avatar in provider order, then appearance images, additional references and context images. Do not fetch or encode images beyond the remaining budget.
 
 Character list rows are reconciled by kind and reference key. Matching rows and avatars retain their DOM identity; filtering removes unmatched rows. Visible previews upgrade when card dimensions or pixel density require a larger size bucket, keeping the displayed image until its replacement is ready. Shrinking a card does not trigger a lower-resolution decode.
 

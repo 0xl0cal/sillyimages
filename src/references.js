@@ -39,6 +39,7 @@ const PERSONAS_MODULE_PATHS = Object.freeze([
 let personasModulePromise = null;
 const temporaryPrimaryReferenceIds = new Map();
 const MAX_CHARACTER_GENERATIONS = 48;
+const normalizedEntries = new WeakSet();
 
 function makeCharacterLibraryItemId(prefix) {
     return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -202,10 +203,13 @@ export function getCharacterLibraryEntry(kind, key, settings = getSettings(), { 
     const normalizedKey = String(key || '').trim();
     if (!normalizedKey) return null;
     if (!bucket[normalizedKey] && create) {
-        bucket[normalizedKey] = normalizeCharacterLibraryEntry({});
+        bucket[normalizedKey] = {};
     }
     if (!bucket[normalizedKey]) return null;
-    bucket[normalizedKey] = normalizeCharacterLibraryEntry(bucket[normalizedKey]);
+    if (!normalizedEntries.has(bucket[normalizedKey])) {
+        bucket[normalizedKey] = normalizeCharacterLibraryEntry(bucket[normalizedKey]);
+        normalizedEntries.add(bucket[normalizedKey]);
+    }
     return bucket[normalizedKey];
 }
 
@@ -282,9 +286,8 @@ export function setTemporaryCharacterPrimary(kind, key, itemId, settings = getSe
     return item;
 }
 
-export function recordCharacterGeneration(imagePath, prompt = '', settings = getSettings()) {
+export function recordCharacterGeneration(imagePath, prompt = '', settings = getSettings(), key = getCurrentCharacterReferenceKey()) {
     const normalizedPath = normalizeStoredImagePath(imagePath);
-    const key = getCurrentCharacterReferenceKey();
     if (!normalizedPath || key === 'no-character') return null;
     const entry = getCharacterLibraryEntry('char', key, settings);
     const generation = {
@@ -320,17 +323,6 @@ export function syncCharacterGenerationHistory(key, imagePaths, settings = getSe
     return entry.generations;
 }
 
-export function removeCharacterGeneration(key, generationId, settings = getSettings()) {
-    const entry = getCharacterLibraryEntry('char', key, settings, { create: false });
-    const normalizedId = String(generationId || '').trim();
-    if (!entry || !normalizedId) return null;
-    const generation = entry.generations.find((item) => item.id === normalizedId) || null;
-    if (!generation) return null;
-    entry.generations = entry.generations.filter((item) => item.id !== normalizedId);
-    saveSettings();
-    return generation;
-}
-
 export function getCharacterLibraryDescription(kind, key, settings = getSettings()) {
     const entry = getCharacterLibraryEntry(kind, key, settings, { create: false });
     if (!entry) return '';
@@ -345,6 +337,7 @@ export async function buildCharacterDescriptionPromptBlock({
     includeUser = false,
     references = [],
     mode = 'as-is',
+    referenceContext = null,
 } = {}, settings = getSettings()) {
     if (settings.sendRefDescriptions === false || mode === 'none') return '';
 
@@ -356,12 +349,12 @@ export async function buildCharacterDescriptionPromptBlock({
     let userDescription = '';
 
     if (includeChar && (includeSentSources || !sentSources.has('char'))) {
-        const key = getCurrentCharacterReferenceKey();
+        const key = referenceContext?.charKey || getCurrentCharacterReferenceKey();
         charDescription = getCharacterLibraryDescription('char', key, settings);
     }
 
     if (includeUser && (includeSentSources || !sentSources.has('user'))) {
-        const key = await getCurrentUserReferenceKey(settings);
+        const key = referenceContext?.userKey || await getCurrentUserReferenceKey(settings);
         userDescription = getCharacterLibraryDescription('user', key, settings);
     }
 
@@ -408,8 +401,7 @@ export {
 
 // ----- User avatar URL resolver (persona + selected file) -----
 
-export async function getSelectedUserAvatarUrl() {
-    const settings = getSettings();
+export async function getSelectedUserAvatarUrl(settings = getSettings()) {
 
     if (settings.useActiveUserPersonaAvatar) {
         try {
@@ -467,26 +459,49 @@ async function getCurrentCharacterAvatarUrl() {
     }
 }
 
-export async function collectCharacterLibraryReferences(kind, format, settings = getSettings()) {
+export async function captureReferenceContext(settings, messageId) {
+    const charKey = getCurrentCharacterReferenceKey();
+    const charAvatar = getCurrentCharacterAvatarUrl();
+    const contextUrls = settings.imageContextEnabled
+        ? getPreviousGeneratedImageUrls(messageId, settings.imageContextCount, settings) : [];
+    const [charAvatarUrl, userKey, userAvatarUrl] = await Promise.all([
+        charAvatar, getCurrentUserReferenceKey(settings), getSelectedUserAvatarUrl(settings),
+    ]);
+    return {
+        charKey, charAvatarUrl, userKey, userAvatarUrl, contextUrls,
+        temporaryPrimary: {
+            char: getTemporaryCharacterPrimary('char', charKey, settings),
+            user: getTemporaryCharacterPrimary('user', userKey, settings),
+        },
+    };
+}
+
+export async function* iterateCharacterLibraryReferences(kind, format, settings = getSettings(), referenceContext = null) {
     const isUser = kind === 'user';
-    const key = isUser ? await getCurrentUserReferenceKey(settings) : getCurrentCharacterReferenceKey();
+    const key = referenceContext
+        ? referenceContext[isUser ? 'userKey' : 'charKey']
+        : isUser ? await getCurrentUserReferenceKey(settings) : getCurrentCharacterReferenceKey();
     const entry = getCharacterLibraryEntry(kind, key, settings, { create: false });
     const convert = format === 'dataUrl' ? imageUrlToDataUrl : imageUrlToBase64;
-    const baseAvatarUrl = isUser ? await getSelectedUserAvatarUrl() : await getCurrentCharacterAvatarUrl();
+    const baseAvatarUrl = referenceContext
+        ? referenceContext[isUser ? 'userAvatarUrl' : 'charAvatarUrl']
+        : isUser ? await getSelectedUserAvatarUrl(settings) : await getCurrentCharacterAvatarUrl();
     const source = isUser ? 'user' : 'char';
-    const results = [];
+    let hasReference = false;
     const sharedDescription = getCharacterLibraryDescription(kind, key, settings);
     const appearanceDescription = getCharacterAppearanceTextDescription(entry);
-    const temporaryPrimary = getTemporaryCharacterPrimary(kind, key, settings);
+    const temporaryPrimary = referenceContext
+        ? referenceContext.temporaryPrimary[kind] : getTemporaryCharacterPrimary(kind, key, settings);
 
     if (temporaryPrimary) {
         const image = await convert(normalizeStoredImagePath(temporaryPrimary.imagePath));
         if (image) {
-            results.push(makeReferenceObject(
+            yield makeReferenceObject(
                 image,
                 `${appearanceDescription} ${temporaryPrimary.description}`.trim(),
                 source,
-            ));
+            );
+            hasReference = true;
         }
     }
 
@@ -496,11 +511,12 @@ export async function collectCharacterLibraryReferences(kind, format, settings =
         if (primaryPath) {
             const image = await convert(primaryPath);
             if (image) {
-                results.push(makeReferenceObject(
+                yield makeReferenceObject(
                     image,
                     temporaryPrimary ? primary.description : sharedDescription,
                     source,
-                ));
+                );
+                hasReference = true;
             }
         }
     }
@@ -512,25 +528,24 @@ export async function collectCharacterLibraryReferences(kind, format, settings =
         if (!imagePath) continue;
         const image = await convert(imagePath);
         if (image) {
-            const description = results.length === 0 && sharedDescription
+            const description = !hasReference && sharedDescription
                 ? `${sharedDescription} ${item.description}`.trim()
                 : item.description;
-            results.push(makeReferenceObject(image, description, source));
+            yield makeReferenceObject(image, description, source);
+            hasReference = true;
         }
     }
 
-    return results;
 }
 
 // ----- Previous-message context images -----
 
-export function getPreviousGeneratedImageUrls(messageId, requestedCount) {
+export function getPreviousGeneratedImageUrls(messageId, requestedCount, settings = getSettings()) {
     const count = normalizeImageContextCount(requestedCount);
     if (!Number.isInteger(messageId) || messageId <= 0) {
         return [];
     }
 
-    const settings = getSettings();
     const context = SillyTavern.getContext();
     const chat = Array.isArray(context?.chat) ? context.chat : [];
     const urls = [];
@@ -559,8 +574,10 @@ export function getPreviousGeneratedImageUrls(messageId, requestedCount) {
     return urls;
 }
 
-export async function collectPreviousContextReferences(messageId, format, requestedCount) {
-    const urls = getPreviousGeneratedImageUrls(messageId, requestedCount);
+export async function collectPreviousContextReferences(messageId, format, requestedCount, referenceContext = null) {
+    const urls = referenceContext
+        ? referenceContext.contextUrls.slice(0, requestedCount)
+        : getPreviousGeneratedImageUrls(messageId, requestedCount);
     if (urls.length === 0) {
         return [];
     }

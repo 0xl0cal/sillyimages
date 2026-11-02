@@ -208,8 +208,8 @@ export async function saveImageToFile(dataUrl, debugMeta = {}) {
     );
 
     // Get character name for subfolder
-    let charName = 'generated';
-    if (context.characterId !== undefined && context.characters?.[context.characterId]) {
+    let charName = debugMeta.characterName || 'generated';
+    if (!debugMeta.characterName && context.characterId !== undefined && context.characters?.[context.characterId]) {
         charName = context.characters[context.characterId].name || 'generated';
     }
 

@@ -2,17 +2,8 @@
 import { getSettings, normalizeImageContextCount } from './settings.js';
 import { normalizeStoredImagePath, imageUrlToBase64, imageUrlToDataUrl } from './utils.js';
 import {
-    collectCharacterLibraryReferences, collectPreviousContextReferences, makeReferenceObject,
+    captureReferenceContext, iterateCharacterLibraryReferences, collectPreviousContextReferences, makeReferenceObject,
 } from './references.js';
-
-function appendAvatarReferenceGroups(target, groups) {
-    for (const group of groups) {
-        if (group[0]) target.push(group[0]);
-    }
-    for (const group of groups) {
-        if (group.length > 1) target.push(...group.slice(1));
-    }
-}
 
 export function referenceTextLabel(index, description) {
     const text = String(description || '').replace(/\s+/g, ' ').trim();
@@ -36,15 +27,26 @@ export function appendPromptBlock(prompt, block) {
     return text ? `${prompt}\n\n${text}`.trim() : prompt;
 }
 
-export async function collectProviderReferences({ messageId, matchedAdditionalRefs = [] }, maxRefs, format = 'base64', avatars = [['char', 'sendCharAvatar'], ['user', 'sendUserAvatar']]) {
-    const settings = getSettings();
+export async function collectProviderReferences({ messageId, matchedAdditionalRefs = [], settings = getSettings(), referenceContext = null }, maxRefs, format = 'base64', avatars = [['char', 'sendCharAvatar'], ['user', 'sendUserAvatar']]) {
     const refs = [];
+    if (maxRefs <= 0) return refs;
+    referenceContext ||= await captureReferenceContext(settings, messageId);
     const groups = [];
-    // Both primary avatars precede appearance images; provider order is explicit.
+    // The first successful image of each avatar precedes its appearance images.
     for (const [kind, enabledKey] of avatars) {
-        groups.push(settings[enabledKey] ? await collectCharacterLibraryReferences(kind, format, settings) : []);
+        if (!settings[enabledKey]) continue;
+        const group = iterateCharacterLibraryReferences(kind, format, settings, referenceContext);
+        groups.push(group);
+        const first = await group.next();
+        if (!first.done) refs.push(first.value);
+        if (refs.length >= maxRefs) return refs;
     }
-    appendAvatarReferenceGroups(refs, groups);
+    for (const group of groups) {
+        for await (const ref of group) {
+            refs.push(ref);
+            if (refs.length >= maxRefs) return refs;
+        }
+    }
 
     for (const ref of matchedAdditionalRefs) {
         if (refs.length >= maxRefs) break;
@@ -56,14 +58,11 @@ export async function collectProviderReferences({ messageId, matchedAdditionalRe
         if (image) refs.push(makeReferenceObject(image, additionalReferenceDescription(ref, settings), 'additional'));
     }
 
-    if (settings.imageContextEnabled) {
-        const contextCount = normalizeImageContextCount(settings.imageContextCount);
-        const contextRefs = await collectPreviousContextReferences(messageId, format, contextCount);
+    if (settings.imageContextEnabled && refs.length < maxRefs) {
+        const contextCount = Math.min(normalizeImageContextCount(settings.imageContextCount), maxRefs - refs.length);
+        const contextRefs = await collectPreviousContextReferences(messageId, format, contextCount, referenceContext);
         refs.push(...contextRefs.map((ref) => makeReferenceObject(ref, '', 'context')));
     }
 
-    if (refs.length > maxRefs) {
-        refs.length = maxRefs;
-    }
     return refs;
 }

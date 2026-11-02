@@ -70,8 +70,7 @@ export class A1111Provider extends Provider {
         return [];
     }
 
-    async generate({ prompt, options = {} }) {
-        const settings = getSettings();
+    async generate({ prompt, options = {}, settings = getSettings() }) {
         const url = buildGenerationUrl(settings, '/sdapi/v1/txt2img');
 
         // SDXL/A1111 ждёт comma-separated tag-style промпт, не natural language.
