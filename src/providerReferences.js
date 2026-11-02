@@ -27,15 +27,16 @@ export function appendPromptBlock(prompt, block) {
     return text ? `${prompt}\n\n${text}`.trim() : prompt;
 }
 
-export async function collectProviderReferences({ messageId, matchedAdditionalRefs = [], settings = getSettings(), referenceContext = null }, maxRefs, format = 'base64', avatars = [['char', 'sendCharAvatar'], ['user', 'sendUserAvatar']]) {
+export async function collectProviderReferences({ messageId, matchedAdditionalRefs = [], settings = getSettings(), referenceContext = null, providerOptions = {} }, maxRefs, format = 'base64', avatars = [['char', 'sendCharAvatar'], ['user', 'sendUserAvatar']]) {
     const refs = [];
     if (maxRefs <= 0) return refs;
     referenceContext ||= await captureReferenceContext(settings, messageId);
+    const requestOptions = { signal: providerOptions.signal };
     const groups = [];
     // The first successful image of each avatar precedes its appearance images.
     for (const [kind, enabledKey] of avatars) {
         if (!settings[enabledKey]) continue;
-        const group = iterateCharacterLibraryReferences(kind, format, settings, referenceContext);
+        const group = iterateCharacterLibraryReferences(kind, format, settings, referenceContext, requestOptions);
         groups.push(group);
         const first = await group.next();
         if (!first.done) refs.push(first.value);
@@ -53,14 +54,14 @@ export async function collectProviderReferences({ messageId, matchedAdditionalRe
         const imagePath = normalizeStoredImagePath(ref.imagePath);
         if (!imagePath) continue;
         const image = format === 'dataUrl'
-            ? await imageUrlToDataUrl(imagePath)
-            : await imageUrlToBase64(imagePath);
+            ? await imageUrlToDataUrl(imagePath, requestOptions)
+            : await imageUrlToBase64(imagePath, requestOptions);
         if (image) refs.push(makeReferenceObject(image, additionalReferenceDescription(ref, settings), 'additional'));
     }
 
     if (settings.imageContextEnabled && refs.length < maxRefs) {
         const contextCount = Math.min(normalizeImageContextCount(settings.imageContextCount), maxRefs - refs.length);
-        const contextRefs = await collectPreviousContextReferences(messageId, format, contextCount, referenceContext);
+        const contextRefs = await collectPreviousContextReferences(messageId, format, contextCount, referenceContext, requestOptions);
         refs.push(...contextRefs.map((ref) => makeReferenceObject(ref, '', 'context')));
     }
 

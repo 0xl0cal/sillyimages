@@ -33,6 +33,7 @@ import {
     getMatchedAdditionalReferences,
     isGeneratedVideoResult,
     parseMessageImageTags,
+    messageHasImageInstructions,
     replaceTagInMessageSource,
     rerenderMessageHtml,
 } from './parser.js';
@@ -467,7 +468,7 @@ export async function persistGeneratedMedia(generated, statusEl, meta) {
 
 // ----- Main generate (provider dispatch + retry loop) -----
 
-function snapshotGenerationSettings(source = getSettings()) {
+async function snapshotGenerationRequest(source = getSettings(), messageId) {
     const settings = Object.fromEntries(Object.entries(source).filter(([, value]) => value === null || typeof value !== 'object'));
     for (const key of ['styles', 'negativePrompts', 'lorebooks']) settings[key] = structuredClone(source[key] || []);
     const copyEntry = entry => structuredClone({ primary: entry?.primary, appearanceItems: entry?.appearanceItems || [], generations: [] });
@@ -475,9 +476,16 @@ function snapshotGenerationSettings(source = getSettings()) {
     const library = source.characterReferenceLibrary || {};
     settings.characterReferenceLibrary = {
         characters: library.characters?.[charKey] ? { [charKey]: copyEntry(library.characters[charKey]) } : {},
-        users: Object.fromEntries(Object.entries(library.users || {}).map(([key, entry]) => [key, copyEntry(entry)])),
+        users: library.users || {},
     };
-    return settings;
+    const referenceContext = await captureReferenceContext(settings, messageId);
+    const user = settings.characterReferenceLibrary.users[referenceContext.userKey];
+    settings.characterReferenceLibrary.users = user ? { [referenceContext.userKey]: copyEntry(user) } : {};
+    // Provider work sees only owned appearances after resolving the active persona.
+    const userPrimaryId = referenceContext.temporaryPrimary.user?.id;
+    referenceContext.temporaryPrimary.user = userPrimaryId
+        ? settings.characterReferenceLibrary.users[referenceContext.userKey]?.appearanceItems.find(item => item.id === userPrimaryId) || null : null;
+    return { settings, referenceContext };
 }
 
 function checkGenerationOwnership(options) {
@@ -487,7 +495,8 @@ function checkGenerationOwnership(options) {
 }
 
 export async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {}) {
-    const settings = options.settings || snapshotGenerationSettings();
+    checkGenerationOwnership(options);
+    const { settings, referenceContext } = options.request || await snapshotGenerationRequest(getSettings(), options.messageId);
     validateSettings(settings);
     checkGenerationOwnership(options);
 
@@ -508,16 +517,21 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
     }
 
     // Собираем референсы средствами провайдера.
-    const referenceContext = await captureReferenceContext(settings, options.messageId);
     checkGenerationOwnership(options);
-    const references = await provider.collectReferences({
-        prompt,
-        messageId: options.messageId,
-        matchedAdditionalRefs,
-        providerOptions: options,
-        settings,
-        referenceContext,
-    });
+    let references;
+    try {
+        references = await provider.collectReferences({
+            prompt,
+            messageId: options.messageId,
+            matchedAdditionalRefs,
+            providerOptions: options,
+            settings,
+            referenceContext,
+        });
+    } catch (error) {
+        checkGenerationOwnership(options);
+        throw error;
+    }
     checkGenerationOwnership(options);
     const effectiveModelSettings = options.model
         ? { ...settings, [settings.apiType === 'naistera' ? 'naisteraModel' : 'model']: options.model }
@@ -663,7 +677,7 @@ async function generateTagMedia({
     const generated = await generateImageWithRetry(
         tag.prompt, tag.style,
         status => { statusEl.textContent = status; },
-        { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset, messageId, signal, settings, isCurrent: owner.isCurrent },
+        { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset, messageId, signal, request: owner.request, isCurrent: owner.isCurrent },
     );
     checkGenerationOwnership({ signal, isCurrent: owner.isCurrent });
     const { persistedSrc, persistedPosterSrc } = await persistGeneratedMedia(generated, statusEl, {
@@ -714,7 +728,10 @@ async function runMessageGeneration(messageId, { forceAll = false, tagIndex = nu
         return;
     }
 
-    const settings = snapshotGenerationSettings(liveSettings);
+    if (!messageHasImageInstructions(message, liveSettings)) {
+        if (forceAll) toastr.warning(t`No tags to regenerate`, t`Image Generation`);
+        return;
+    }
     const characterKey = getCurrentCharacterReferenceKey();
     const characterName = context.characters?.[context.characterId]?.name || 'generated';
     const id = ++operationId;
@@ -736,6 +753,9 @@ async function runMessageGeneration(messageId, { forceAll = false, tagIndex = nu
     let mesTextEl;
     let dirty = false;
     try {
+        owner.request = await snapshotGenerationRequest(liveSettings, messageId);
+        if (!owner.isCurrent()) return;
+        const { settings } = owner.request;
         const tags = await parseMessageImageTags(message, { forceAll, checkExistence: !forceAll, settings });
         if (!owner.isCurrent()) return;
         if (!tags.length) {

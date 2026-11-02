@@ -163,29 +163,28 @@ export class OpenRouterProvider extends Provider {
         }
 
         const signal = options.signal || null;
-        let response;
+        let result;
         try {
-            response = await fetchWithTimeout(url, {
+            result = await fetchWithTimeout(url, {
                 method: 'POST',
                 headers,
                 body: JSON.stringify(body),
-            }, OPENROUTER_REQUEST_TIMEOUT_MS, signal);
+            }, OPENROUTER_REQUEST_TIMEOUT_MS, signal, async response => {
+                if (!response.ok) {
+                    const { message, code, status } = await parseOpenRouterError(response);
+                    throw new ProviderError({
+                        message: `OpenRouter ${model} ${status} ${code}: ${message}`,
+                        code,
+                        status,
+                        retryable: isRetryableHttpStatus(status),
+                        providerId: 'openrouter',
+                    });
+                }
+                return response.json();
+            });
         } catch (error) {
             throwAsProviderError(error, `OpenRouter ${model}`, 'openrouter', signal);
         }
-
-        if (!response.ok) {
-            const { message, code, status } = await parseOpenRouterError(response);
-            throw new ProviderError({
-                message: `OpenRouter ${model} ${status} ${code}: ${message}`,
-                code,
-                status,
-                retryable: isRetryableHttpStatus(status),
-                providerId: 'openrouter',
-            });
-        }
-
-        const result = await response.json();
         const message = result?.choices?.[0]?.message;
         const imageUrl = extractOpenRouterImage(message);
 
@@ -202,7 +201,7 @@ export class OpenRouterProvider extends Provider {
         if (imageUrl.startsWith('data:')) {
             return imageUrl;
         }
-        const dataUrl = await imageUrlToDataUrl(imageUrl);
+        const dataUrl = await imageUrlToDataUrl(imageUrl, { signal });
         if (!dataUrl) {
             throw new ProviderError({
                 message: `Failed to fetch image from URL: ${imageUrl}`,

@@ -4,7 +4,7 @@ import {
     normalizeNaisteraCharacterDescriptionsMode, normalizeNaisteraVideoFrequency, getEffectiveEndpoint,
     getEffectiveRefInstruction, getEffectiveNegativePrompt,
 } from './settings.js';
-import { abortableDelay, ProviderError, isRetryableHttpStatus } from './utils.js';
+import { abortableDelay, fetchWithTimeout, ProviderError, isRetryableHttpStatus } from './utils.js';
 import { buildFinalGenerationPrompt } from './parser.js';
 import { t } from './i18n.js';
 import { Provider } from './providerBase.js';
@@ -97,7 +97,7 @@ export class NaisteraProvider extends Provider {
         return { ...this.modelCatalogStatus };
     }
 
-    async fetchModels(config = getSettings()) {
+    async fetchModels(config = getSettings(), signal = null) {
         const settings = { ...config };
         const requestId = this.catalogRequestId = (this.catalogRequestId || 0) + 1;
         const endpoint = getEffectiveEndpoint(settings).replace(/\/$/, '');
@@ -107,26 +107,26 @@ export class NaisteraProvider extends Provider {
             if (authenticated && settings.apiKey) {
                 headers.Authorization = `Bearer ${settings.apiKey}`;
             }
-            return await fetch(url, { method: 'GET', headers });
+            return await fetchWithTimeout(url, { method: 'GET', headers }, 15000, signal, async response => {
+                if (!response.ok) {
+                    const detail = await response.text().catch(() => '');
+                    throw new Error(`Naistera /api/models ${response.status}: ${String(detail).slice(0, 500)}`);
+                }
+                return response.json();
+            });
         };
 
-        let response;
+        let payload;
         let publicFallback = false;
         try {
-            response = await request(true);
+            payload = await request(true);
         } catch (error) {
             if (!settings.apiKey || error?.name !== 'TypeError') throw error;
             iigLog('WARN', 'Naistera authenticated model discovery was blocked; retrying the public catalog');
             publicFallback = true;
-            response = await request(false);
+            payload = await request(false);
         }
 
-        if (!response.ok) {
-            const detail = await response.text().catch(() => '');
-            throw new Error(`Naistera /api/models ${response.status}: ${String(detail).slice(0, 500)}`);
-        }
-
-        const payload = await response.json();
         const models = (Array.isArray(payload?.models) ? payload.models : [])
             .filter((model) => model?.id && model.visible !== false && model.deprecated !== true)
             .map((model) => ({
@@ -171,35 +171,33 @@ export class NaisteraProvider extends Provider {
         };
         while (Date.now() - started < timeoutMs) {
             if (abortedByUser()) throwAborted();
-            let response;
+            let result;
             try {
-                response = await fetch(url, {
+                result = await fetchWithTimeout(url, {
                     method: 'GET',
                     headers: {
                         'Authorization': `Bearer ${settings.apiKey}`,
                         'Accept': 'application/json',
                     },
-                    signal,
+                }, Math.max(1, timeoutMs - (Date.now() - started)), signal, async response => {
+                    const text = await response.text().catch(() => '');
+                    if (!response.ok) {
+                        throw new ProviderError({
+                            message: `Polling API Error (${response.status}): ${String(text).slice(0, 800)}`,
+                            code: String(response.status), status: response.status,
+                            retryable: isRetryableHttpStatus(response.status), providerId: 'naistera',
+                        });
+                    }
+                    try { return text ? JSON.parse(text) : null; }
+                    catch { return null; }
                 });
             } catch (error) {
                 if (error?.name === 'AbortError' && abortedByUser()) throwAborted();
-                throw error;
-            }
-            const text = await response.text().catch(() => '');
-            let result = null;
-            try {
-                result = text ? JSON.parse(text) : null;
-            } catch (_err) {
-                result = null;
-            }
-            if (!response.ok) {
-                throw new ProviderError({
-                    message: `Polling API Error (${response.status}): ${String(text).slice(0, 800)}`,
-                    code: String(response.status),
-                    status: response.status,
-                    retryable: isRetryableHttpStatus(response.status),
-                    providerId: 'naistera',
+                if (error?.name === 'AbortError') throw new ProviderError({
+                    message: `Naistera polling timed out after ${Math.round(timeoutMs / 1000)}s`,
+                    code: 'timeout', retryable: true, providerId: 'naistera',
                 });
+                throw error;
             }
             const status = String(result?.status || '').toLowerCase();
             if (status === 'completed' || result?.data_url) return result;
@@ -213,7 +211,7 @@ export class NaisteraProvider extends Provider {
                 });
             }
             // Abort-aware wait so Stop is responsive instead of blocking a full interval.
-            await abortableDelay(intervalMs, signal);
+            await abortableDelay(Math.min(intervalMs, Math.max(0, timeoutMs - (Date.now() - started))), signal);
             if (abortedByUser()) throwAborted();
         }
         throw new ProviderError({
@@ -227,14 +225,15 @@ export class NaisteraProvider extends Provider {
     async collectReferences({ prompt: _prompt, messageId, matchedAdditionalRefs = [], providerOptions = {}, settings = getSettings(), referenceContext = null }) {
         const normalizedModel = normalizeNaisteraModel(providerOptions.model || settings.naisteraModel);
         if (!this.modelCatalog.has(normalizedModel)) {
-            await this.fetchModels(settings).catch((error) => {
+            await this.fetchModels(settings, providerOptions.signal).catch((error) => {
+                if (providerOptions.signal?.aborted) throw error;
                 iigLog('WARN', `Naistera model metadata unavailable: ${error?.message || error}`);
             });
         }
         if (!this.supportsReferences({ ...settings, naisteraModel: normalizedModel })) {
             return [];
         }
-        const refs = await collectProviderReferences({ messageId, matchedAdditionalRefs, settings, referenceContext }, Infinity, 'dataUrl', [
+        const refs = await collectProviderReferences({ messageId, matchedAdditionalRefs, settings, referenceContext, providerOptions }, Infinity, 'dataUrl', [
             ['user', 'naisteraSendUserAvatar'], ['char', 'naisteraSendCharAvatar'],
         ]);
 
@@ -256,7 +255,7 @@ export class NaisteraProvider extends Provider {
 
         const aspectRatio = options.aspectRatio || settings.naisteraAspectRatio || '1:1';
         const model = normalizeNaisteraModel(options.model || settings.naisteraModel);
-        if (!this.modelCatalog.has(model)) await this.fetchModels(settings);
+        if (!this.modelCatalog.has(model)) await this.fetchModels(settings, options.signal);
         if (!this.supportsReferences({ ...settings, naisteraModel: model })) references = [];
         const preset = options.preset || null;
         const wantsVideoTest = Boolean(options.videoTestMode);
@@ -316,18 +315,29 @@ export class NaisteraProvider extends Provider {
         }
 
         const signal = options.signal || null;
-        let response;
+        let result;
         try {
-            response = await fetch(url, {
+            result = await fetchWithTimeout(url, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${settings.apiKey}`,
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(body),
-                signal,
+            }, 600000, signal, async response => {
+                if (!response.ok) {
+                    const text = await response.text().catch(() => '');
+                    throw new ProviderError({
+                        message: `API Error (${response.status}): ${String(text).slice(0, 800)}`,
+                        code: String(response.status), status: response.status,
+                        retryable: isRetryableHttpStatus(response.status), providerId: 'naistera',
+                    });
+                }
+                try { return await response.json(); }
+                catch (cause) { throw new ProviderError({ message: cause.message, code: 'invalid_response', providerId: 'naistera', cause }); }
             });
         } catch (error) {
+            if (error instanceof ProviderError) throw error;
             if (error?.name === 'AbortError' && signal?.aborted && (signal.reason === 'user-cancel' || signal.reason?.message === 'user-cancel')) {
                 throw new ProviderError({
                     message: t`Generation stopped by user`,
@@ -356,18 +366,6 @@ export class NaisteraProvider extends Provider {
             });
         }
 
-        if (!response.ok) {
-            const text = await response.text().catch(() => '');
-            throw new ProviderError({
-                message: `API Error (${response.status}): ${String(text).slice(0, 800)}`,
-                code: String(response.status),
-                status: response.status,
-                retryable: isRetryableHttpStatus(response.status),
-                providerId: 'naistera',
-            });
-        }
-
-        let result = await response.json();
         if (result?.job_id && !result?.data_url) {
             result = await this.pollJob(endpoint, result.job_id, settings, signal);
         }

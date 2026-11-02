@@ -125,32 +125,31 @@ export class GeminiProvider extends Provider {
             : { 'Authorization': `Bearer ${settings.apiKey}` };
         const signal = options.signal || null;
 
-        let response;
+        let result;
         try {
-            response = await fetchWithTimeout(url, {
+            result = await fetchWithTimeout(url, {
                 method: 'POST',
                 headers: {
                     ...authHeader,
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(body),
-            }, GEMINI_REQUEST_TIMEOUT_MS, signal);
+            }, GEMINI_REQUEST_TIMEOUT_MS, signal, async response => {
+                if (!response.ok) {
+                    const { message, code, status } = await parseGeminiError(response);
+                    throw new ProviderError({
+                        message: `Gemini ${model} ${status} ${code}: ${message}`,
+                        code,
+                        status,
+                        retryable: isRetryableHttpStatus(status),
+                        providerId: 'gemini',
+                    });
+                }
+                return response.json();
+            });
         } catch (error) {
             throwAsProviderError(error, `Gemini ${model}`, 'gemini', signal);
         }
-
-        if (!response.ok) {
-            const { message, code, status } = await parseGeminiError(response);
-            throw new ProviderError({
-                message: `Gemini ${model} ${status} ${code}: ${message}`,
-                code,
-                status,
-                retryable: isRetryableHttpStatus(status),
-                providerId: 'gemini',
-            });
-        }
-
-        const result = await response.json();
 
         const candidates = result.candidates || [];
         if (candidates.length === 0) {

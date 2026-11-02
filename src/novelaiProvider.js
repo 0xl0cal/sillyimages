@@ -23,12 +23,13 @@ async function verifyNovelAIFreeAccess(url, settings, model, signal) {
         const target = new URL(url);
         if (!target.pathname.endsWith('/ai/generate-image') || target.search || target.hash) throw unavailable();
         target.pathname = target.pathname.replace(/\/ai\/generate-image$/, '/user/subscription');
-        const response = await fetchWithTimeout(target.href, {
+        subscription = await fetchWithTimeout(target.href, {
             cache: 'no-store',
             headers: { Authorization: `Bearer ${settings.apiKey}`, Accept: 'application/json' },
-        }, 15000, signal);
-        if (!response.ok) throw unavailable();
-        subscription = await response.json();
+        }, 15000, signal, response => {
+            if (!response.ok) throw unavailable();
+            return response.json();
+        });
     } catch (cause) {
         if (signal?.aborted) throw new ProviderError({
             message: t`Generation stopped by user`, code: 'aborted', retryable: false, providerId: 'novelai', cause,
@@ -125,30 +126,31 @@ export class NovelAIProvider extends Provider {
         if (settings.novelaiNeverSpendAnlas !== false) {
             await verifyNovelAIFreeAccess(url, settings, model, options.signal);
         }
-        let response;
+        let result;
         try {
-            response = await fetchWithTimeout(url, {
+            result = await fetchWithTimeout(url, {
                 method: 'POST',
                 headers: { Authorization: `Bearer ${settings.apiKey}`, 'Content-Type': 'application/json', Accept: 'application/json' },
                 body: JSON.stringify(body),
-            }, 600000, options.signal);
+            }, 600000, options.signal, async response => {
+                if (!response.ok) {
+                    const detail = await response.text();
+                    throw new ProviderError({
+                        message: `NovelAI ${response.status}: ${detail.slice(0, 800)}`,
+                        status: response.status, code: String(response.status),
+                        retryable: isRetryableHttpStatus(response.status), providerId: this.id,
+                    });
+                }
+                try { return await response.json(); }
+                catch (cause) { throw new ProviderError({ message: t`NovelAI returned an invalid JSON response`, code: 'invalid_response', providerId: this.id, cause }); }
+            });
         } catch (cause) {
+            if (cause instanceof ProviderError) throw cause;
             throw new ProviderError({
                 message: cause.message, code: options.signal?.aborted ? 'aborted' : 'network',
                 retryable: !options.signal?.aborted, providerId: this.id, cause,
             });
         }
-        if (!response.ok) {
-            const detail = await response.text();
-            throw new ProviderError({
-                message: `NovelAI ${response.status}: ${detail.slice(0, 800)}`,
-                status: response.status, code: String(response.status),
-                retryable: isRetryableHttpStatus(response.status), providerId: this.id,
-            });
-        }
-        let result;
-        try { result = await response.json(); }
-        catch (cause) { throw new ProviderError({ message: t`NovelAI returned an invalid JSON response`, code: 'invalid_response', providerId: this.id, cause }); }
         const image = result?.images?.[0]?.image;
         if (typeof image !== 'string' || !image.trim()) {
             throw new ProviderError({ message: t`NovelAI returned no image`, code: 'invalid_response', providerId: this.id });

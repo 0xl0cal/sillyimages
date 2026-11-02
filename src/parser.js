@@ -36,6 +36,12 @@ export function getMessageRenderText(message, settings = getSettings()) {
     return message.mes || '';
 }
 
+export function messageHasImageInstructions(message, settings = getSettings()) {
+    const hasMarker = text => typeof text === 'string'
+        && (text.includes('data-iig-instruction=') || text.includes('[IMG:GEN:'));
+    return hasMarker(message?.mes) || Boolean(settings.externalBlocks && hasMarker(message?.extra?.extblocks));
+}
+
 export async function parseMessageImageTags(message, options = {}) {
     const settings = options.settings || getSettings();
     const tags = [];
@@ -605,6 +611,8 @@ export function bindRenderedMediaTags(mesTextEl, tags) {
     });
 }
 
+const messageBindingCache = new WeakMap();
+
 export async function restoreMessageImageBindings(message, mesTextEl) {
     // Loading slots still belong to the previous source; do not reassign their siblings.
     if (mesTextEl.querySelector('.iig-loading-placeholder')) return [];
@@ -612,10 +620,16 @@ export async function restoreMessageImageBindings(message, mesTextEl) {
     const blocks = message?.extra?.extblocks;
     const display = message?.extra?.display_text;
     if (!String(source || '').includes('data-iig-instruction') && !String(blocks || '').includes('data-iig-instruction')) return [];
-    const tags = await parseMessageImageTags(message, { forceAll: true, quiet: true });
+    const externalBlocks = getSettings().externalBlocks;
+    let cached = messageBindingCache.get(message);
+    if (!cached || cached.source !== source || cached.blocks !== blocks || cached.externalBlocks !== externalBlocks) {
+        cached = { source, blocks, externalBlocks, tags: parseMessageImageTags(message, { forceAll: true, quiet: true }) };
+        messageBindingCache.set(message, cached);
+    }
+    const tags = await cached.tags;
     if (!mesTextEl.isConnected || mesTextEl.querySelector('.iig-loading-placeholder')
         || message?.mes !== source || message?.extra?.extblocks !== blocks
-        || message?.extra?.display_text !== display) return [];
+        || message?.extra?.display_text !== display || getSettings().externalBlocks !== externalBlocks) return [];
     return bindRenderedMediaTags(mesTextEl, tags);
 }
 

@@ -131,29 +131,28 @@ export class A1111Provider extends Provider {
         iigLog('INFO', `A1111 request: model=${settings.model || '(default)'} steps=${body.steps} cfg=${body.cfg_scale} ${body.width}x${body.height} sampler=${body.sampler_name} hires=${body.enable_hr}`);
 
         const signal = options.signal || null;
-        let response;
+        let result;
         try {
-            response = await fetchWithTimeout(url, {
+            result = await fetchWithTimeout(url, {
                 method: 'POST',
                 headers,
                 body: JSON.stringify(body),
-            }, A1111_REQUEST_TIMEOUT_MS, signal);
+            }, A1111_REQUEST_TIMEOUT_MS, signal, async response => {
+                if (!response.ok) {
+                    const text = await response.text().catch(() => '');
+                    throw new ProviderError({
+                        message: `A1111 ${response.status}: ${String(text).slice(0, 800)}`,
+                        code: String(response.status),
+                        status: response.status,
+                        retryable: isRetryableHttpStatus(response.status),
+                        providerId: 'a1111',
+                    });
+                }
+                return response.json();
+            });
         } catch (error) {
             throwAsProviderError(error, 'A1111', 'a1111', signal);
         }
-
-        if (!response.ok) {
-            const text = await response.text().catch(() => '');
-            throw new ProviderError({
-                message: `A1111 ${response.status}: ${String(text).slice(0, 800)}`,
-                code: String(response.status),
-                status: response.status,
-                retryable: isRetryableHttpStatus(response.status),
-                providerId: 'a1111',
-            });
-        }
-
-        const result = await response.json();
         const b64 = Array.isArray(result?.images) ? result.images[0] : null;
         if (!b64 || typeof b64 !== 'string') {
             iigLog('ERROR', 'A1111 no-image response:', result);

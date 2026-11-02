@@ -476,7 +476,7 @@ export async function captureReferenceContext(settings, messageId) {
     };
 }
 
-export async function* iterateCharacterLibraryReferences(kind, format, settings = getSettings(), referenceContext = null) {
+export async function* iterateCharacterLibraryReferences(kind, format, settings = getSettings(), referenceContext = null, requestOptions = {}) {
     const isUser = kind === 'user';
     const key = referenceContext
         ? referenceContext[isUser ? 'userKey' : 'charKey']
@@ -494,7 +494,7 @@ export async function* iterateCharacterLibraryReferences(kind, format, settings 
         ? referenceContext.temporaryPrimary[kind] : getTemporaryCharacterPrimary(kind, key, settings);
 
     if (temporaryPrimary) {
-        const image = await convert(normalizeStoredImagePath(temporaryPrimary.imagePath));
+        const image = await convert(normalizeStoredImagePath(temporaryPrimary.imagePath), requestOptions);
         if (image) {
             yield makeReferenceObject(
                 image,
@@ -509,7 +509,7 @@ export async function* iterateCharacterLibraryReferences(kind, format, settings 
     if (primary.enabled !== false) {
         const primaryPath = normalizeStoredImagePath(primary.imagePath) || baseAvatarUrl;
         if (primaryPath) {
-            const image = await convert(primaryPath);
+            const image = await convert(primaryPath, requestOptions);
             if (image) {
                 yield makeReferenceObject(
                     image,
@@ -526,7 +526,7 @@ export async function* iterateCharacterLibraryReferences(kind, format, settings 
         if (item.id === temporaryPrimary?.id) continue;
         const imagePath = normalizeStoredImagePath(item.imagePath);
         if (!imagePath) continue;
-        const image = await convert(imagePath);
+        const image = await convert(imagePath, requestOptions);
         if (image) {
             const description = !hasReference && sharedDescription
                 ? `${sharedDescription} ${item.description}`.trim()
@@ -574,7 +574,7 @@ export function getPreviousGeneratedImageUrls(messageId, requestedCount, setting
     return urls;
 }
 
-export async function collectPreviousContextReferences(messageId, format, requestedCount, referenceContext = null) {
+export async function collectPreviousContextReferences(messageId, format, requestedCount, referenceContext = null, requestOptions = {}) {
     const urls = referenceContext
         ? referenceContext.contextUrls.slice(0, requestedCount)
         : getPreviousGeneratedImageUrls(messageId, requestedCount);
@@ -583,7 +583,7 @@ export async function collectPreviousContextReferences(messageId, format, reques
     }
 
     const convert = format === 'dataUrl' ? imageUrlToDataUrl : imageUrlToBase64;
-    const converted = await Promise.all(urls.map((url) => convert(url)));
+    const converted = await Promise.all(urls.map((url) => convert(url, requestOptions)));
     return converted.filter(Boolean);
 }
 

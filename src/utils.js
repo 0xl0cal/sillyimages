@@ -9,88 +9,57 @@ import { iigLog } from './settings.js';
 
 // ----- Image fetch / convert -----
 
-export async function fetchImageBlob(url) {
+const REFERENCE_TIMEOUT_MS = 15000;
+
+export async function fetchImageBlob(url, { signal = null, timeoutMs = REFERENCE_TIMEOUT_MS } = {}) {
     try {
-        const response = await fetch(url);
-        if (!response.ok) {
-            iigLog('WARN', `Skipping context reference fetch: url=${url} status=${response.status}`);
-            return null;
-        }
-
-        const contentType = String(response.headers.get('content-type') || '').toLowerCase();
-        if (!contentType.startsWith('image/')) {
-            iigLog(
-                'WARN',
-                `Skipping context reference with non-image content-type: url=${url} contentType=${contentType || '(empty)'}`
-            );
-            return null;
-        }
-
-        const blob = await response.blob();
-        const blobType = String(blob.type || contentType || '').toLowerCase();
-        if (!blobType.startsWith('image/')) {
-            iigLog(
-                'WARN',
-                `Skipping context reference with non-image blob type: url=${url} blobType=${blobType || '(empty)'}`
-            );
-            return null;
-        }
-        return blob;
-    } catch (error) {
-        iigLog('WARN', `Skipping context reference fetch failure: url=${url} err=${error?.message || error}`);
-        return null;
-    }
-}
-
-/** URL → чистый base64 (без data:image/... префикса). */
-export async function imageUrlToBase64(url) {
-    try {
-        const blob = await fetchImageBlob(url);
-        if (!blob) {
-            return null;
-        }
-
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                const base64 = reader.result.split(',')[1];
-                resolve(base64);
-            };
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
+        return await fetchWithTimeout(url, {}, timeoutMs, signal, async response => {
+            const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+            if (!response.ok || !contentType.startsWith('image/')) {
+                iigLog('WARN', `Skipping reference: url=${url} status=${response.status} contentType=${contentType}`);
+                return null;
+            }
+            const blob = await response.blob();
+            return (blob.type || contentType).toLowerCase().startsWith('image/') ? blob : null;
         });
     } catch (error) {
-        console.error('[IIG] Failed to convert image to base64:', error);
+        if (signal?.aborted) throw error;
+        iigLog('WARN', `Skipping reference fetch: url=${url} err=${error?.message || error}`);
         return null;
     }
 }
 
-/** URL → полный data URL. */
-export async function imageUrlToDataUrl(url) {
+export async function imageUrlToBase64(url, options = {}) {
+    const dataUrl = await imageUrlToDataUrl(url, options);
+    return dataUrl ? dataUrl.slice(dataUrl.indexOf(',') + 1) : null;
+}
+
+export async function imageUrlToDataUrl(url, options = {}) {
     try {
-        const blob = await fetchImageBlob(url);
-        if (!blob) {
-            return null;
-        }
-
-        return await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result);
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-        });
+        const blob = await fetchImageBlob(url, options);
+        return blob ? await readFileAsDataUrl(blob, options.signal) : null;
     } catch (error) {
-        console.error('[IIG] Failed to convert image to data URL:', error);
+        if (options.signal?.aborted) throw error;
+        iigLog('WARN', 'Could not encode reference image:', error);
         return null;
     }
 }
 
-export async function readFileAsDataUrl(file) {
-    return await new Promise((resolve, reject) => {
+export function readFileAsDataUrl(file, signal = null) {
+    return new Promise((resolve, reject) => {
         const reader = new FileReader();
-        reader.onloadend = () => resolve(String(reader.result || ''));
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
+        const onAbort = () => reader.abort();
+        const aborted = () => reject(new DOMException('Aborted', 'AbortError'));
+        if (signal?.aborted) { aborted(); return; }
+        reader.onerror = () => reject(reader.error);
+        reader.onabort = aborted;
+        reader.onloadend = () => {
+            signal?.removeEventListener('abort', onAbort);
+            if (reader.result !== null) resolve(String(reader.result || ''));
+        };
+        signal?.addEventListener('abort', onAbort, { once: true });
+        try { reader.readAsDataURL(file); }
+        catch (error) { signal?.removeEventListener('abort', onAbort); reject(error); }
     });
 }
 
@@ -385,31 +354,30 @@ export function dataUrlToBlob(dataUrl) {
 
 // ----- Fetch with timeout / abort -----
 
-/**
- * Обёртка над fetch с AbortController и таймаутом.
- * @param {string | URL} url
- * @param {RequestInit} init
- * @param {number} timeoutMs — по умолчанию 600 000 (10 минут). Некоторые
- *   image-модели (HQ image providers, flux-kontext на бесплатных прокси,
- *   медленные Gemini инстансы) спокойно работают 3-5 минут. Меньший
- *   таймаут давал ложные fail'ы.
- */
-export async function fetchWithTimeout(url, init = {}, timeoutMs = 600_000, externalSignal = null) {
+/** One deadline owns the HTTP request and response consumer, with cleanup on every exit. */
+export async function fetchWithTimeout(url, init = {}, timeoutMs = 600_000, externalSignal = null, consume = response => response.json()) {
     const controller = new AbortController();
+    const onAbort = () => controller.abort(externalSignal.reason);
+    const abortError = () => controller.signal.reason instanceof Error
+        ? controller.signal.reason : new DOMException('Aborted', 'AbortError');
+    let rejectAborted;
+    const aborted = new Promise((_, reject) => { rejectAborted = () => reject(abortError()); });
+    controller.signal.addEventListener('abort', rejectAborted, { once: true });
     const timeoutId = setTimeout(() => controller.abort(new DOMException('Timeout', 'AbortError')), timeoutMs);
-
-    if (externalSignal) {
-        if (externalSignal.aborted) {
-            controller.abort(externalSignal.reason);
-        } else {
-            externalSignal.addEventListener('abort', () => controller.abort(externalSignal.reason), { once: true });
-        }
-    }
-
+    externalSignal?.addEventListener('abort', onAbort, { once: true });
     try {
-        return await fetch(url, { ...init, signal: controller.signal });
+        if (externalSignal?.aborted) controller.abort(externalSignal.reason);
+        const request = async () => {
+            if (controller.signal.aborted) throw abortError();
+            return await consume(await fetch(url, { ...init, signal: controller.signal }));
+        };
+        // The deadline owns both headers and body decoding, even if a reader stalls.
+        return await Promise.race([request(), aborted]);
     } finally {
         clearTimeout(timeoutId);
+        externalSignal?.removeEventListener('abort', onAbort);
+        controller.signal.removeEventListener('abort', rejectAborted);
+        controller.abort();
     }
 }
 

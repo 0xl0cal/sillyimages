@@ -116,32 +116,31 @@ export class OpenAIProvider extends Provider {
             body.moderation = 'low';
         }
 
-        let response;
+        let result;
         try {
-            response = await fetchWithTimeout(url, {
+            result = await fetchWithTimeout(url, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${apiKey}`,
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(body),
-            }, OPENAI_REQUEST_TIMEOUT_MS, signal);
+            }, OPENAI_REQUEST_TIMEOUT_MS, signal, async response => {
+                if (!response.ok) {
+                    const { message, code, status } = await parseOpenAIError(response);
+                    throw new ProviderError({
+                        message: `OpenAI /generations ${status} ${code}: ${message}`,
+                        code,
+                        status,
+                        retryable: isRetryableHttpStatus(status),
+                        providerId: 'openai',
+                    });
+                }
+                return response.json();
+            });
         } catch (error) {
             throwAsProviderError(error, `OpenAI /v1/images/generations (${url})`, 'openai', signal);
         }
-
-        if (!response.ok) {
-            const { message, code, status } = await parseOpenAIError(response);
-            throw new ProviderError({
-                message: `OpenAI /generations ${status} ${code}: ${message}`,
-                code,
-                status,
-                retryable: isRetryableHttpStatus(status),
-                providerId: 'openai',
-            });
-        }
-
-        const result = await response.json();
         return extractImageFromResult(result);
     }
 
@@ -170,32 +169,31 @@ export class OpenAIProvider extends Provider {
             form.append('image', blob, 'reference-0.png');
         }
 
-        let response;
+        let result;
         try {
-            response = await fetchWithTimeout(url, {
+            result = await fetchWithTimeout(url, {
                 method: 'POST',
                 headers: {
                     // Content-Type с boundary FormData проставит сам.
                     'Authorization': `Bearer ${apiKey}`,
                 },
                 body: form,
-            }, OPENAI_REQUEST_TIMEOUT_MS, signal);
+            }, OPENAI_REQUEST_TIMEOUT_MS, signal, async response => {
+                if (!response.ok) {
+                    const { message, code, status } = await parseOpenAIError(response);
+                    throw new ProviderError({
+                        message: `OpenAI /edits ${status} ${code}: ${message}`,
+                        code,
+                        status,
+                        retryable: isRetryableHttpStatus(status),
+                        providerId: 'openai',
+                    });
+                }
+                return response.json();
+            });
         } catch (error) {
             throwAsProviderError(error, `OpenAI /v1/images/edits (${url})`, 'openai', signal);
         }
-
-        if (!response.ok) {
-            const { message, code, status } = await parseOpenAIError(response);
-            throw new ProviderError({
-                message: `OpenAI /edits ${status} ${code}: ${message}`,
-                code,
-                status,
-                retryable: isRetryableHttpStatus(status),
-                providerId: 'openai',
-            });
-        }
-
-        const result = await response.json();
         return extractImageFromResult(result);
     }
 }
@@ -284,32 +282,32 @@ export class XAIProvider extends Provider {
         const signal = options.signal || null;
         iigLog('INFO', `xAI generate: model=${settings.model} refs=${references.length} aspect=${body.aspect_ratio} resolution=${body.resolution} quality=${body.quality}`);
 
-        let response;
+        let result;
         try {
-            response = await fetchWithTimeout(url, {
+            result = await fetchWithTimeout(url, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${settings.apiKey}`,
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(body),
-            }, OPENAI_REQUEST_TIMEOUT_MS, signal);
+            }, OPENAI_REQUEST_TIMEOUT_MS, signal, async response => {
+                if (!response.ok) {
+                    const { message, code, status } = await parseOpenAIError(response);
+                    throw new ProviderError({
+                        message: `xAI ${path} ${status} ${code}: ${message}`,
+                        code,
+                        status,
+                        retryable: isRetryableHttpStatus(status),
+                        providerId: 'xai',
+                    });
+                }
+                return response.json();
+            });
         } catch (error) {
             throwAsProviderError(error, `xAI ${path} (${url})`, 'xai', signal);
         }
-
-        if (!response.ok) {
-            const { message, code, status } = await parseOpenAIError(response);
-            throw new ProviderError({
-                message: `xAI ${path} ${status} ${code}: ${message}`,
-                code,
-                status,
-                retryable: isRetryableHttpStatus(status),
-                providerId: 'xai',
-            });
-        }
-
-        return extractImageFromResult(await response.json(), 'image/jpeg');
+        return extractImageFromResult(result, 'image/jpeg');
     }
 }
 
