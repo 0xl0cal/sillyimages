@@ -1,0 +1,158 @@
+[
+  {
+    "id": "iig_enabled",
+    "event": "change",
+    "key": "enabled",
+    "checked": true
+  },
+  {
+    "id": "iig_process_user_messages",
+    "event": "change",
+    "key": "processUserMessages",
+    "checked": true
+  },
+  {
+    "id": "iig_external_blocks",
+    "event": "change",
+    "key": "externalBlocks",
+    "checked": true
+  },
+  {
+    "id": "iig_endpoint",
+    "event": "input",
+    "key": "endpoint",
+    "checked": false
+  },
+  {
+    "id": "iig_api_key",
+    "event": "input",
+    "key": "apiKey",
+    "checked": false
+  },
+  {
+    "id": "iig_size",
+    "event": "change",
+    "key": "size",
+    "checked": false
+  },
+  {
+    "id": "iig_quality",
+    "event": "change",
+    "key": "quality",
+    "checked": false
+  },
+  {
+    "id": "iig_aspect_ratio",
+    "event": "change",
+    "key": "aspectRatio",
+    "checked": false
+  },
+  {
+    "id": "iig_image_size",
+    "event": "change",
+    "key": "imageSize",
+    "checked": false
+  },
+  {
+    "id": "iig_xai_aspect_ratio",
+    "event": "change",
+    "key": "xaiAspectRatio",
+    "checked": false
+  },
+  {
+    "id": "iig_xai_resolution",
+    "event": "change",
+    "key": "xaiResolution",
+    "checked": false
+  },
+  {
+    "id": "iig_xai_quality",
+    "event": "change",
+    "key": "xaiQuality",
+    "checked": false
+  },
+  {
+    "id": "iig_naistera_negative_prompt",
+    "event": "input",
+    "key": "naisteraNegativePrompt",
+    "checked": false
+  },
+  {
+    "id": "iig_naistera_sampler",
+    "event": "change",
+    "key": "naisteraSampler",
+    "checked": false
+  },
+  {
+    "id": "iig_novelai_negative_prompt",
+    "event": "input",
+    "key": "novelaiNegativePrompt",
+    "checked": false
+  },
+  {
+    "id": "iig_naistera_character_descriptions_mode",
+    "event": "change",
+    "key": "naisteraCharacterDescriptionsMode",
+    "checked": false
+  },
+  {
+    "id": "iig_naistera_aspect_ratio",
+    "event": "change",
+    "key": "naisteraAspectRatio",
+    "checked": false
+  },
+  {
+    "id": "iig_a1111_prompt_prefix",
+    "event": "input",
+    "key": "a1111PromptPrefix",
+    "checked": false
+  },
+  {
+    "id": "iig_a1111_vae",
+    "event": "change",
+    "key": "a1111Vae",
+    "checked": false
+  },
+  {
+    "id": "iig_a1111_hr_upscaler",
+    "event": "change",
+    "key": "a1111HrUpscaler",
+    "checked": false
+  },
+  {
+    "id": "iig_a1111_restore_faces",
+    "event": "change",
+    "key": "a1111RestoreFaces",
+    "checked": true
+  },
+  {
+    "id": "iig_a1111_enable_hr",
+    "event": "change",
+    "key": "a1111EnableHr",
+    "checked": true
+  },
+  {
+    "id": "iig_a1111_adetailer_face",
+    "event": "change",
+    "key": "a1111AdetailerFace",
+    "checked": true
+  },
+  {
+    "id": "iig_a1111_sampler",
+    "event": "change",
+    "key": "a1111Sampler",
+    "checked": false
+  },
+  {
+    "id": "iig_a1111_scheduler",
+    "event": "change",
+    "key": "a1111Scheduler",
+    "checked": false
+  },
+  {
+    "id": "iig_a1111_negative",
+    "event": "input",
+    "key": "a1111NegativePrompt",
+    "checked": false
+  }
+]

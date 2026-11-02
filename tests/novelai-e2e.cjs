@@ -490,6 +490,25 @@ const server = createServer((req, res) => {
         await page.screenshot({ path: path.join(artifacts, 'mobile.png'), fullPage: true });
         await page.locator('#iig_novelai_options').screenshot({path: path.join(artifacts, 'novelai-settings-mobile.png')});
         checks.push('390px layout without horizontal overflow');
+        const fields = JSON.parse(readFileSync(path.join(__dirname,'fixtures/settings-fields.json'),'utf8'));
+        const bindings = await page.evaluate(fields => fields.map(field => {
+            const element = document.getElementById(field.id);
+            if (!element) throw new Error('Missing field '+field.id);
+            const before = structuredClone(app.settings[field.key]);
+            let expected;
+            if (field.checked) { element.checked = !element.checked; expected = element.checked; }
+            else {
+                if (element.tagName === 'SELECT' && !element.options.length) element.add(new Option('Fixture','fixture'));
+                expected = element.tagName === 'SELECT' ? element.options[element.options.length-1].value : 'fixture edited value';
+                element.value = expected;
+            }
+            element.dispatchEvent(new Event(field.event,{bubbles:true}));
+            const actual = app.settings[field.key];
+            app.settings[field.key] = before;
+            return {id:field.id,actual,expected};
+        }),fields);
+        assert.ok(bindings.every(field=>field.actual===field.expected),JSON.stringify(bindings));
+        checks.push(fields.length+' plain settings fields preserve input events, values and storage keys');
         assert.deepEqual(errors, []);
         writeFileSync(path.join(artifacts, 'report.json'), JSON.stringify({ checks, errors, transition, native, emptyLibraryMetrics, resolutionRequests, aspectOverrideRequests, missingAspectRequests }, null, 2));
         console.log(JSON.stringify({ checks, artifacts }, null, 2));
