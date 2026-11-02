@@ -344,12 +344,48 @@ async function renderEntityList(settings = getSettings()) {
         ? entities.filter((entity) => `${entity.title} ${entity.fallbackTitle} ${entity.key}`.toLowerCase().includes(query))
         : entities;
     const visibleEntities = matchedEntities.slice(0, MAX_RENDERED_ENTITIES);
-    const limitNote = matchedEntities.length > visibleEntities.length
-        ? `<div class="iig-library-list-note">${t`Showing ${visibleEntities.length} of ${matchedEntities.length}. Use search to narrow the list.`}</div>`
-        : '';
-    host.innerHTML = visibleEntities.length
-        ? visibleEntities.map((entity) => buildEntityOptionHtml(entity, selectedKeys[selectedKind])).join('') + limitNote
-        : `<div class="iig-library-empty">${selectedKind === 'char' ? t`No characters found.` : t`No personas found.`}</div>`;
+    const keyOf = (kind, key) => JSON.stringify([kind, key]);
+    const rows = new Map([...host.querySelectorAll('.iig-library-entity')].map(row => [keyOf(row.dataset.libraryKind, row.dataset.libraryKey), row]));
+    const missing = visibleEntities.filter(entity => !rows.has(keyOf(entity.kind, entity.key)));
+    if (missing.length) {
+        const template = document.createElement('template');
+        template.innerHTML = missing.map(entity => buildEntityOptionHtml(entity, selectedKeys[selectedKind])).join('');
+        for (const row of template.content.children) rows.set(keyOf(row.dataset.libraryKind, row.dataset.libraryKey), row);
+    }
+    const keep = new Set();
+    let cursor = host.firstChild;
+    const place = row => {
+        keep.add(row);
+        if (row === cursor) cursor = cursor.nextSibling;
+        else host.insertBefore(row, cursor);
+    };
+    for (const entity of visibleEntities) {
+        const row = rows.get(keyOf(entity.kind, entity.key));
+        row.classList.toggle('selected', entity.key === selectedKeys[selectedKind]);
+        const searchable = `${entity.title} ${entity.fallbackTitle} ${entity.key}`.toLowerCase();
+        if (row.dataset.librarySearch !== searchable) row.dataset.librarySearch = searchable;
+        const title = row.querySelector('strong'), status = row.querySelector('small');
+        if (title.textContent !== entity.title) title.textContent = entity.title;
+        const statusText = entity.active ? t`Active` : entity.configured ? t`Configured` : '';
+        if (status.textContent !== statusText) status.textContent = statusText;
+        const avatar = row.querySelector('.iig-library-entity-avatar');
+        if ((avatar.querySelector('img')?.getAttribute('data-iig-library-src') || '') !== normalizeStoredImagePath(entity.avatarUrl)) {
+            avatar.innerHTML = buildAvatarHtml(entity.avatarUrl, entity.kind === 'char' ? 'fa-user-pen' : 'fa-user');
+        }
+        place(row);
+    }
+    const note = !visibleEntities.length
+        ? (selectedKind === 'char' ? t`No characters found.` : t`No personas found.`)
+        : matchedEntities.length > visibleEntities.length
+            ? t`Showing ${visibleEntities.length} of ${matchedEntities.length}. Use search to narrow the list.` : '';
+    if (note) {
+        const className = visibleEntities.length ? 'iig-library-list-note' : 'iig-library-empty';
+        const element = host.querySelector(`:scope > .${className}`) || document.createElement('div');
+        element.className = className;
+        if (element.textContent !== note) element.textContent = note;
+        place(element);
+    }
+    for (const row of [...host.childNodes]) if (!keep.has(row)) row.remove();
     observeLibraryImages();
     return entities;
 }

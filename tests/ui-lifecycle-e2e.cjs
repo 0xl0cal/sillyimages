@@ -151,6 +151,61 @@ const server = createServer((req, res) => {
                 report.evidence.timeoutMs = configured;
             } finally { await page.close(); }
         });
+        await scenario('previews upgrade for larger cards and never downgrade on shrink', async () => {
+            const page = await open();
+            try {
+                await page.evaluate(async prefix => {
+                    const section = document.getElementById('iig_characters_section');
+                    section.innerHTML = '<div id="resize-box" style="width:110px;height:180px"><img id="resize-preview" data-iig-library-src="/fast.svg" data-iig-full-src="/fast.svg" style="width:100%;height:100%"></div>';
+                    section.scrollIntoView({ block: 'start' });
+                    (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                }, prefix);
+                await page.waitForFunction(() => document.getElementById('resize-preview').src.startsWith('blob:') && document.getElementById('resize-preview').naturalWidth === 128);
+                let initial = await page.locator('#resize-preview').getAttribute('src');
+                if (engine === 'chromium') {
+                    const cdp = await page.context().newCDPSession(page);
+                    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1101, height: 950, deviceScaleFactor: 2, mobile: false });
+                    await page.waitForFunction(initial => document.getElementById('resize-preview').src !== initial && document.getElementById('resize-preview').naturalWidth > 128, initial, { timeout: 2000 });
+                    initial = await page.locator('#resize-preview').getAttribute('src');
+                    report.evidence.densityUpgrade = true;
+                    await cdp.detach();
+                }
+                await page.locator('#resize-box').evaluate(e => e.style.width = '260px');
+                await page.waitForFunction(initial => { const image = document.getElementById('resize-preview'); return image.src !== initial && image.naturalWidth > 128; }, initial, { timeout: 2000 });
+                const upgraded = await page.locator('#resize-preview').getAttribute('src');
+                await page.locator('#resize-box').evaluate(e => e.style.width = '80px');
+                await page.waitForTimeout(150);
+                assert.equal(await page.locator('#resize-preview').getAttribute('src'), upgraded);
+                assert.equal(await page.locator('#resize-preview').getAttribute('data-iig-full-src'), '/fast.svg');
+            } finally { await page.close(); }
+        });
+        await scenario('search reuses matching character rows and avatars', async () => {
+            const page = await open();
+            try {
+                await page.evaluate(() => { window.betaRow = [...document.querySelectorAll('.iig-library-entity')].find(e => e.textContent.includes('Beta')); window.betaAvatar = betaRow.querySelector('img'); });
+                await page.locator('#iig_library_search').fill('Beta');
+                await page.waitForFunction(() => document.querySelectorAll('.iig-library-entity').length === 1);
+                assert.equal(await page.evaluate(() => document.querySelector('.iig-library-entity') === betaRow && betaRow.querySelector('img') === betaAvatar), true);
+                const mutations = await page.evaluate(async () => {
+                    let mutations = 0; const observer = new MutationObserver(rows => mutations += rows.length);
+                    observer.observe(document.getElementById('iig_library_entities'), { childList: true });
+                    const input = document.getElementById('iig_library_search'); input.value = 'Beta '; input.dispatchEvent(new Event('input', { bubbles: true }));
+                    await new Promise(r => setTimeout(r, 150)); observer.disconnect(); return mutations;
+                });
+                assert.equal(mutations, 0);
+                await page.locator('.iig-library-entity').click();
+                await page.locator('.iig-library-display-name').fill('Beta renamed');
+                await page.waitForFunction(() => betaRow.querySelector('strong').textContent === 'Beta renamed');
+                assert.equal(await page.evaluate(() => document.activeElement.classList.contains('iig-library-display-name') && document.querySelector('.iig-library-entity') === betaRow), true);
+                await page.locator('#iig_library_search').fill('');
+                await page.waitForFunction(() => document.querySelectorAll('.iig-library-entity').length === 2);
+                assert.equal(await page.evaluate(() => [...document.querySelectorAll('.iig-library-entity')].includes(betaRow)), true);
+                await page.locator('.iig-library-display-name').fill('A Beta renamed');
+                await page.waitForFunction(() => document.querySelector('.iig-library-entity') === betaRow);
+                assert.equal(await page.evaluate(() => betaRow.querySelector('img') === betaAvatar), true);
+                report.evidence.unchangedSearchChildMutations = mutations;
+            } finally { await page.close(); }
+        });
     } finally {
         report.passed = report.failures.length === 0;
         fs.writeFileSync(path.join(artifacts, 'report.json'), JSON.stringify(report, null, 2));

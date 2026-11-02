@@ -3,8 +3,12 @@ const cache = new Map();
 const leases = new Map();
 const retired = new Set();
 const states = new WeakMap();
+const inView = new Set();
 let tracked = new Set();
 let observer;
+let resizeObserver;
+let upgradeFrame = 0;
+let densityQuery;
 let running = false;
 let active = true;
 let generation = 0;
@@ -93,17 +97,22 @@ async function thumbnail(source, width, signal) {
     }
 }
 
-function release(image) {
-    states.get(image)?.controller?.abort();
-    const url = image.getAttribute('src');
-    image.removeAttribute('src');
+function releaseLease(image, url) {
     const owners = leases.get(url);
     owners?.delete(image);
     if (owners?.size === 0) {
         leases.delete(url);
         if (retired.delete(url)) revoke(url);
     }
+}
+
+function release(image) {
+    states.get(image)?.controller?.abort();
+    const url = image.getAttribute('src');
+    image.removeAttribute('src');
+    releaseLease(image, url);
     states.delete(image);
+    inView.delete(image);
 }
 
 async function drain() {
@@ -119,11 +128,13 @@ async function drain() {
             catch { src = source; }
             // A scroll, editor change or collapse can invalidate an in-flight decode.
             if (image.isConnected && states.get(image) === job) {
+                const previous = image.getAttribute('src');
                 if (src.startsWith('blob:')) {
                     if (!leases.has(src)) leases.set(src, new Set());
                     leases.get(src).add(image);
                 }
                 image.src = src;
+                if (previous !== src) releaseLease(image, previous);
             }
         }
     } finally { running = false; }
@@ -131,20 +142,42 @@ async function drain() {
 
 function load(image) {
     if (!active) return;
-    if (states.has(image)) return;
     const source = image.getAttribute('data-iig-library-src');
     if (!source) return;
     if (!image.hasAttribute('data-iig-full-src')) {
+        if (states.has(image)) return;
         states.set(image, true);
         image.src = source;
         return;
     }
     const target = Math.max(128, Math.min(512, (image.clientWidth || 128) * Math.min(devicePixelRatio || 1, 3)));
-    const job = { image, source, width: target <= 128 ? 128 : target <= 256 ? 256 : 512, controller: new AbortController() };
+    const width = target <= 128 ? 128 : target <= 256 ? 256 : 512;
+    const previous = states.get(image);
+    if (previous?.source === source && previous.width >= width) return;
+    previous?.controller?.abort();
+    const job = { image, source, width, controller: new AbortController() };
     states.set(image, job);
     queue.push(job);
     drain();
 }
+
+function scheduleUpgrade() {
+    if (!active || upgradeFrame) return;
+    upgradeFrame = requestAnimationFrame(() => {
+        upgradeFrame = 0;
+        if (document.getElementById('iig_lightbox')?.open) return;
+        for (const image of inView) if (tracked.has(image)) load(image);
+    });
+}
+
+function watchDensity() {
+    densityQuery?.removeEventListener('change', densityChanged);
+    densityQuery = matchMedia(`(resolution: ${devicePixelRatio || 1}dppx)`);
+    densityQuery.addEventListener('change', densityChanged);
+}
+function densityChanged() { watchDensity(); scheduleUpgrade(); }
+watchDensity();
+window.addEventListener('resize', scheduleUpgrade, { passive: true });
 
 export function observeLibraryImages() {
     const section = document.getElementById('iig_characters_section');
@@ -158,19 +191,25 @@ export function observeLibraryImages() {
     // Drop detached queued nodes immediately, rather than retaining old editors.
     for (let i = queue.length - 1; i >= 0; i--) if (!next.has(queue[i].image)) queue.splice(i, 1);
     if (!visible) {
+        resizeObserver?.disconnect();
         generation++;
         for (const item of cache.values()) retire(item.url);
         cache.clear();
         return;
     }
-    if (typeof IntersectionObserver !== 'function') { next.forEach(load); return; }
+    if (typeof ResizeObserver === 'function') {
+        resizeObserver ||= new ResizeObserver(scheduleUpgrade);
+        resizeObserver.disconnect();
+        next.forEach(image => resizeObserver.observe(image.parentElement));
+    }
+    if (typeof IntersectionObserver !== 'function') { next.forEach(image => { inView.add(image); load(image); }); return; }
     if (!observer) observer = new IntersectionObserver(entries => {
         // A modal viewer temporarily covers the library; retain its visible previews.
         if (document.getElementById('iig_lightbox')?.open) return;
         for (const entry of entries) {
             const image = entry.target.querySelector('img[data-iig-library-src]');
             if (!tracked.has(image)) continue;
-            if (entry.isIntersecting) load(image);
+            if (entry.isIntersecting) { inView.add(image); load(image); }
             else release(image);
         }
     }, { rootMargin: '160px 0px' });
@@ -187,6 +226,9 @@ function dispose() {
     active = false;
     generation++;
     observer?.disconnect();
+    resizeObserver?.disconnect();
+    if (upgradeFrame) cancelAnimationFrame(upgradeFrame);
+    upgradeFrame = 0;
     for (const image of tracked) release(image);
     tracked.clear();
     queue.length = 0;
@@ -204,4 +246,4 @@ window.addEventListener('beforeunload', () => {
     }, 0);
 });
 window.addEventListener('pagehide', dispose);
-window.addEventListener('pageshow', () => { active = true; observeLibraryImages(); });
+window.addEventListener('pageshow', () => { active = true; watchDensity(); observeLibraryImages(); });

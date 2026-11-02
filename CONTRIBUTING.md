@@ -42,7 +42,11 @@ Keep UI IDs, event types, validation and save behavior stable. Update focused ed
 
 Loading a connection profile synchronizes every provider's rendered controls, including range/number pairs, custom select values and polling fields. Synchronization does not emit input/change events or trigger extra saves.
 
+Catalog responses apply only to the current request and connection identity. Profile selection refreshes its catalog; Naistera capability metadata uses the same connection ownership. Preview network requests time out after 15 seconds, and canceled departures restore observation in the active document.
+
 Character/persona searches read display metadata only. Full entry normalization belongs to the selected editor, not list construction. Do not traverse generation histories to filter names or load a collapsed library when toggling active-persona mode.
+
+Character list rows are reconciled by kind and reference key. Matching rows and avatars retain their DOM identity; filtering removes unmatched rows. Visible previews upgrade when card dimensions or pixel density require a larger size bucket, keeping the displayed image until its replacement is ready. Shrinking a card does not trigger a lower-resolution decode.
 
 ## Verification
 
