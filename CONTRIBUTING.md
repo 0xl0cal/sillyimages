@@ -16,7 +16,8 @@ The extension runs as browser ES modules inside SillyTavern. There is no build s
 - `avatarPicker.js` owns the avatar catalog and synchronized provider dropdowns. Concurrent catalog reads share one pending request; settled requests do not prevent an explicit refresh. Selection updates classes on existing rows, and catalog changes replace the rows in one batch.
 - `parser.js` reads message instructions and associates source tags with rendered media.
 - `pipeline.js` owns generation locks, retries, cancellation and persistence. New generation, single retry and batch retry share the media lifecycle.
-- `ui.js` composes settings sections and binds controls. `promptLibraryUi.js` owns Styles and Negatives selection, filtering and editing.
+- `ui.js` composes settings sections and reference controls. `apiSettingsUi.js` owns API controls, provider visibility, model catalogs and connection-profile actions. `settingsControls.js` provides section markup and synchronized select/range controls.
+- `promptLibraryUi.js` owns Styles and Negatives selection, filtering and editing.
 - `characterLibraryUi.js` owns character library navigation and generation management. `generationImages.js` validates deletion paths and protects reference files.
 - `lightbox.js` owns the modal viewer and gesture lifecycle. `imageActions.js` owns inline controls and message image hydration.
 
@@ -33,6 +34,8 @@ Bind a rendered image to its source instruction before generation. Preserve tag 
 Initial generation persists an error placeholder for retry. A failed regeneration retains the stored image. Cancellation persists a stopped placeholder. Always release generation controllers and locks. Viewer closure releases timers, frames, pointer capture, modal state and scroll locks.
 
 Keep UI IDs, event types, validation and save behavior stable. Update focused editors in place instead of replacing their parent lists on each keystroke.
+
+Loading a connection profile synchronizes every provider's rendered controls, including range/number pairs, custom select values and polling fields. Synchronization does not emit input/change events or trigger extra saves.
 
 Character/persona searches read display metadata only. Full entry normalization belongs to the selected editor, not list construction. Do not traverse generation histories to filter names or load a collapsed library when toggling active-persona mode.
 
