@@ -963,7 +963,7 @@ export function bindApiSectionEvents(settings, updateVisibility) {
         if (btn) modelLoads.set(btn, request);
         btn?.classList.add('loading');
         try {
-            const models = await fetchModels();
+            const models = await fetchModels({ isCurrent });
             if (!isCurrent()) return [];
             if (select) {
                 let current = isNaistera ? normalizeNaisteraModel(settings.naisteraModel) : (settings.model || '');

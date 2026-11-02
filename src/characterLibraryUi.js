@@ -37,6 +37,9 @@ const boundSections = new WeakSet();
 let contextEventsBound = false;
 let refreshTimer = null;
 let searchRenderTimer = null;
+let libraryRenderRevision = 0;
+let listRenderRevision = 0;
+let editorRenderRevision = 0;
 let lastContextSignature = '';
 let libraryRendered = false;
 let generationSelection = { key: '', enabled: false, ids: new Set() };
@@ -331,13 +334,16 @@ export function buildCharacterLibraryBodyHtml() {
         </div>`;
 }
 
-async function renderEntityList(settings = getSettings()) {
+async function renderEntityList(settings = getSettings(), providedEntities = null) {
     const host = document.getElementById('iig_library_entities');
     if (!host) return [];
-    const entities = await getEntities(selectedKind, settings);
-    const currentSelection = selectedKeys[selectedKind];
+    const kind = selectedKind;
+    const revision = ++listRenderRevision;
+    const entities = providedEntities || await getEntities(kind, settings);
+    if (revision !== listRenderRevision || kind !== selectedKind) return null;
+    const currentSelection = selectedKeys[kind];
     if (!currentSelection || !entities.some((entity) => entity.key === currentSelection)) {
-        selectedKeys[selectedKind] = entities.find((entity) => entity.active)?.key || entities[0]?.key || '';
+        selectedKeys[kind] = entities.find((entity) => entity.active)?.key || entities[0]?.key || '';
     }
     const query = searchQuery.trim().toLowerCase();
     const matchedEntities = query
@@ -349,7 +355,7 @@ async function renderEntityList(settings = getSettings()) {
     const missing = visibleEntities.filter(entity => !rows.has(keyOf(entity.kind, entity.key)));
     if (missing.length) {
         const template = document.createElement('template');
-        template.innerHTML = missing.map(entity => buildEntityOptionHtml(entity, selectedKeys[selectedKind])).join('');
+        template.innerHTML = missing.map(entity => buildEntityOptionHtml(entity, selectedKeys[kind])).join('');
         for (const row of template.content.children) rows.set(keyOf(row.dataset.libraryKind, row.dataset.libraryKey), row);
     }
     const keep = new Set();
@@ -361,7 +367,7 @@ async function renderEntityList(settings = getSettings()) {
     };
     for (const entity of visibleEntities) {
         const row = rows.get(keyOf(entity.kind, entity.key));
-        row.classList.toggle('selected', entity.key === selectedKeys[selectedKind]);
+        row.classList.toggle('selected', entity.key === selectedKeys[kind]);
         const searchable = `${entity.title} ${entity.fallbackTitle} ${entity.key}`.toLowerCase();
         if (row.dataset.librarySearch !== searchable) row.dataset.librarySearch = searchable;
         const title = row.querySelector('strong'), status = row.querySelector('small');
@@ -375,7 +381,7 @@ async function renderEntityList(settings = getSettings()) {
         place(row);
     }
     const note = !visibleEntities.length
-        ? (selectedKind === 'char' ? t`No characters found.` : t`No personas found.`)
+        ? (kind === 'char' ? t`No characters found.` : t`No personas found.`)
         : matchedEntities.length > visibleEntities.length
             ? t`Showing ${visibleEntities.length} of ${matchedEntities.length}. Use search to narrow the list.` : '';
     if (note) {
@@ -400,10 +406,13 @@ function scheduleSearchRender(settings) {
 async function renderEditor(settings = getSettings(), entities = null) {
     const host = document.getElementById('iig_library_editor_host');
     if (!host) return;
-    const available = entities || await getEntities(selectedKind, settings);
-    const entity = available.find((item) => item.key === selectedKeys[selectedKind]);
+    const kind = selectedKind, key = selectedKeys[kind];
+    const revision = ++editorRenderRevision;
+    const available = entities || await getEntities(kind, settings);
+    if (revision !== editorRenderRevision || kind !== selectedKind || key !== selectedKeys[kind]) return;
+    const entity = available.find((item) => item.kind === kind && item.key === key);
     const entry = entity
-        ? getCharacterLibraryEntry(selectedKind, entity.key, settings, { create: false }) || emptyLibraryEntry()
+        ? getCharacterLibraryEntry(kind, entity.key, settings, { create: false }) || emptyLibraryEntry()
         : emptyLibraryEntry();
     host.innerHTML = buildEditorHtml(entity, entry);
     updateGenerationControls();
@@ -505,14 +514,22 @@ async function deleteLibraryImages(scope, state, settings) {
 }
 
 export async function renderCharacterLibrary(settings = getSettings()) {
+    const kind = selectedKind;
+    const revision = ++libraryRenderRevision;
+    clearTimeout(searchRenderTimer);
     document.querySelectorAll('[data-library-tab]').forEach((tab) => {
         tab.classList.toggle('selected', tab.getAttribute('data-library-tab') === selectedKind);
     });
     const search = document.getElementById('iig_library_search');
     if (search instanceof HTMLInputElement && search.value !== searchQuery) search.value = searchQuery;
-    const entities = await renderEntityList(settings);
+    const entities = await getEntities(kind, settings);
+    if (revision !== libraryRenderRevision || kind !== selectedKind) return;
+    await renderEntityList(settings, entities);
+    if (revision !== libraryRenderRevision || kind !== selectedKind) return;
     await renderEditor(settings, entities);
-    lastContextSignature = await getContextSignature(settings);
+    const signature = await getContextSignature(settings);
+    if (revision !== libraryRenderRevision || kind !== selectedKind) return;
+    lastContextSignature = signature;
     libraryRendered = true;
 }
 
@@ -534,13 +551,25 @@ async function saveUploadedImage(file, meta) {
     return normalizeStoredImagePath(await saveImageToFile(dataUrl, meta));
 }
 
-async function replaceReferenceImage(editorState, target, imagePath) {
+function replaceReferenceImage(editorState, target, imagePath, settings) {
+    // Editors normalize entries during input; resolve the live owner after the upload.
+    const entry = getCharacterLibraryEntry(editorState.kind, editorState.key, settings, { create: false });
+    if (!entry) throw new Error(t`Reference not found`);
+    let preview;
     if (target === 'primary') {
-        editorState.entry.primary.imagePath = imagePath;
-        return;
+        entry.primary.imagePath = imagePath;
+        preview = editorState.editor.querySelector('.iig-library-primary-preview');
+    } else {
+        const item = findById(entry.appearanceItems, target);
+        if (item?.type !== 'image') throw new Error(t`Reference not found`);
+        item.imagePath = imagePath;
+        const row = [...editorState.editor.querySelectorAll('.iig-library-appearance-row')].find(row => row.getAttribute('data-appearance-id') === target);
+        preview = row?.querySelector('.iig-library-appearance-preview');
     }
-    const item = findById(editorState.entry.appearanceItems, target);
-    if (item?.type === 'image') item.imagePath = imagePath;
+    if (document.querySelector('#iig_library_editor_host .iig-library-editor') !== editorState.editor) return;
+    if (preview) preview.innerHTML = buildAvatarHtml(imagePath, 'fa-image');
+    if (target === 'primary') editorState.editor.querySelector('.iig-library-primary-reset')?.classList.remove('iig-hidden');
+    observeLibraryImages();
 }
 
 async function handleFileUpload(input, settings) {
@@ -557,9 +586,8 @@ async function handleFileUpload(input, settings) {
             entityKey: state.key,
             referenceId: target,
         });
-        await replaceReferenceImage(state, target, path);
+        replaceReferenceImage(state, target, path, settings);
         saveSettings();
-        await renderCharacterLibrary(settings);
         toastr.success(t`Reference saved`, t`Image Generation`);
     } catch (error) {
         console.error('[IIG] Failed to save character reference:', error);
@@ -582,9 +610,8 @@ async function handleUrlUpload(target, settings) {
             entityKey: state.key,
             referenceId: target,
         });
-        await replaceReferenceImage(state, target, path);
+        replaceReferenceImage(state, target, path, settings);
         saveSettings();
-        await renderCharacterLibrary(settings);
         toastr.success(t`Reference saved`, t`Image Generation`);
     } catch (error) {
         console.error('[IIG] Failed to load character reference:', error);

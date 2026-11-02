@@ -44,6 +44,8 @@ Loading a connection profile synchronizes every provider's rendered controls, in
 
 Catalog responses apply only to the current request and connection identity. Profile selection refreshes its catalog; Naistera capability metadata uses the same connection ownership. Preview network requests time out after 15 seconds, and canceled departures restore observation in the active document.
 
+Catalog error notifications use the same request ownership as catalog data. Library list and editor renders capture their kind and revision before asynchronous reads. Reference uploads resolve the current entry and item by key after saving the file; deleted targets are not recreated. Completion updates the matching preview in place and preserves editor input and focus.
+
 Character/persona searches read display metadata only. Full entry normalization belongs to the selected editor, not list construction. Do not traverse generation histories to filter names or load a collapsed library when toggling active-persona mode.
 
 Character list rows are reconciled by kind and reference key. Matching rows and avatars retain their DOM identity; filtering removes unmatched rows. Visible previews upgrade when card dimensions or pixel density require a larger size bucket, keeping the displayed image until its replacement is ready. Shrinking a card does not trigger a lower-resolution decode.

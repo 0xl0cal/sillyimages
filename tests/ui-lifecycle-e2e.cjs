@@ -22,7 +22,7 @@ const server = createServer((req, res) => {
     if (hosts[req.url]) { body = hosts[req.url]; type = 'text/html'; }
     else if (req.url === '/slow.svg') return; // Released with the browser context after the timeout scenario.
     else if (req.url === '/scripts/i18n.js') body = 'export const t=(s,...v)=>String.raw({raw:s},...v);export const translate=s=>s;';
-    else if (req.url === '/scripts/popup.js') body = 'export class Popup{static show={confirm:async()=>false,input:async()=>null};}';
+    else if (req.url === '/scripts/popup.js') body = 'export class Popup{static show={confirm:async()=>false,input:async()=>window.fixtureInput||null};}';
     else if (req.url.startsWith(prefix)) {
         const file = path.resolve(root, decodeURIComponent(req.url.slice(prefix.length)));
         if (!file.startsWith(root + path.sep)) return res.writeHead(403).end();
@@ -204,6 +204,91 @@ const server = createServer((req, res) => {
                 await page.waitForFunction(() => document.querySelector('.iig-library-entity') === betaRow);
                 assert.equal(await page.evaluate(() => betaRow.querySelector('img') === betaAvatar), true);
                 report.evidence.unchangedSearchChildMutations = mutations;
+            } finally { await page.close(); }
+        });
+        for (const mode of ['primary-file', 'persona-url', 'switch-editor', 'deleted-entry', 'deleted-item']) {
+            await scenario(`reference upload ownership: ${mode}`, async () => {
+                const page = await open();
+                try {
+                    if (mode === 'persona-url' || mode === 'deleted-item') {
+                        await page.locator('[data-library-tab="user"]').click();
+                        await page.waitForFunction(() => document.querySelector('.iig-library-editor')?.dataset.libraryKind === 'user');
+                        await page.locator('.iig-library-appearance-add[data-appearance-type="image"]').click();
+                    }
+                    const before = await page.locator('.iig-library-editor').evaluate(e => ({ kind: e.dataset.libraryKind, key: e.dataset.libraryKey }));
+                    const itemId = ['persona-url', 'deleted-item'].includes(mode) ? await page.locator('.iig-library-appearance-row.image').first().getAttribute('data-appearance-id') : '';
+                    await page.evaluate(() => {
+                        const original = fetch; window.fixtureInput = 'https://fixture.invalid/reference.png';
+                        window.fetch = async (url, init) => {
+                            if (String(url) === fixtureInput) return new Response(Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6JQAAAABJRU5ErkJggg=='), c => c.charCodeAt(0)), { headers: { 'Content-Type': 'image/png' } });
+                            if (String(url) === '/api/images/upload') { window.uploadStarted = true; await new Promise(r => setTimeout(r, 450)); window.uploadFinished = true; return Response.json({ path: '/user/images/Alpha & One/uploaded.png' }); }
+                            return original(url, init);
+                        };
+                    });
+                    if (mode === 'persona-url' || mode === 'deleted-item') await page.locator('.iig-library-appearance-url').first().click();
+                    else await page.locator('.iig-library-primary-file').setInputFiles({ name: 'fixture.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6JQAAAABJRU5ErkJggg==', 'base64') });
+                    await page.waitForFunction(() => window.uploadStarted);
+                    if (mode === 'deleted-item') {
+                        await page.locator('.iig-library-appearance-remove').first().click();
+                    } else if (mode === 'switch-editor' || mode === 'deleted-entry') {
+                        await page.locator('.iig-library-entity[data-library-key="avatar:b.png"]').click();
+                        await page.locator('.iig-library-primary-description').fill('current editor text');
+                        if (mode === 'deleted-entry') await page.evaluate(async prefix => (await import(prefix + 'src/references.js')).deleteCharacterLibraryEntry('char', 'avatar:a.png', app.settings), prefix);
+                    } else {
+                        const field = mode === 'persona-url' ? '.iig-library-appearance-description' : '.iig-library-primary-description';
+                        await page.locator(field).first().fill('edited during upload');
+                    }
+                    await page.waitForFunction(() => window.uploadFinished);
+                    await page.waitForTimeout(120);
+                    const result = await page.evaluate(({ before, itemId }) => {
+                        const entry = app.settings.characterReferenceLibrary[before.kind === 'user' ? 'users' : 'characters'][before.key];
+                        const target = itemId ? entry?.appearanceItems.find(i => i.id === itemId) : entry?.primary;
+                        return { exists: Boolean(entry), path: target?.imagePath, description: target?.description, success: notes.some(n => n[0] === 'success' && String(n[1]).includes('Reference saved')), focused: document.activeElement?.matches('textarea'), editorKey: document.querySelector('.iig-library-editor')?.dataset.libraryKey };
+                    }, { before, itemId });
+                    if (mode === 'deleted-entry') { assert.equal(result.exists, false); assert.equal(result.success, false); }
+                    else if (mode === 'deleted-item') { assert.equal(result.path, undefined); assert.equal(result.success, false); }
+                    else {
+                        assert.equal(result.path, '/user/images/Alpha%20%26%20One/uploaded.png');
+                        assert.equal(result.success, true); assert.equal(result.focused, true);
+                        if (mode !== 'switch-editor') assert.equal(result.description, 'edited during upload');
+                    }
+                    if (mode === 'switch-editor') assert.equal(result.editorKey, 'avatar:b.png');
+                    report.evidence[mode] = result;
+                } finally { await page.close(); }
+            });
+        }
+        await scenario('late persona rows cannot replace a selected Characters tab', async () => {
+            const page = await open();
+            try {
+                await page.evaluate(async prefix => {
+                    const refs = await import(prefix + 'src/references.js'), original = fetch;
+                    window.fetch = async (url, init) => String(url) === '/api/avatars/get' ? Response.json([]) : original(url, init);
+                    await refs.fetchUserAvatars();
+                    window.fetch = async (url, init) => { if (String(url) === '/api/avatars/get') { window.personasStarted = true; await new Promise(r => setTimeout(r, 350)); return Response.json(['other.png']); } return original(url, init); };
+                    document.querySelector('[data-library-tab="user"]').click();
+                }, prefix);
+                await page.waitForFunction(() => window.personasStarted);
+                await page.locator('[data-library-tab="char"]').click();
+                await page.waitForTimeout(550);
+                const view = await page.evaluate(() => ({ tab: document.querySelector('[data-library-tab].selected').dataset.libraryTab, kinds: [...document.querySelectorAll('.iig-library-entity')].map(e => e.dataset.libraryKind), editor: document.querySelector('.iig-library-editor')?.dataset.libraryKind }));
+                assert.equal(view.tab, 'char'); assert.equal(view.editor, 'char'); assert.ok(view.kinds.every(k => k === 'char'));
+                report.evidence.tabOwnership = view;
+            } finally { await page.close(); }
+        });
+        await scenario('obsolete catalog failures are silent; current failures are reported', async () => {
+            const page = await open('/api-test');
+            try {
+                await page.evaluate(() => {
+                    window.catalogErrors = []; toastr.error = message => catalogErrors.push(String(message));
+                    Object.assign(app.settings, { apiType: 'electronhub', endpoint: 'https://fixture.invalid', apiKey: 'fixture', rawEndpoint: false });
+                    const original = fetch; window.fetch = async (url, init) => { if (String(url).includes('fixture.invalid')) { window.catalogStarted = true; await new Promise(r => setTimeout(r, 350)); return new Response('old failure', { status: 500 }); } return original(url, init); };
+                    document.getElementById('iig_refresh_models').click();
+                });
+                await page.waitForFunction(() => window.catalogStarted);
+                await page.locator('#iig_api_type').evaluate(e => { e.value = 'novelai'; e.dispatchEvent(new Event('change', { bubbles: true })); });
+                await page.waitForTimeout(550); assert.deepEqual(await page.evaluate(() => catalogErrors), []);
+                await page.evaluate(() => { app.settings.apiType = 'electronhub'; document.getElementById('iig_refresh_models').click(); });
+                await page.waitForTimeout(550); assert.equal(await page.evaluate(() => catalogErrors.length), 1);
             } finally { await page.close(); }
         });
     } finally {

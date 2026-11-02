@@ -84,7 +84,7 @@ registerProvider(new A1111Provider());
 
 // ----- Models fetcher (делегируется провайдеру) -----
 
-export async function fetchModels() {
+export async function fetchModels({ isCurrent = () => true } = {}) {
     const settings = getSettings();
     const provider = resolveActiveProvider(settings);
     if (!provider) {
@@ -103,6 +103,7 @@ export async function fetchModels() {
     try {
         return await provider.fetchModels();
     } catch (error) {
+        if (!isCurrent()) return [];
         console.error('[IIG] Failed to fetch models:', error);
         toastr.error(t`Failed to load models: ${error.message}`, t`Image Generation`);
         return [];
