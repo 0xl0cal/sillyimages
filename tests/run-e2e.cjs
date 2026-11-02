@@ -11,7 +11,7 @@ const report = {commit: execFileSync('git', ['rev-parse', 'HEAD'], {cwd:root, en
 report.worktree = execFileSync('git', ['status', '--porcelain'], {cwd:root, encoding:'utf8'}).trim();
 report.sources = Object.fromEntries(['index.js','manifest.json','style.css',...readdirSync(path.join(root,'src')).filter(name=>name.endsWith('.js')).map(name=>'src/'+name)]
     .sort().map(file=>[file,createHash('sha256').update(readFileSync(path.join(root,file))).digest('hex')]));
-const scripts = ['a1111', 'provider-references', 'reference-transfer', 'avatar-picker', 'chat-image-actions', 'lightbox', 'generation-library'];
+const scripts = ['a1111', 'provider-references', 'reference-transfer', 'avatar-picker', 'chat-image-actions', 'lightbox', 'generation-library', 'ui-lifecycle'];
 if (engine === 'chromium') scripts.push('novelai', 'naistera-parameters');
 for (const name of scripts) {
     const started = Date.now();

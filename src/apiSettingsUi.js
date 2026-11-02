@@ -731,7 +731,7 @@ function refreshProfileSelectOptions(settings) {
     ).join('') || `<option value="">${t`(no profiles)`}</option>`;
 }
 
-export function bindConnectionProfilesEvents(settings, updateVisibility) {
+export function bindConnectionProfilesEvents(settings, updateVisibility, reloadModels) {
     document.getElementById('iig_profile_select')?.addEventListener('change', (e) => {
         const id = e.target instanceof HTMLSelectElement ? e.target.value : '';
         if (!id) return;
@@ -740,6 +740,7 @@ export function bindConnectionProfilesEvents(settings, updateVisibility) {
         saveSettings();
         applyProfileValuesToInputs(settings);
         updateVisibility();
+        reloadModels();
         iigLog('INFO', `Loaded connection profile: ${profile.name} (${profile.apiType})`);
     });
 
@@ -793,12 +794,16 @@ export function bindConnectionProfilesEvents(settings, updateVisibility) {
         refreshProfileSelectOptions(settings);
         applyProfileValuesToInputs(settings);
         updateVisibility();
+        reloadModels();
     });
 }
 
 // ----- API section events -----
 
 export function bindApiSectionEvents(settings, updateVisibility) {
+    let modelRequest = 0;
+    const modelLoads = new WeakMap();
+    const modelContext = () => [settings.apiType, settings.endpoint, settings.apiKey, settings.rawEndpoint, settings.activeConnectionProfileId];
     for (const [id, event, key, property] of [
         ['iig_enabled', 'change', 'enabled', 'checked'],
         ['iig_process_user_messages', 'change', 'processUserMessages', 'checked'],
@@ -943,14 +948,23 @@ export function bindApiSectionEvents(settings, updateVisibility) {
      * announce=true shows a toastr with model count / error.
      */
     async function reloadModelList({ announce = false } = {}) {
+        const request = ++modelRequest;
+        const context = modelContext();
+        if (settings.rawEndpoint && settings.apiType !== 'naistera') return [];
+        const isCurrent = () => {
+            const current = modelContext();
+            return request === modelRequest && context.every((value, index) => value === current[index]);
+        };
         const isNaistera = settings.apiType === 'naistera';
         const select = /** @type {HTMLSelectElement|null} */ (document.getElementById(
             isNaistera ? 'iig_naistera_model' : 'iig_model_select',
         ));
         const btn = document.getElementById(isNaistera ? 'iig_refresh_naistera_models' : 'iig_refresh_models');
+        if (btn) modelLoads.set(btn, request);
         btn?.classList.add('loading');
         try {
             const models = await fetchModels();
+            if (!isCurrent()) return [];
             if (select) {
                 let current = isNaistera ? normalizeNaisteraModel(settings.naisteraModel) : (settings.model || '');
                 if ((isNaistera || settings.apiType === 'novelai') && models.length > 0 && !models.includes(current)) {
@@ -980,12 +994,15 @@ export function bindApiSectionEvents(settings, updateVisibility) {
             }
             return models;
         } catch (error) {
-            if (announce) {
+            if (announce && isCurrent()) {
                 toastr.error(t`Failed to load models`, t`Image Generation`);
             }
             return [];
         } finally {
-            btn?.classList.remove('loading');
+            if (btn && modelLoads.get(btn) === request) {
+                btn.classList.remove('loading');
+                modelLoads.delete(btn);
+            }
         }
     }
 
@@ -1231,5 +1248,5 @@ export function bindApiSectionEvents(settings, updateVisibility) {
     if (!settings.rawEndpoint || settings.apiType === 'naistera') {
         reloadModelList({ announce: false }).catch(() => { /* silent on init */ });
     }
-
+    return reloadModelList;
 }

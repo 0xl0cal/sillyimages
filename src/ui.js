@@ -1126,8 +1126,8 @@ function bindSettingsEvents() {
         renderAdditionalReferencesStatus(getActiveProviderMaxReferences(settings));
     });
 
-    bindConnectionProfilesEvents(settings, updateVisibility);
-    bindApiSectionEvents(settings, updateVisibility);
+    const reloadModels = bindApiSectionEvents(settings, updateVisibility);
+    bindConnectionProfilesEvents(settings, updateVisibility, reloadModels);
 
     // Gemini avatar section
     bindAvatarSectionEvents(settings, updateVisibility, {

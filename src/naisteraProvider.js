@@ -89,7 +89,8 @@ export class NaisteraProvider extends Provider {
     }
 
     async fetchModels() {
-        const settings = getSettings();
+        const settings = { ...getSettings() };
+        const requestId = this.catalogRequestId = (this.catalogRequestId || 0) + 1;
         const endpoint = getEffectiveEndpoint(settings).replace(/\/$/, '');
         const url = `${endpoint}/api/models`;
         const request = async (authenticated) => {
@@ -127,6 +128,10 @@ export class NaisteraProvider extends Provider {
                 parameters: model.parameters || null,
             }));
 
+        const current = getSettings();
+        if (requestId !== this.catalogRequestId || current.apiKey !== settings.apiKey || getEffectiveEndpoint(current).replace(/\/$/, '') !== endpoint) {
+            return models.map(model => model.id);
+        }
         this.modelCatalog = new Map(models.map((model) => [model.id, model]));
         this.modelCatalogStatus = {
             authenticated: payload?.authenticated === true,

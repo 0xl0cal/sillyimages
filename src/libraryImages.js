@@ -12,6 +12,7 @@ const queue = [];
 const MAX_PIXELS = 4 * 1024 * 1024;
 // A complete 48-image gallery must fit without cycling through fresh URLs.
 const MAX_ENTRIES = 96;
+const REQUEST_TIMEOUT_MS = 15000;
 
 // Let image cancellation finish before WebKit releases its URL resource.
 function revoke(url) { setTimeout(() => URL.revokeObjectURL(url), 250); }
@@ -46,9 +47,11 @@ async function thumbnail(source, width, signal) {
         const abort = () => request.abort();
         request.open('GET', source);
         request.responseType = 'blob';
+        request.timeout = REQUEST_TIMEOUT_MS;
         request.onload = () => request.status === 0 || request.status >= 200 && request.status < 300
             ? resolve(request.response) : reject(new Error(`Preview HTTP ${request.status}`));
         request.onerror = () => reject(new Error('Preview unavailable'));
+        request.ontimeout = () => reject(new Error('Preview request timed out'));
         request.onabort = () => reject(new DOMException('Preview released', 'AbortError'));
         request.onloadend = () => signal.removeEventListener('abort', abort);
         signal.addEventListener('abort', abort, { once: true });
@@ -190,6 +193,15 @@ function dispose() {
     for (const item of cache.values()) retire(item.url);
     cache.clear();
 }
-window.addEventListener('beforeunload', dispose);
+window.addEventListener('beforeunload', () => {
+    dispose();
+    const suspendedGeneration = generation;
+    // The confirmation dialog can leave this document active. Pagehide invalidates recovery.
+    setTimeout(() => {
+        if (generation !== suspendedGeneration) return;
+        active = true;
+        observeLibraryImages();
+    }, 0);
+});
 window.addEventListener('pagehide', dispose);
 window.addEventListener('pageshow', () => { active = true; observeLibraryImages(); });
