@@ -6,14 +6,18 @@ const states = new WeakMap();
 let tracked = new Set();
 let observer;
 let running = false;
+let active = true;
 let generation = 0;
 const queue = [];
 const MAX_PIXELS = 4 * 1024 * 1024;
 const MAX_ENTRIES = 24;
 
+// Let image cancellation finish before WebKit releases its URL resource.
+function revoke(url) { setTimeout(() => URL.revokeObjectURL(url), 250); }
+
 function retire(url) {
     if (leases.has(url)) retired.add(url);
-    else URL.revokeObjectURL(url);
+    else revoke(url);
 }
 
 function trimCache() {
@@ -27,6 +31,7 @@ function trimCache() {
 }
 
 async function thumbnail(source, width, signal) {
+    if (!active) throw new Error('Preview page released');
     const started = generation;
     const key = `${width}:${source}`;
     if (cache.has(key)) {
@@ -35,17 +40,35 @@ async function thumbnail(source, width, signal) {
         cache.set(key, item);
         return item.url;
     }
-    const response = await fetch(source, { signal });
-    if (!response.ok) throw new Error(`Preview HTTP ${response.status}`);
-    const blob = await response.blob();
-    let bitmap, temporary;
+    const blob = await new Promise((resolve, reject) => {
+        const request = new XMLHttpRequest();
+        const abort = () => request.abort();
+        request.open('GET', source);
+        request.responseType = 'blob';
+        request.onload = () => request.status === 0 || request.status >= 200 && request.status < 300
+            ? resolve(request.response) : reject(new Error(`Preview HTTP ${request.status}`));
+        request.onerror = () => reject(new Error('Preview unavailable'));
+        request.onabort = () => reject(new DOMException('Preview released', 'AbortError'));
+        request.onloadend = () => signal.removeEventListener('abort', abort);
+        signal.addEventListener('abort', abort, { once: true });
+        if (signal.aborted) { reject(new DOMException('Preview released', 'AbortError')); return; }
+        request.send();
+    });
+    let bitmap;
     const canvas = document.createElement('canvas');
     try {
-        try { bitmap = await createImageBitmap(blob, { resizeWidth: width, resizeQuality: 'high' }); }
+        try {
+            if (blob.type === 'image/svg+xml') throw new Error('SVG uses the image decoder');
+            bitmap = await createImageBitmap(blob, { resizeWidth: width, resizeQuality: 'high' });
+        }
         catch {
-            temporary = URL.createObjectURL(blob);
             bitmap = new Image();
-            bitmap.src = temporary;
+            bitmap.src = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = () => reject(reader.error);
+                reader.readAsDataURL(blob);
+            });
             await bitmap.decode();
         }
         canvas.width = Math.max(1, Math.min(width, bitmap.width, Math.round(bitmap.width * 1024 / bitmap.height)));
@@ -62,7 +85,6 @@ async function thumbnail(source, width, signal) {
         return item.url;
     } finally {
         bitmap?.close?.();
-        if (temporary) URL.revokeObjectURL(temporary);
         canvas.width = canvas.height = 0;
     }
 }
@@ -70,14 +92,14 @@ async function thumbnail(source, width, signal) {
 function release(image) {
     states.get(image)?.controller?.abort();
     const url = image.getAttribute('src');
+    image.removeAttribute('src');
     const owners = leases.get(url);
     owners?.delete(image);
     if (owners?.size === 0) {
         leases.delete(url);
-        if (retired.delete(url)) URL.revokeObjectURL(url);
+        if (retired.delete(url)) revoke(url);
     }
     states.delete(image);
-    image.removeAttribute('src');
 }
 
 async function drain() {
@@ -87,7 +109,7 @@ async function drain() {
         while (queue.length) {
             const job = queue.shift();
             const { image, source, width } = job;
-            if (!image.isConnected || states.get(image) !== job) continue;
+            if (!active || !image.isConnected || image.ownerDocument !== document || states.get(image) !== job) continue;
             let src;
             try { src = await thumbnail(source, width, job.controller.signal); }
             catch { src = source; }
@@ -104,6 +126,7 @@ async function drain() {
 }
 
 function load(image) {
+    if (!active) return;
     if (states.has(image)) return;
     const source = image.getAttribute('data-iig-library-src');
     if (!source) return;
@@ -148,7 +171,8 @@ export function observeLibraryImages() {
     next.forEach(image => observer.observe(image.parentElement));
 }
 
-window.addEventListener('pagehide', () => {
+function dispose() {
+    active = false;
     generation++;
     observer?.disconnect();
     for (const image of tracked) release(image);
@@ -156,4 +180,7 @@ window.addEventListener('pagehide', () => {
     queue.length = 0;
     for (const item of cache.values()) retire(item.url);
     cache.clear();
-});
+}
+window.addEventListener('beforeunload', dispose);
+window.addEventListener('pagehide', dispose);
+window.addEventListener('pageshow', () => { active = true; observeLibraryImages(); });

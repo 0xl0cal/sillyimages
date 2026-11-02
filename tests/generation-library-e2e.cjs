@@ -243,6 +243,9 @@ const server=createServer((req,res)=>{
                 assert.equal(await page.evaluate(()=>context.characterId),0);
                 checks.push(mode+': '+kind+' search reads metadata only; selected editor stays editable without switching chat');
             }
+            await page.locator('#iig_characters_section').evaluate(section=>section.closest('details').open=false);
+            await page.waitForTimeout(100);
+            assert.deepEqual(errors,[]);
             await context.close();
         }
         assert.deepEqual(errors,[]);writeFileSync(path.join(artifacts,'report.json'),JSON.stringify({passed:true,engine,checks,errors,benchmarks},null,2));console.log(JSON.stringify({passed:true,checks,artifacts},null,2));
