@@ -36,6 +36,8 @@ Initial generation persists an error placeholder for retry. A failed regeneratio
 
 Viewer geometry is sampled at gesture start, image load and viewport resize. Pointer/wheel movement uses cached dimensions and batches transforms into animation frames. Original image files and viewer sources are not resized or recompressed.
 
+The viewer retains at most four original image resources and 32 megapixels between sessions to reuse decodes. This bounded cache trades idle memory for reopening speed and clears on pagehide. Library previews retain their viewport resources under the modal and reconcile visibility after it closes.
+
 Keep UI IDs, event types, validation and save behavior stable. Update focused editors in place instead of replacing their parent lists on each keystroke.
 
 Loading a connection profile synchronizes every provider's rendered controls, including range/number pairs, custom select values and polling fields. Synchronization does not emit input/change events or trigger extra saves.
