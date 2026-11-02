@@ -19,7 +19,7 @@ The extension runs as browser ES modules inside SillyTavern. There is no build s
 - `ui.js` composes settings sections and reference controls. `apiSettingsUi.js` owns API controls, provider visibility, model catalogs and connection-profile actions. `settingsControls.js` provides section markup and synchronized select/range controls.
 - `promptLibraryUi.js` owns Styles and Negatives selection, filtering and editing.
 - `characterLibraryUi.js` owns character library navigation and generation management. `generationImages.js` validates deletion paths and protects reference files.
-- `libraryImages.js` owns viewport-scoped previews, a sequential decode queue and a 24-entry/4-megapixel thumbnail cache. Gallery original URLs remain separate from display URLs. Collapse releases previews; stale decodes cannot update removed editors. Preview failure displays the original.
+- `libraryImages.js` owns viewport-scoped previews, a sequential decode queue and a 96-entry/4-megapixel thumbnail cache. Gallery original URLs remain separate from display URLs. Collapse releases previews; stale decodes cannot update removed editors. Preview failure displays the original.
 - `lightbox.js` owns the modal viewer and gesture lifecycle. `imageActions.js` owns inline controls and message image hydration.
 
 ## Data And Runtime Contracts

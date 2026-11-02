@@ -10,7 +10,8 @@ let active = true;
 let generation = 0;
 const queue = [];
 const MAX_PIXELS = 4 * 1024 * 1024;
-const MAX_ENTRIES = 24;
+// A complete 48-image gallery must fit without cycling through fresh URLs.
+const MAX_ENTRIES = 96;
 
 // Let image cancellation finish before WebKit releases its URL resource.
 function revoke(url) { setTimeout(() => URL.revokeObjectURL(url), 250); }
@@ -161,6 +162,8 @@ export function observeLibraryImages() {
     }
     if (typeof IntersectionObserver !== 'function') { next.forEach(load); return; }
     if (!observer) observer = new IntersectionObserver(entries => {
+        // A modal viewer temporarily covers the library; retain its visible previews.
+        if (document.getElementById('iig_lightbox')?.open) return;
         for (const entry of entries) {
             const image = entry.target.querySelector('img[data-iig-library-src]');
             if (!tracked.has(image)) continue;
@@ -168,8 +171,14 @@ export function observeLibraryImages() {
             else release(image);
         }
     }, { rootMargin: '160px 0px' });
+    observer.disconnect();
+    observer.takeRecords();
     next.forEach(image => observer.observe(image.parentElement));
 }
+
+document.addEventListener('close', event => {
+    if (event.target.id === 'iig_lightbox') observeLibraryImages();
+}, true);
 
 function dispose() {
     active = false;

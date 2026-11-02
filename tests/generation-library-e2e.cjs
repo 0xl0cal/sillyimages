@@ -241,6 +241,17 @@ const server=createServer((req,res)=>{
                 assert.equal(await description.evaluate(element=>document.activeElement===element),true);
                 assert.equal(await page.evaluate(kind=>app.settings.characterReferenceLibrary[kind==='user'?'users':'characters']['avatar:fixture-249.png'].primary.description,kind),'edited fixture');
                 assert.equal(await page.evaluate(()=>context.characterId),0);
+                if(mode==='desktop'&&kind==='char'){
+                    await page.locator('.iig-library-generation-gallery').scrollIntoViewIfNeeded();
+                    await page.waitForFunction(()=>[...document.querySelectorAll('.iig-library-generation-item img')].every(image=>image.src.startsWith('blob:')&&image.complete&&image.naturalWidth));
+                    const created=await page.evaluate(async()=>{
+                        const original=URL.createObjectURL;let count=0;URL.createObjectURL=function(...args){count++;return original.apply(this,args);};
+                        try{for(let i=0;i<5;i++){document.querySelector('.iig-library-generation-item img').click();await new Promise(r=>setTimeout(r,100));document.querySelector('.iig-lightbox-close').click();await new Promise(r=>setTimeout(r,150));}return count;}
+                        finally{URL.createObjectURL=original;}
+                    });
+                    assert.ok(created<=4,'viewing must reuse the 48 visible previews');
+                    checks.push('desktop: gallery previews survive repeated viewer sessions without re-encoding');
+                }
                 checks.push(mode+': '+kind+' search reads metadata only; selected editor stays editable without switching chat');
             }
             await page.locator('#iig_characters_section').evaluate(section=>section.closest('details').open=false);
