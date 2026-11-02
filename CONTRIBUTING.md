@@ -10,6 +10,7 @@ The extension runs as browser ES modules inside SillyTavern. There is no build s
 - `providers.js` owns provider registration, transports and reference collection policies. Each policy specifies avatar order, format and limits.
 - `providerBase.js` owns the common provider contract, generation URL construction and network error classification. `a1111.js` owns AUTOMATIC1111/Forge generation and catalog requests.
 - `references.js` owns character/persona libraries, reference descriptions, context images and imports.
+- `avatarPicker.js` owns the avatar catalog and synchronized provider dropdowns. Concurrent catalog reads share one pending request; settled requests do not prevent an explicit refresh. Selection updates classes on existing rows, and catalog changes replace the rows in one batch.
 - `parser.js` reads message instructions and associates source tags with rendered media.
 - `pipeline.js` owns generation locks, retries, cancellation and persistence. New generation, single retry and batch retry share the media lifecycle.
 - `ui.js` composes settings sections and binds controls. `promptLibraryUi.js` owns Styles and Negatives selection, filtering and editing.
@@ -29,6 +30,8 @@ Bind a rendered image to its source instruction before generation. Preserve tag 
 Initial generation persists an error placeholder for retry. A failed regeneration retains the stored image. Cancellation persists a stopped placeholder. Always release generation controllers and locks. Viewer closure releases timers, frames, pointer capture, modal state and scroll locks.
 
 Keep UI IDs, event types, validation and save behavior stable. Update focused editors in place instead of replacing their parent lists on each keystroke.
+
+Character/persona searches read display metadata only. Full entry normalization belongs to the selected editor, not list construction. Do not traverse generation histories to filter names or load a collapsed library when toggling active-persona mode.
 
 ## Verification
 

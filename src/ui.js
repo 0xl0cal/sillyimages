@@ -51,13 +51,7 @@ import {
     renderAdditionalReferencesList,
     renderAdditionalReferencesStatus,
     syncAdditionalReferenceAvailability,
-    buildUserAvatarDropdownControl,
     buildReferenceImportModalHtml,
-    syncUserAvatarSelection,
-    syncActivePersonaAvatarMode,
-    refreshUserAvatarSelects,
-    getUserAvatarDropdownConfigs,
-    closeUserAvatarDropdowns,
     openReferenceImportModal,
     closeReferenceImportModal,
     importAdditionalReferencesFromUrls,
@@ -73,9 +67,13 @@ import { fetchModels, resolveActiveProvider, getActiveProviderMaxReferences, A11
 import { NOVELAI_NUMERIC_FIELDS, NOVELAI_SAMPLERS, NOVELAI_NOISE_SCHEDULES, NOVELAI_RESOLUTION_PRESETS, NOVELAI_ASPECT_RATIOS, isNovelAIMedium, resolveNovelAISettings } from './novelai.js';
 import { applyImageActionsStyle } from './imageActions.js';
 import { t, translate } from './i18n.js';
+import {
+    buildUserAvatarDropdownControl, syncUserAvatarSelection, syncActivePersonaAvatarMode,
+    refreshUserAvatarSelects, getUserAvatarDropdownConfigs, closeUserAvatarDropdowns,
+} from './avatarPicker.js';
 import { renderStyleSettings, bindStylesSectionEvents, syncNegativePromptInputs } from './promptLibraryUi.js';
 export { renderStyleSettings } from './promptLibraryUi.js';
-import { buildCharacterLibraryBodyHtml, bindCharacterLibraryEvents, clearAllGenerationImages } from './characterLibraryUi.js';
+import { buildCharacterLibraryBodyHtml, bindCharacterLibraryEvents, clearAllGenerationImages, refreshIfContextChanged } from './characterLibraryUi.js';
 // Относительный путь: /scripts/extensions/third-party/sillyimages/src/ui.js → /scripts/popup.js
 import { Popup } from '../../../../popup.js';
 
@@ -1675,7 +1673,6 @@ function bindAvatarSectionEvents(settings, updateVisibility, config) {
         sendUserCheckboxId,
         sendUserKey,
         useActivePersonaCheckboxId,
-        userAvatarSelectId,
         refreshButtonId,
         userAvatarDropdownId,
     } = config;
@@ -1696,14 +1693,7 @@ function bindAvatarSectionEvents(settings, updateVisibility, config) {
         syncActivePersonaAvatarMode(settings.useActiveUserPersonaAvatar);
         saveSettings();
         updateVisibility();
-        renderCharactersSettings(settings).catch(() => {});
-    });
-
-    document.getElementById(userAvatarSelectId)?.addEventListener('change', (e) => {
-        settings.userAvatarFile = e.target.value;
-        syncUserAvatarSelection(settings.userAvatarFile);
-        saveSettings();
-        renderCharactersSettings(settings).catch(() => {});
+        refreshIfContextChanged(settings).catch(() => {});
     });
 
     document.getElementById(refreshButtonId)?.addEventListener('click', async (e) => {
@@ -2465,7 +2455,6 @@ function bindSettingsEvents() {
         sendUserCheckboxId: 'iig_send_user_avatar',
         sendUserKey: 'sendUserAvatar',
         useActivePersonaCheckboxId: 'iig_use_active_persona_avatar',
-        userAvatarSelectId: 'iig_user_avatar_file',
         refreshButtonId: 'iig_refresh_avatars',
         userAvatarDropdownId: 'iig_user_avatar_dropdown',
     });
@@ -2477,7 +2466,6 @@ function bindSettingsEvents() {
         sendUserCheckboxId: 'iig_naistera_send_user_avatar',
         sendUserKey: 'naisteraSendUserAvatar',
         useActivePersonaCheckboxId: 'iig_naistera_use_active_persona_avatar',
-        userAvatarSelectId: 'iig_naistera_user_avatar_file',
         refreshButtonId: 'iig_naistera_refresh_avatars',
         userAvatarDropdownId: 'iig_naistera_user_avatar_dropdown',
     });

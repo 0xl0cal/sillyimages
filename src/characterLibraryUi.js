@@ -3,8 +3,6 @@ import {
     addCharacterLibraryAppearanceItem,
     deleteCharacterLibraryEntry,
     downloadReferenceImageFromUrl,
-    fetchUserAvatars,
-    getCachedUserAvatars,
     getCharacterLibraryEntry,
     getCharacterReferenceKeyForCharacter,
     getCurrentCharacterReferenceKey,
@@ -27,6 +25,7 @@ import {
     getMessageRenderText,
 } from './parser.js';
 import { t } from './i18n.js';
+import { fetchUserAvatars, getCachedUserAvatars } from './avatarPicker.js';
 import { Popup } from '../../../../popup.js';
 import { deleteGenerationImages, planGenerationImageDeletion } from './generationImages.js';
 
@@ -637,7 +636,7 @@ async function getContextSignature(settings = getSettings()) {
     });
 }
 
-async function refreshIfContextChanged(settings = getSettings(), { force = false } = {}) {
+export async function refreshIfContextChanged(settings = getSettings(), { force = false } = {}) {
     const details = document.getElementById('iig_characters_section')?.closest('details');
     if (details && !details.open) {
         lastContextSignature = '';

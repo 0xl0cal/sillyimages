@@ -267,6 +267,7 @@ src/
   providerBase.js  — контракт провайдера, адреса запросов и сетевые ошибки
   a1111.js         — генерация и каталоги AUTOMATIC1111 / Forge
   references.js    — аватары, previous-context, лорбук UI, макрос, import/export
+  avatarPicker.js  — каталог аватаров и синхронизация выпадающих списков
   parser.js        — парсер тегов, JSON-инструкции, matcher
   pipeline.js      — генерация с retry, обработка сообщения, перегенерация
   ui.js            — отрисовка секций настроек и обработчики

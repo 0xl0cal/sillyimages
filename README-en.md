@@ -267,6 +267,7 @@ src/
   providerBase.js  — provider contract, request URLs and transport errors
   a1111.js         — AUTOMATIC1111 / Forge generation and catalogs
   references.js    — avatars, previous context, lorebook UI, macro, import/export
+  avatarPicker.js  — avatar catalog and synchronized dropdowns
   parser.js        — tag parser, JSON instructions, matcher
   pipeline.js      — generation with retry, message processing, regeneration
   ui.js            — settings section rendering and handlers
