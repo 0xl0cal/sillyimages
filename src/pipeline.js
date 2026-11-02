@@ -642,6 +642,34 @@ export async function generateImageWithRetry(prompt, style, onStatusUpdate, opti
     throw lastError;
 }
 
+async function generateTagMedia({
+    tag, tagIndex, messageId, message, settings, loadingPlaceholder, signal,
+    instruction = getInstructionAttributeValue(tag), mode = 'regenerate',
+}) {
+    const statusEl = loadingPlaceholder.querySelector('.iig-status');
+    const generated = await generateImageWithRetry(
+        tag.prompt, tag.style,
+        status => { statusEl.textContent = status; },
+        { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset, messageId, signal },
+    );
+    const { persistedSrc, persistedPosterSrc } = await persistGeneratedMedia(generated, statusEl, { messageId, tagIndex, mode });
+    if (!isGeneratedVideoResult(generated)) recordCharacterGeneration(persistedSrc, tag.prompt, settings);
+    const media = createGeneratedMediaElement(isGeneratedVideoResult(generated)
+        ? { ...generated, dataUrl: persistedSrc, posterDataUrl: persistedPosterSrc || generated.posterDataUrl || '' }
+        : persistedSrc, tag);
+    if (instruction) media.setAttribute('data-iig-instruction', instruction);
+    loadingPlaceholder.replaceWith(media);
+    replaceTagInMessageSource(message, tag, buildPersistedMediaTag(tag, generated, persistedSrc, persistedPosterSrc));
+    return generated;
+}
+
+function stopTagGeneration(message, tag, tagId, loadingPlaceholder) {
+    loadingPlaceholder?.replaceWith(createStoppedPlaceholder(tagId, tag));
+    replaceTagInMessageSource(message, tag, tag.isNewFormat
+        ? buildPersistedImageTag(tag, STOPPED_IMAGE_PATH) : '[IMG:STOPPED]');
+    toastr.info(t`Generation stopped`, t`Image Generation`, { timeOut: 2000 });
+}
+
 // ----- Process message tags (on AI message rendered) -----
 
 export async function processMessageTags(messageId) {
@@ -812,44 +840,14 @@ export async function processMessageTags(messageId) {
             mesTextEl.appendChild(loadingPlaceholder);
         }
 
-        const statusEl = loadingPlaceholder.querySelector('.iig-status');
-
         const controller = new AbortController();
         tagAbortControllers.set(tagId, controller);
 
         try {
-            const generated = await generateImageWithRetry(
-                tag.prompt,
-                tag.style,
-                (status) => { statusEl.textContent = status; },
-                { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset, messageId, signal: controller.signal }
-            );
-
-            const { persistedSrc, persistedPosterSrc } = await persistGeneratedMedia(
-                generated,
-                statusEl,
-                { messageId, tagIndex: index, mode: 'generate' }
-            );
-            if (!isGeneratedVideoResult(generated)) {
-                recordCharacterGeneration(persistedSrc, tag.prompt, settings);
-            }
-
-            const mediaElement = createGeneratedMediaElement(
-                isGeneratedVideoResult(generated)
-                    ? { ...generated, dataUrl: persistedSrc, posterDataUrl: persistedPosterSrc || generated.posterDataUrl || '' }
-                    : persistedSrc,
-                tag,
-            );
-
-            const instructionValue = getInstructionAttributeValue(tag);
-            if (instructionValue) {
-                mediaElement.setAttribute('data-iig-instruction', instructionValue);
-            }
-
-            loadingPlaceholder.replaceWith(mediaElement);
-
-            const updatedTag = buildPersistedMediaTag(tag, generated, persistedSrc, persistedPosterSrc);
-            replaceTagInMessageSource(message, tag, updatedTag);
+            const generated = await generateTagMedia({
+                tag, tagIndex: index, messageId, message, settings, loadingPlaceholder,
+                signal: controller.signal, mode: 'generate',
+            });
 
             iigLog('INFO', `Successfully generated ${isGeneratedVideoResult(generated) ? 'video' : 'image'} for tag ${index}`);
             const readyMsg = isGeneratedVideoResult(generated)
@@ -860,15 +858,7 @@ export async function processMessageTags(messageId) {
             const wasAborted = error instanceof ProviderError && error.code === 'aborted';
             if (wasAborted) {
                 iigLog('INFO', `Generation stopped by user for tag ${index}`);
-                const stoppedPlaceholder = createStoppedPlaceholder(tagId, tag);
-                loadingPlaceholder.replaceWith(stoppedPlaceholder);
-                if (tag.isNewFormat) {
-                    const stoppedTag = buildPersistedImageTag(tag, STOPPED_IMAGE_PATH);
-                    replaceTagInMessageSource(message, tag, stoppedTag);
-                } else {
-                    replaceTagInMessageSource(message, tag, `[IMG:STOPPED]`);
-                }
-                toastr.info(t`Generation stopped`, t`Image Generation`, { timeOut: 2000 });
+                stopTagGeneration(message, tag, tagId, loadingPlaceholder);
             } else {
                 iigLog('ERROR', `Failed to generate image for tag ${index}:`, error);
                 const friendly = formatProviderError(error);
@@ -973,37 +963,11 @@ export async function regenerateSingleTag(messageId, tagIndex) {
 
         loadingPlaceholder = createLoadingPlaceholder(tagId);
         existingMedia.replaceWith(loadingPlaceholder);
-        const statusEl = loadingPlaceholder.querySelector('.iig-status');
 
-        const generated = await generateImageWithRetry(
-            tag.prompt,
-            tag.style,
-            (status) => { statusEl.textContent = status; },
-            { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset, messageId, signal: controller.signal }
-        );
-
-        const { persistedSrc, persistedPosterSrc } = await persistGeneratedMedia(
-            generated,
-            statusEl,
-            { messageId, tagIndex, mode: 'regenerate' }
-        );
-        if (!isGeneratedVideoResult(generated)) {
-            recordCharacterGeneration(persistedSrc, tag.prompt, settings);
-        }
-
-        const mediaElement = createGeneratedMediaElement(
-            isGeneratedVideoResult(generated)
-                ? { ...generated, dataUrl: persistedSrc, posterDataUrl: persistedPosterSrc || generated.posterDataUrl || '' }
-                : persistedSrc,
-            tag,
-        );
-        if (instruction) {
-            mediaElement.setAttribute('data-iig-instruction', instruction);
-        }
-        loadingPlaceholder.replaceWith(mediaElement);
-
-        const updatedTag = buildPersistedMediaTag(tag, generated, persistedSrc, persistedPosterSrc);
-        replaceTagInMessageSource(message, tag, updatedTag);
+        const generated = await generateTagMedia({
+            tag, tagIndex: tagIndex, messageId, message, settings, loadingPlaceholder,
+            signal: controller.signal, instruction,
+        });
 
         const readyMsg = isGeneratedVideoResult(generated)
             ? t`Video ready`
@@ -1013,17 +977,7 @@ export async function regenerateSingleTag(messageId, tagIndex) {
         const wasAborted = error instanceof ProviderError && error.code === 'aborted';
         if (wasAborted) {
             iigLog('INFO', `Single-tag regeneration stopped by user for tag ${tagIndex}`);
-            if (loadingPlaceholder) {
-                const stoppedPlaceholder = createStoppedPlaceholder(tagId, tag);
-                loadingPlaceholder.replaceWith(stoppedPlaceholder);
-            }
-            if (tag.isNewFormat) {
-                const stoppedTag = buildPersistedImageTag(tag, STOPPED_IMAGE_PATH);
-                replaceTagInMessageSource(message, tag, stoppedTag);
-            } else {
-                replaceTagInMessageSource(message, tag, `[IMG:STOPPED]`);
-            }
-            toastr.info(t`Generation stopped`, t`Image Generation`, { timeOut: 2000 });
+            stopTagGeneration(message, tag, tagId, loadingPlaceholder);
         } else {
             iigLog('ERROR', `Single-tag regeneration failed for tag ${tagIndex}:`, error);
             const friendly = formatProviderError(error);
@@ -1108,37 +1062,10 @@ export async function regenerateMessageImages(messageId) {
                     loadingPlaceholder = createLoadingPlaceholder(tagId);
                     existingMedia.replaceWith(loadingPlaceholder);
 
-                    const statusEl = loadingPlaceholder.querySelector('.iig-status');
-
-                    const generated = await generateImageWithRetry(
-                        tag.prompt,
-                        tag.style,
-                        (status) => { statusEl.textContent = status; },
-                        { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset, messageId, signal: controller.signal }
-                    );
-
-                    const { persistedSrc, persistedPosterSrc } = await persistGeneratedMedia(
-                        generated,
-                        statusEl,
-                        { messageId, tagIndex: index, mode: 'regenerate' }
-                    );
-                    if (!isGeneratedVideoResult(generated)) {
-                        recordCharacterGeneration(persistedSrc, tag.prompt, settings);
-                    }
-
-                    const mediaElement = createGeneratedMediaElement(
-                        isGeneratedVideoResult(generated)
-                            ? { ...generated, dataUrl: persistedSrc, posterDataUrl: persistedPosterSrc || generated.posterDataUrl || '' }
-                            : persistedSrc,
-                        tag,
-                    );
-                    if (instruction) {
-                        mediaElement.setAttribute('data-iig-instruction', instruction);
-                    }
-                    loadingPlaceholder.replaceWith(mediaElement);
-
-                    const updatedTag = buildPersistedMediaTag(tag, generated, persistedSrc, persistedPosterSrc);
-                    replaceTagInMessageSource(message, tag, updatedTag);
+                    const generated = await generateTagMedia({
+                        tag, tagIndex: index, messageId, message, settings, loadingPlaceholder,
+                        signal: controller.signal, instruction,
+                    });
 
                     const readyMsg = isGeneratedVideoResult(generated)
                         ? t`Video ${index + 1}/${tags.length} ready`
@@ -1152,17 +1079,7 @@ export async function regenerateMessageImages(messageId) {
                 const wasAborted = error instanceof ProviderError && error.code === 'aborted';
                 if (wasAborted) {
                     iigLog('INFO', `regen iter[${index}] stopped by user`);
-                    if (loadingPlaceholder) {
-                        const stoppedPlaceholder = createStoppedPlaceholder(tagId, tag);
-                        loadingPlaceholder.replaceWith(stoppedPlaceholder);
-                    }
-                    if (tag.isNewFormat) {
-                        const stoppedTag = buildPersistedImageTag(tag, STOPPED_IMAGE_PATH);
-                        replaceTagInMessageSource(message, tag, stoppedTag);
-                    } else {
-                        replaceTagInMessageSource(message, tag, `[IMG:STOPPED]`);
-                    }
-                    toastr.info(t`Generation stopped`, t`Image Generation`, { timeOut: 2000 });
+                    stopTagGeneration(message, tag, tagId, loadingPlaceholder);
                 } else {
                     iigLog('ERROR', `Regeneration failed for tag ${index}:`, error);
                     const friendly = formatProviderError(error);

@@ -101,6 +101,32 @@ const server = createServer((req,res)=>{
             await page.locator('.iig-img-download').waitFor();
             checks.push(mode+': message regeneration rebinds stripped attributes without replacing unrelated images');
 
+            for (const fail of [false,true]) {
+                await reset();
+                await source(tag('[IMG:GEN]','new fixture')+tag('[IMG:GEN]','new fixture'));
+                await page.evaluate(async fail=>{failNext=fail;await app.pipeline.processMessageTags(0);},fail);
+                await settled();
+                assert.deepEqual(await page.evaluate(()=>requests.map(r=>r.prompt)),['new fixture','new fixture']);
+                assert.equal(await page.locator('.iig-img-download').count(),fail?1:2);
+                assert.equal(await page.locator('.iig-img-retry').count(),fail?1:0);
+                assert.equal(await page.evaluate(()=>saves),1);
+                checks.push(mode+': new identical tags preserve separate slots and '+(fail?'failed images remain retryable':'successful images are persisted'));
+            }
+
+            for (const action of ['new','single','batch']) {
+                await reset();await source(tag(action==='new'?'[IMG:GEN]':prefix+'error.svg'));
+                await page.evaluate(()=>delay=500);
+                if(action==='new')await page.evaluate(()=>{void app.pipeline.processMessageTags(0);});
+                else await click(action==='single'?'.iig-img-retry':'.iig-regenerate-btn');
+                await page.waitForFunction(()=>requests.length===1);await click('.iig-stop-btn');await settled();
+                assert.equal(await page.locator('.iig-stopped-image').count(),1);
+                assert.ok(await page.evaluate(()=>context.chat[0].mes.includes('stopped.svg')));
+                await page.evaluate(()=>delay=0);await click('.iig-img-retry');await settled();
+                assert.equal(await page.evaluate(()=>requests.length),2);
+                assert.equal(await page.locator('.iig-img-download').count(),1);
+                checks.push(mode+': '+action+' generation stops, persists and retries');
+            }
+
             for (const [name, attribute, renderedSrc, prompt = 'fixture scene', sourceFirst = false] of [
                 ['double-quoted raw path', '"/user/images/Fixture Caf\u00e9 #1/iig.png"', null],
                 ['single-quoted raw path', "'/user/images/Fixture Caf\u00e9 #1/iig.png'", null],
