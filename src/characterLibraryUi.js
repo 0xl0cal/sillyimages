@@ -28,6 +28,7 @@ import { downloadReferenceImageFromUrl } from './referenceTransfer.js';
 import { fetchUserAvatars, getCachedUserAvatars } from './avatarPicker.js';
 import { Popup } from '../../../../popup.js';
 import { deleteGenerationImages, planGenerationImageDeletion } from './generationImages.js';
+import { observeLibraryImages } from './libraryImages.js';
 
 let selectedKind = 'char';
 let selectedKeys = { char: '', user: '' };
@@ -38,14 +39,12 @@ let refreshTimer = null;
 let searchRenderTimer = null;
 let lastContextSignature = '';
 let libraryRendered = false;
-let libraryImageObserver = null;
 let generationSelection = { key: '', enabled: false, ids: new Set() };
 let generationOperationBusy = false;
 let generationProgress = '';
 const pendingContextSync = { character: false, user: false };
 
 const MAX_RENDERED_ENTITIES = 80;
-const LIBRARY_IMAGE_ROOT_MARGIN = '320px 0px';
 
 function emptyLibraryEntry() {
     return {
@@ -166,38 +165,13 @@ async function getEntities(kind = selectedKind, settings = getSettings()) {
     return kind === 'user' ? await getUserEntities(settings) : getCharacterEntities(settings);
 }
 
-function loadLibraryImage(image) {
-    const src = String(image?.getAttribute('data-iig-library-src') || '').trim();
-    if (!src) return;
-    image.src = src;
-    image.removeAttribute('data-iig-library-src');
-}
-
-function observeLibraryImages() {
-    const images = Array.from(document.querySelectorAll('.iig-character-library img[data-iig-library-src]'));
-    if (typeof IntersectionObserver !== 'function') {
-        images.forEach(loadLibraryImage);
-        return;
-    }
-    if (!libraryImageObserver) {
-        libraryImageObserver = new IntersectionObserver((entries) => {
-            entries.forEach((entry) => {
-                if (!entry.isIntersecting) return;
-                loadLibraryImage(entry.target);
-                libraryImageObserver?.unobserve(entry.target);
-            });
-        }, { rootMargin: LIBRARY_IMAGE_ROOT_MARGIN });
-    }
-    libraryImageObserver.disconnect();
-    images.forEach((image) => libraryImageObserver.observe(image));
-}
-
 function buildAvatarHtml(src, fallbackIcon = 'fa-user') {
     const safeSrc = normalizeStoredImagePath(src);
     if (!safeSrc) {
         return `<span class="iig-library-avatar-placeholder"><i class="fa-solid ${fallbackIcon}"></i></span>`;
     }
-    return `<img data-iig-library-src="${sanitizeForHtml(safeSrc)}" alt="" loading="lazy" decoding="async" fetchpriority="low">`;
+    const original = safeSrc.startsWith('/thumbnail?') ? '' : `data-iig-full-src="${sanitizeForHtml(safeSrc)}"`;
+    return `<img data-iig-library-src="${sanitizeForHtml(safeSrc)}" ${original} alt="" loading="lazy" decoding="async" fetchpriority="low">`;
 }
 
 function buildEntityOptionHtml(entity, selectedKey) {
@@ -708,6 +682,7 @@ export function bindCharacterLibraryEvents(settings = getSettings()) {
     const details = section.closest('details');
 
     details?.addEventListener('toggle', () => {
+        observeLibraryImages();
         if (details.open && !libraryRendered) {
             renderCharacterLibrary(settings).catch((error) => console.warn('[IIG] Failed to render character library:', error));
         }

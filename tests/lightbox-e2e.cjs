@@ -186,6 +186,17 @@ const server = createServer((req, res) => {
             await page.locator('.iig-lightbox-close').click();await released();
             checks.push(mode+': a completed old deletion cannot change a reopened viewer');
 
+            await open();
+            const geometryReads=await full.evaluate(image=>{
+                const parent=image.parentElement,original=parent.getBoundingClientRect;let reads=0;
+                parent.getBoundingClientRect=function(){reads++;return original.call(this);};
+                try{for(let i=0;i<20;i++)image.dispatchEvent(new WheelEvent('wheel',{deltaY:-2,clientX:100,clientY:200,cancelable:true}));}
+                finally{parent.getBoundingClientRect=original;}
+                return reads;
+            });
+            assert.ok(geometryReads<=1,'one geometry read per wheel interaction');
+            await page.locator('.iig-lightbox-close').click();await released();
+            checks.push(mode+': wheel bursts reuse geometry and release interaction state');
             for(let i=0;i<15;i++){await open(i%2?'gallery-image-2':'chat-image');await page.keyboard.press('Escape');}
             await released();assert.equal(await overlay.count(),1);
             checks.push(mode+': fifteen repeated open/close cycles leave app responsive');

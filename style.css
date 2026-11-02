@@ -1136,7 +1136,7 @@
     transform: rotate(45deg);
 }
 
-.iig-character-library img[data-iig-library-src] {
+.iig-character-library img[data-iig-library-src]:not([src]) {
     opacity: 0;
 }
 

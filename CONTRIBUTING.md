@@ -19,6 +19,7 @@ The extension runs as browser ES modules inside SillyTavern. There is no build s
 - `ui.js` composes settings sections and reference controls. `apiSettingsUi.js` owns API controls, provider visibility, model catalogs and connection-profile actions. `settingsControls.js` provides section markup and synchronized select/range controls.
 - `promptLibraryUi.js` owns Styles and Negatives selection, filtering and editing.
 - `characterLibraryUi.js` owns character library navigation and generation management. `generationImages.js` validates deletion paths and protects reference files.
+- `libraryImages.js` owns viewport-scoped previews, a sequential decode queue and a 24-entry/4-megapixel thumbnail cache. Gallery original URLs remain separate from display URLs. Collapse releases previews; stale decodes cannot update removed editors. Preview failure displays the original.
 - `lightbox.js` owns the modal viewer and gesture lifecycle. `imageActions.js` owns inline controls and message image hydration.
 
 ## Data And Runtime Contracts
@@ -32,6 +33,8 @@ A1111 model catalog failures propagate to the caller. Optional catalogs return t
 Bind a rendered image to its source instruction before generation. Preserve tag order for identical instructions. Do not guess between ambiguous media or copy arbitrary source HTML attributes into the rendered DOM. Keep source indexes stable while loading placeholders replace images.
 
 Initial generation persists an error placeholder for retry. A failed regeneration retains the stored image. Cancellation persists a stopped placeholder. Always release generation controllers and locks. Viewer closure releases timers, frames, pointer capture, modal state and scroll locks.
+
+Viewer geometry is sampled at gesture start, image load and viewport resize. Pointer/wheel movement uses cached dimensions and batches transforms into animation frames. Original image files and viewer sources are not resized or recompressed.
 
 Keep UI IDs, event types, validation and save behavior stable. Update focused editors in place instead of replacing their parent lists on each keystroke.
 

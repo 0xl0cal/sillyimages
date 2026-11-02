@@ -168,8 +168,8 @@ export function initLightbox() {
             syncStateFromRenderedTransform();
             overlay.classList.add('interacting');
             applyTransform(true);
+            refreshGeometry();
         }
-        refreshGeometry();
     };
 
     const endInteraction = () => {
