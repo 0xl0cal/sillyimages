@@ -1,5 +1,7 @@
 /** Viewport-owned image previews. Original URLs remain on gallery items. */
 const cache = new Map();
+const leases = new Map();
+const retired = new Set();
 const states = new WeakMap();
 let tracked = new Set();
 let observer;
@@ -9,17 +11,22 @@ const queue = [];
 const MAX_PIXELS = 4 * 1024 * 1024;
 const MAX_ENTRIES = 24;
 
+function retire(url) {
+    if (leases.has(url)) retired.add(url);
+    else URL.revokeObjectURL(url);
+}
+
 function trimCache() {
     let pixels = [...cache.values()].reduce((sum, item) => sum + item.pixels, 0);
     while (cache.size > MAX_ENTRIES || pixels > MAX_PIXELS) {
         const [key, item] = cache.entries().next().value;
         cache.delete(key);
         pixels -= item.pixels;
-        URL.revokeObjectURL(item.url);
+        retire(item.url);
     }
 }
 
-async function thumbnail(source, width) {
+async function thumbnail(source, width, signal) {
     const started = generation;
     const key = `${width}:${source}`;
     if (cache.has(key)) {
@@ -28,7 +35,7 @@ async function thumbnail(source, width) {
         cache.set(key, item);
         return item.url;
     }
-    const response = await fetch(source);
+    const response = await fetch(source, { signal });
     if (!response.ok) throw new Error(`Preview HTTP ${response.status}`);
     const blob = await response.blob();
     let bitmap, temporary;
@@ -41,26 +48,34 @@ async function thumbnail(source, width) {
             bitmap.src = temporary;
             await bitmap.decode();
         }
-        canvas.width = Math.min(width, bitmap.width);
+        canvas.width = Math.max(1, Math.min(width, bitmap.width, Math.round(bitmap.width * 1024 / bitmap.height)));
         canvas.height = Math.max(1, Math.round(bitmap.height * canvas.width / bitmap.width));
         const context = canvas.getContext('2d');
         context.imageSmoothingQuality = 'high';
         context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
         const encoded = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
         if (!encoded) throw new Error('Cannot encode preview');
-        if (started !== generation) throw new Error('Preview released');
+        if (started !== generation || signal.aborted) throw new Error('Preview released');
         const item = { url: URL.createObjectURL(encoded), pixels: canvas.width * canvas.height };
         cache.set(key, item);
         trimCache();
         return item.url;
     } finally {
         bitmap?.close?.();
-        if (temporary) { bitmap.src = ''; URL.revokeObjectURL(temporary); }
+        if (temporary) URL.revokeObjectURL(temporary);
         canvas.width = canvas.height = 0;
     }
 }
 
 function release(image) {
+    states.get(image)?.controller?.abort();
+    const url = image.getAttribute('src');
+    const owners = leases.get(url);
+    owners?.delete(image);
+    if (owners?.size === 0) {
+        leases.delete(url);
+        if (retired.delete(url)) URL.revokeObjectURL(url);
+    }
     states.delete(image);
     image.removeAttribute('src');
 }
@@ -74,10 +89,16 @@ async function drain() {
             const { image, source, width } = job;
             if (!image.isConnected || states.get(image) !== job) continue;
             let src;
-            try { src = await thumbnail(source, width); }
+            try { src = await thumbnail(source, width, job.controller.signal); }
             catch { src = source; }
             // A scroll, editor change or collapse can invalidate an in-flight decode.
-            if (image.isConnected && states.get(image) === job) image.src = src;
+            if (image.isConnected && states.get(image) === job) {
+                if (src.startsWith('blob:')) {
+                    if (!leases.has(src)) leases.set(src, new Set());
+                    leases.get(src).add(image);
+                }
+                image.src = src;
+            }
         }
     } finally { running = false; }
 }
@@ -92,7 +113,7 @@ function load(image) {
         return;
     }
     const target = Math.max(128, Math.min(512, (image.clientWidth || 128) * Math.min(devicePixelRatio || 1, 3)));
-    const job = { image, source, width: target <= 128 ? 128 : target <= 256 ? 256 : 512 };
+    const job = { image, source, width: target <= 128 ? 128 : target <= 256 ? 256 : 512, controller: new AbortController() };
     states.set(image, job);
     queue.push(job);
     drain();
@@ -111,7 +132,7 @@ export function observeLibraryImages() {
     for (let i = queue.length - 1; i >= 0; i--) if (!next.has(queue[i].image)) queue.splice(i, 1);
     if (!visible) {
         generation++;
-        for (const item of cache.values()) URL.revokeObjectURL(item.url);
+        for (const item of cache.values()) retire(item.url);
         cache.clear();
         return;
     }
@@ -126,3 +147,13 @@ export function observeLibraryImages() {
     }, { rootMargin: '160px 0px' });
     next.forEach(image => observer.observe(image.parentElement));
 }
+
+window.addEventListener('pagehide', () => {
+    generation++;
+    observer?.disconnect();
+    for (const image of tracked) release(image);
+    tracked.clear();
+    queue.length = 0;
+    for (const item of cache.values()) retire(item.url);
+    cache.clear();
+});
