@@ -568,7 +568,11 @@ function replaceReferenceImage(editorState, target, imagePath, settings) {
     }
     if (document.querySelector('#iig_library_editor_host .iig-library-editor') !== editorState.editor) return;
     if (preview) preview.innerHTML = buildAvatarHtml(imagePath, 'fa-image');
-    if (target === 'primary') editorState.editor.querySelector('.iig-library-primary-reset')?.classList.remove('iig-hidden');
+    if (target === 'primary') {
+        editorState.editor.querySelector('.iig-library-primary-reset')?.classList.remove('iig-hidden');
+        const avatar = editorState.editor.querySelector('.iig-library-editor-avatar');
+        if (avatar) avatar.innerHTML = buildAvatarHtml(imagePath, 'fa-image');
+    }
     observeLibraryImages();
 }
 
@@ -588,6 +592,7 @@ async function handleFileUpload(input, settings) {
         });
         replaceReferenceImage(state, target, path, settings);
         saveSettings();
+        await renderEntityList(settings);
         toastr.success(t`Reference saved`, t`Image Generation`);
     } catch (error) {
         console.error('[IIG] Failed to save character reference:', error);
@@ -612,6 +617,7 @@ async function handleUrlUpload(target, settings) {
         });
         replaceReferenceImage(state, target, path, settings);
         saveSettings();
+        await renderEntityList(settings);
         toastr.success(t`Reference saved`, t`Image Generation`);
     } catch (error) {
         console.error('[IIG] Failed to load character reference:', error);

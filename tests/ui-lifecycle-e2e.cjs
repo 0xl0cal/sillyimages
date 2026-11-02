@@ -243,7 +243,7 @@ const server = createServer((req, res) => {
                     const result = await page.evaluate(({ before, itemId }) => {
                         const entry = app.settings.characterReferenceLibrary[before.kind === 'user' ? 'users' : 'characters'][before.key];
                         const target = itemId ? entry?.appearanceItems.find(i => i.id === itemId) : entry?.primary;
-                        return { exists: Boolean(entry), path: target?.imagePath, description: target?.description, success: notes.some(n => n[0] === 'success' && String(n[1]).includes('Reference saved')), focused: document.activeElement?.matches('textarea'), editorKey: document.querySelector('.iig-library-editor')?.dataset.libraryKey };
+                        return { exists: Boolean(entry), path: target?.imagePath, description: target?.description, success: notes.some(n => n[0] === 'success' && String(n[1]).includes('Reference saved')), focused: document.activeElement?.matches('textarea'), editorKey: document.querySelector('.iig-library-editor')?.dataset.libraryKey, headerSource: document.querySelector('.iig-library-editor-avatar img')?.getAttribute('data-iig-full-src') };
                     }, { before, itemId });
                     if (mode === 'deleted-entry') { assert.equal(result.exists, false); assert.equal(result.success, false); }
                     else if (mode === 'deleted-item') { assert.equal(result.path, undefined); assert.equal(result.success, false); }
@@ -253,6 +253,7 @@ const server = createServer((req, res) => {
                         if (mode !== 'switch-editor') assert.equal(result.description, 'edited during upload');
                     }
                     if (mode === 'switch-editor') assert.equal(result.editorKey, 'avatar:b.png');
+                    if (mode === 'primary-file') assert.equal(result.headerSource, result.path);
                     report.evidence[mode] = result;
                 } finally { await page.close(); }
             });
