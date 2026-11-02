@@ -240,6 +240,10 @@ Line format: `full-name (primary-trigger) — description`. If only one lorebook
 
 Click an error or stopped image to retry, including when action buttons are hidden. Keyboard users can press Enter or Space. Known errors (moderation, billing, rate-limit, invalid key, unavailable model, timeout) are mapped to human-readable messages.
 
+## License
+
+Copyright (C) 2026 local, astera and contributors. The code is licensed under [GNU AGPL v3.0](LICENSE) (`AGPL-3.0-only`), without warranty. Distribute modified versions and provide network access with the corresponding source code available under the license terms.
+
 ## Localization
 
 Built-in UI language is English. Translations: `ru-ru`, `uk-ua` in the `i18n/` folder. Wired up via `manifest.json` → `i18n`.
