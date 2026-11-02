@@ -75,7 +75,7 @@ const server=createServer((req,res)=>{
     const artifacts=path.join(__dirname,'artifacts','generation-library-'+engine);mkdirSync(artifacts,{recursive:true});
     await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
     const browser=await(engine==='webkit'?webkit:chromium).launch({headless:true,...(engine==='chromium'&&process.env.IIG_BROWSER_CHANNEL?{channel:process.env.IIG_BROWSER_CHANNEL}:{})});
-    const checks=[],errors=[];let page;
+    const checks=[],errors=[],benchmarks=[];let page;
     try{
         for(const [mode,width]of[['desktop',1100],['mobile',320]]){
             const context=await browser.newContext({viewport:{width,height:950},isMobile:mode==='mobile',hasTouch:true});page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
@@ -198,9 +198,41 @@ const server=createServer((req,res)=>{
             assert.equal(await page.locator('[data-section-id="iig_characters_section"]').evaluate(e=>e.open),false);
             assert.deepEqual(await page.evaluate(()=>files.Orphan),['other.png']);
             checks.push(mode+': Debug cleanup works before opening the character library and leaves it collapsed');
+            for(const kind of ['char','user']){
+                await reset();
+                if(kind==='user'){
+                    await click('[data-library-tab="user"]');
+                    await page.waitForFunction(()=>document.querySelector('.iig-library-editor')?.getAttribute('data-library-kind')==='user');
+                }
+                await page.evaluate(kind=>{
+                    window.historyReads=0;
+                    const bucket=app.settings.characterReferenceLibrary[kind==='user'?'users':'characters'];
+                    for(let i=0;i<300;i++){
+                        const key='avatar:fixture-'+i+'.png';
+                        bucket[key]={displayName:'  Fixture '+i+'  ',primary:{enabled:true,imagePath:'',description:'fixture description'},appearanceItems:[],
+                            generations:new Proxy(Array.from({length:48},(_,g)=>({id:'g'+g,imagePath:'/user/images/Fixture/iig_'+g+'.png',prompt:'fixture',createdAt:1})),{
+                                get(target,key){if(/^\d+$/.test(String(key)))historyReads++;return Reflect.get(target,key);}
+                            })};
+                    }
+                },kind);
+                const search=page.locator('#iig_library_search');
+                await search.fill('Fixture 249');
+                await page.waitForFunction(()=>document.querySelectorAll('.iig-library-entity').length===1&&document.querySelector('.iig-library-entity')?.textContent.includes('Fixture 249'));
+                const work=await page.evaluate(()=>historyReads);
+                benchmarks.push({mode,kind,entries:300,generationsPerEntry:48,historyReadsDuringSearch:work});
+                assert.equal(work,0,kind+': searching names must not traverse generation histories');
+                assert.equal(await search.evaluate(element=>document.activeElement===element),true);
+                assert.equal(await page.locator('.iig-library-entity strong').textContent(),'Fixture 249');
+                await click('.iig-library-entity');
+                const description=page.locator('.iig-library-primary-description');await description.fill('edited fixture');
+                assert.equal(await description.evaluate(element=>document.activeElement===element),true);
+                assert.equal(await page.evaluate(kind=>app.settings.characterReferenceLibrary[kind==='user'?'users':'characters']['avatar:fixture-249.png'].primary.description,kind),'edited fixture');
+                assert.equal(await page.evaluate(()=>context.characterId),0);
+                checks.push(mode+': '+kind+' search reads metadata only; selected editor stays editable without switching chat');
+            }
             await context.close();
         }
-        assert.deepEqual(errors,[]);writeFileSync(path.join(artifacts,'report.json'),JSON.stringify({passed:true,engine,checks,errors},null,2));console.log(JSON.stringify({passed:true,checks,artifacts},null,2));
-    }catch(error){if(page&&!page.isClosed())await page.screenshot({path:path.join(artifacts,'failure.png')});writeFileSync(path.join(artifacts,'report.json'),JSON.stringify({passed:false,checks,errors,error:String(error)},null,2));throw error;}
+        assert.deepEqual(errors,[]);writeFileSync(path.join(artifacts,'report.json'),JSON.stringify({passed:true,engine,checks,errors,benchmarks},null,2));console.log(JSON.stringify({passed:true,checks,artifacts},null,2));
+    }catch(error){if(page&&!page.isClosed())await page.screenshot({path:path.join(artifacts,'failure.png')});writeFileSync(path.join(artifacts,'report.json'),JSON.stringify({passed:false,checks,errors,benchmarks,error:String(error)},null,2));throw error;}
     finally{await browser.close();await new Promise(resolve=>server.close(resolve));}
 })().catch(error=>{console.error(error);process.exitCode=1;});

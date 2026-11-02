@@ -76,37 +76,45 @@ function getThumbnailUrl(type, file) {
     return value ? `/thumbnail?type=${encodeURIComponent(type)}&file=${encodeURIComponent(value)}` : '';
 }
 
+function getEntityLibraryMetadata(kind, key, settings) {
+    // Lists need display metadata, not normalized copies of each image history.
+    const bucket = kind === 'user' ? 'users' : 'characters';
+    const entry = settings.characterReferenceLibrary?.[bucket]?.[key];
+    return { displayName: String(entry?.displayName || '').trim(), configured: Boolean(entry) };
+}
+
 function getCharacterEntities(settings = getSettings()) {
     const context = getContext();
     const characters = Array.isArray(context?.characters) ? context.characters : [];
     const entities = new Map();
+    const activeKey = getCurrentCharacterReferenceKey();
     characters.forEach((character, index) => {
         const key = getCharacterReferenceKeyForCharacter(character, index);
-        const libraryEntry = getCharacterLibraryEntry('char', key, settings, { create: false });
+        const { displayName, configured } = getEntityLibraryMetadata('char', key, settings);
         entities.set(key, {
             kind: 'char',
             key,
-            title: libraryEntry?.displayName || String(character?.name || character?.avatar || t`Character`),
+            title: displayName || String(character?.name || character?.avatar || t`Character`),
             fallbackTitle: String(character?.name || character?.avatar || t`Character`),
             avatarUrl: getThumbnailUrl('avatar', character?.avatar),
             generationFolder: String(character?.name || '').trim(),
-            active: key === getCurrentCharacterReferenceKey(),
-            configured: Boolean(libraryEntry),
+            active: key === activeKey,
+            configured,
         });
     });
 
     const library = settings.characterReferenceLibrary?.characters || {};
     for (const key of Object.keys(library)) {
         if (entities.has(key)) continue;
-        const entry = getCharacterLibraryEntry('char', key, settings, { create: false });
+        const { displayName } = getEntityLibraryMetadata('char', key, settings);
         const fallbackTitle = key.replace(/^(avatar|name|id):/, '') || t`Character`;
         entities.set(key, {
             kind: 'char',
             key,
-            title: entry?.displayName || fallbackTitle,
+            title: displayName || fallbackTitle,
             fallbackTitle,
             avatarUrl: key.startsWith('avatar:') ? getThumbnailUrl('avatar', key.slice('avatar:'.length)) : '',
-            generationFolder: entry?.displayName || fallbackTitle.replace(/\.[^.]+$/, ''),
+            generationFolder: displayName || fallbackTitle.replace(/\.[^.]+$/, ''),
             active: false,
             configured: true,
         });
@@ -121,30 +129,30 @@ async function getUserEntities(settings = getSettings()) {
     const entities = new Map();
     for (const avatarFile of avatars) {
         const key = getUserReferenceKeyForAvatar(avatarFile);
-        const libraryEntry = getCharacterLibraryEntry('user', key, settings, { create: false });
+        const { displayName, configured } = getEntityLibraryMetadata('user', key, settings);
         const fallbackTitle = getPersonaTitle(avatarFile);
         entities.set(key, {
             kind: 'user',
             key,
-            title: libraryEntry?.displayName || fallbackTitle,
+            title: displayName || fallbackTitle,
             fallbackTitle,
             avatarUrl: getThumbnailUrl('persona', avatarFile),
             generationFolder: '',
             active: key === activeKey,
-            configured: Boolean(libraryEntry),
+            configured,
         });
     }
 
     const library = settings.characterReferenceLibrary?.users || {};
     for (const key of Object.keys(library)) {
         if (entities.has(key)) continue;
-        const entry = getCharacterLibraryEntry('user', key, settings, { create: false });
+        const { displayName } = getEntityLibraryMetadata('user', key, settings);
         const avatarFile = key.replace(/^avatar:/, '');
         const fallbackTitle = getPersonaTitle(avatarFile);
         entities.set(key, {
             kind: 'user',
             key,
-            title: entry?.displayName || fallbackTitle,
+            title: displayName || fallbackTitle,
             fallbackTitle,
             avatarUrl: getThumbnailUrl('persona', avatarFile),
             generationFolder: '',
