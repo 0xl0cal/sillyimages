@@ -127,6 +127,19 @@ const server = createServer((req,res)=>{
                 checks.push(mode+': '+action+' generation stops, persists and retries');
             }
 
+            await reset();await source('[IMG:GEN:{"prompt":"legacy fixture"}]');
+            await page.evaluate(()=>app.pipeline.processMessageTags(0));await settled();
+            assert.deepEqual(await page.evaluate(()=>requests.map(r=>r.prompt)),['legacy fixture']);
+            assert.equal(await page.locator('.mes_text img').count(),1);
+            checks.push(mode+': supported legacy instructions generate and persist one source tag');
+
+            await reset();await source(tag('/user/images/Fixture/saved.png','saved fixture')+tag('[IMG:GEN]','pending fixture'));
+            await page.evaluate(()=>app.pipeline.processMessageTags(0));await settled();
+            assert.deepEqual(await page.evaluate(()=>requests.map(r=>r.prompt)),['pending fixture']);
+            assert.equal(await page.locator('.mes_text img').first().getAttribute('src'),'/user/images/Fixture/saved.png');
+            assert.equal(await page.locator('.mes_text img').count(),2);
+            checks.push(mode+': new generation preserves an existing image in the same message');
+
             for (const [name, attribute, renderedSrc, prompt = 'fixture scene', sourceFirst = false] of [
                 ['double-quoted raw path', '"/user/images/Fixture Caf\u00e9 #1/iig.png"', null],
                 ['single-quoted raw path', "'/user/images/Fixture Caf\u00e9 #1/iig.png'", null],

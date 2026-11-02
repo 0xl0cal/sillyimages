@@ -110,6 +110,8 @@ LLM видит тот же формат, но понимает: есть реа�
 
 ### Браузерная проверка
 
+Общий запуск: `node tests/run-e2e.cjs chromium` и `node tests/run-e2e.cjs webkit`. Отчёты, логи и хеши проверенных исходников сохраняются в `tests/artifacts/suite-<engine>/`. Устройство модулей, контракты данных и сценарии ручной проверки описаны в [CONTRIBUTING.md](CONTRIBUTING.md).
+
 С установленным Playwright, доступным для Node, запустите `node tests/novelai-e2e.cjs` и `node tests/naistera-parameters-e2e.cjs`. Для внешней установки задайте `NODE_PATH`; для установленного Edge задайте `IIG_BROWSER_CHANNEL=msedge`. Тесты открывают настоящий интерфейс настроек и путь генерации с имитацией состояния Tavern и ответов провайдеров. Отчёты и скриншоты широкого и узкого окна сохраняются в `tests/artifacts/novelai` и `tests/artifacts/naistera-parameters`.
 
 Проверка совпадений и запросов: `node --experimental-vm-modules --test tests/reference-matching.test.cjs`. Тесты используют настройки в памяти и имитацию ответов HTTP.
@@ -261,10 +263,12 @@ src/
   settings.js      — дефолты, логгер, профили, лорбуки, стили
   utils.js         — data URL / base64 / upload / ProviderError
   providers.js     — Provider base + OpenAI/xAI/Gemini/OpenRouter/ElectronHub/Naistera
+  modelCapabilities.js — семейства моделей, лимиты и параметры
   references.js    — аватары, previous-context, лорбук UI, макрос, import/export
   parser.js        — парсер тегов, JSON-инструкции, matcher
   pipeline.js      — генерация с retry, обработка сообщения, перегенерация
   ui.js            — отрисовка секций настроек и обработчики
+  promptLibraryUi.js — библиотека стилей и негативных промптов
   events.js        — интеграция с SillyTavern
   i18n.js          — реэкспорт t/translate
 ```

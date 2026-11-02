@@ -1,5 +1,6 @@
 const { spawnSync, execFileSync } = require('node:child_process');
-const { mkdirSync, writeFileSync, readFileSync } = require('node:fs');
+const { mkdirSync, writeFileSync, readFileSync, readdirSync } = require('node:fs');
+const { createHash } = require('node:crypto');
 const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const engine = process.argv[2] || 'chromium';
@@ -7,6 +8,9 @@ if (!['chromium', 'webkit'].includes(engine)) throw new Error('Choose chromium o
 const artifacts = path.join(__dirname, 'artifacts', 'suite-' + engine);
 mkdirSync(artifacts, {recursive: true});
 const report = {commit: execFileSync('git', ['rev-parse', 'HEAD'], {cwd:root, encoding:'utf8'}).trim(), engine, passed:false, suites:[]};
+report.worktree = execFileSync('git', ['status', '--porcelain'], {cwd:root, encoding:'utf8'}).trim();
+report.sources = Object.fromEntries(['index.js','manifest.json','style.css',...readdirSync(path.join(root,'src')).filter(name=>name.endsWith('.js')).map(name=>'src/'+name)]
+    .sort().map(file=>[file,createHash('sha256').update(readFileSync(path.join(root,file))).digest('hex')]));
 const scripts = ['provider-references', 'chat-image-actions', 'lightbox', 'generation-library'];
 if (engine === 'chromium') scripts.push('novelai', 'naistera-parameters');
 for (const name of scripts) {

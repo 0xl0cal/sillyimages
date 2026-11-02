@@ -726,7 +726,7 @@ export async function processMessageTags(messageId) {
         rerenderMessageHtml(context, message, settings, messageId, mesTextEl);
         iigLog('INFO', `Converted ${convertedLegacyTags} legacy tag(s) to instruction tags before processing`);
     }
-    bindRenderedMediaTags(mesTextEl, tags);
+    const renderedMedia = bindRenderedMediaTags(mesTextEl, tags);
 
     const processTag = async (tag, index) => {
         const tagId = `iig-${messageId}-${index}`;
@@ -735,95 +735,7 @@ export async function processMessageTags(messageId) {
         iigLog('INFO', `Processing tag ${index}: ${tag.fullMatch.substring(0, 50)}`);
 
         const loadingPlaceholder = createLoadingPlaceholder(tagId);
-        let targetElement = null;
-
-        // NEW FORMAT: <img|video data-iig-instruction='...'> is a real DOM element
-        const allImgs = mesTextEl.querySelectorAll('img[data-iig-instruction], video[data-iig-instruction]');
-        iigLog('INFO', `Searching for media element. Found ${allImgs.length} [data-iig-instruction] elements in DOM`);
-
-        const searchPrompt = tag.prompt.substring(0, 30);
-        iigLog('INFO', `Searching for prompt starting with: "${searchPrompt}"`);
-
-        const isPendingDomMedia = (img) => {
-            const src = img.getAttribute('src') || '';
-            return src.includes('[IMG:GEN]')
-                || src.includes('[IMG:ERROR]')
-                || src === ''
-                || src === '#'
-                || (tag.existingSrc && src === tag.existingSrc);
-        };
-
-        const decodeEntities = (str) => String(str || '')
-            .replace(/&quot;/g, '"')
-            .replace(/&apos;/g, "'")
-            .replace(/&#39;/g, "'")
-            .replace(/&#34;/g, '"')
-            .replace(/&amp;/g, '&');
-
-        const normalizedSearchPrompt = decodeEntities(searchPrompt);
-
-        const matchesByPrompt = (img) => {
-            const instruction = img.getAttribute('data-iig-instruction');
-            if (!instruction) return false;
-            const decoded = decodeEntities(instruction);
-            if (decoded.includes(normalizedSearchPrompt)) return true;
-            if (instruction.includes(searchPrompt)) return true;
-            try {
-                const data = JSON.parse(decoded.replace(/'/g, '"'));
-                if (data?.prompt && data.prompt.substring(0, 30) === tag.prompt.substring(0, 30)) return true;
-            } catch {}
-            return false;
-        };
-
-        const indexedCandidate = allImgs[index];
-        if (indexedCandidate && isPendingDomMedia(indexedCandidate)) {
-            targetElement = indexedCandidate;
-            iigLog('INFO', `Found media element via pending DOM index ${index}`);
-        }
-
-        if (!targetElement) {
-            for (const img of allImgs) {
-                if (!matchesByPrompt(img)) continue;
-                targetElement = img;
-                const src = img.getAttribute('src') || '';
-                iigLog('INFO', `Found media element via prompt match (src="${src.substring(0, 60)}", pending=${isPendingDomMedia(img)})`);
-                break;
-            }
-        }
-
-        if (!targetElement && allImgs.length === tags.length) {
-            const candidate = allImgs[index];
-            if (candidate) {
-                targetElement = candidate;
-                const src = candidate.getAttribute('src') || '';
-                iigLog('INFO', `Found media element via 1-to-1 positional fallback at index ${index} (src="${src.substring(0, 60)}")`);
-            }
-        }
-
-        if (!targetElement) {
-            iigLog('INFO', `Prompt matching failed, trying src marker matching...`);
-            for (const img of allImgs) {
-                if (isPendingDomMedia(img)) {
-                    const src = img.getAttribute('src') || '';
-                    iigLog('INFO', `Found img element with generation marker in src: "${src}"`);
-                    targetElement = img;
-                    break;
-                }
-            }
-        }
-
-        if (!targetElement) {
-            iigLog('INFO', `Trying broader media search...`);
-            const allImgsInMes = mesTextEl.querySelectorAll('img, video');
-            for (const img of allImgsInMes) {
-                const src = img.getAttribute('src') || '';
-                if (src.includes('[IMG:GEN]') || src.includes('[IMG:ERROR]')) {
-                    iigLog('INFO', `Found img via broad search with marker src: "${src.substring(0, 50)}"`);
-                    targetElement = img;
-                    break;
-                }
-            }
-        }
+        const targetElement = renderedMedia[index] || null;
 
         if (targetElement) {
             const parent = targetElement.parentElement;

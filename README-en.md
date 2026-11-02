@@ -110,6 +110,8 @@ Requests use [`POST /ai/generate-image`](https://image.novelai.net/docs/index.ht
 
 ### Browser checks
 
+Run all browser checks with `node tests/run-e2e.cjs chromium` and `node tests/run-e2e.cjs webkit`. Reports, logs and tested source hashes are written to `tests/artifacts/suite-<engine>/`. See [CONTRIBUTING.md](CONTRIBUTING.md) for module boundaries, data contracts and manual verification scenarios.
+
 With Playwright available to Node (use `NODE_PATH` for an external installation), run `node tests/novelai-e2e.cjs` and `node tests/naistera-parameters-e2e.cjs`. Set `IIG_BROWSER_CHANNEL=msedge` to use installed Edge. The tests open the real settings UI and generation pipeline with simulated Tavern state and provider responses. Reports and desktop/mobile screenshots are written to `tests/artifacts/novelai` and `tests/artifacts/naistera-parameters`.
 
 Run matching and request tests with `node --experimental-vm-modules --test tests/reference-matching.test.cjs`. Tests use an in-memory configuration and simulated HTTP responses.
@@ -261,10 +263,12 @@ src/
   settings.js      — defaults, logger, profiles, lorebooks, styles
   utils.js         — data URL / base64 / upload / ProviderError
   providers.js     — Provider base + OpenAI/xAI/Gemini/OpenRouter/ElectronHub/Naistera
+  modelCapabilities.js — model families, limits and parameters
   references.js    — avatars, previous context, lorebook UI, macro, import/export
   parser.js        — tag parser, JSON instructions, matcher
   pipeline.js      — generation with retry, message processing, regeneration
   ui.js            — settings section rendering and handlers
+  promptLibraryUi.js — style and negative prompt libraries
   events.js        — SillyTavern integration
   i18n.js          — re-export of t/translate
 ```
