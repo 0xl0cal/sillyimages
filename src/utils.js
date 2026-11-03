@@ -313,12 +313,10 @@ export function escapeRegex(text) {
     return String(text || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+const htmlEntities = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '\u00a0': '&nbsp;' };
+
 export function sanitizeForHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+    return String(text ?? '').replace(/[&<>"'\u00a0]/g, character => htmlEntities[character]);
 }
 
 export function sanitizeForSingleQuotedAttribute(text) {

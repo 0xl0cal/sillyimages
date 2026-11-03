@@ -48,6 +48,45 @@ const server = createServer((req, res) => {
         catch (error) { report.failures.push({ name, error: String(error) }); }
     };
     try {
+        await scenario('HTML text and quoted attributes preserve names and descriptions without DOM allocation', async () => {
+            const page = await open();
+            try {
+                const result = await page.evaluate(async prefix => {
+                    const { sanitizeForHtml } = await import(prefix + 'src/utils.js');
+                    const values = [null, undefined, false, 0, NaN, '', '&<>"\'', '&amp; &#39;', 'line\nnext\tend', '\u00a0\u2028\ud83d\udc3a', '<img src=x onerror="window.unexpectedMarkup=true">', '</textarea><script>window.unexpectedMarkup=true</script>'];
+                    const oracle = document.createElement('div');
+                    const parsed = document.createElement('div');
+                    let checked = 0;
+                    for (const value of values) {
+                        oracle.textContent = value;
+                        const expected = oracle.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+                        if (sanitizeForHtml(value) !== expected) throw new Error('Escaping differs for ' + String(value));
+                        parsed.innerHTML = `<span title="${sanitizeForHtml(value)}">${sanitizeForHtml(value)}</span>`;
+                        if (parsed.querySelectorAll('*').length !== 1 || parsed.firstChild.textContent !== oracle.textContent || parsed.firstChild.title !== oracle.textContent) throw new Error('Markup round trip differs');
+                        checked++;
+                    }
+                    const create = document.createElement;
+                    let allocations = 0;
+                    document.createElement = function (...args) {
+                        if (new Error().stack.includes('sanitizeForHtml')) allocations++;
+                        return create.apply(this, args);
+                    };
+                    try {
+                        const context = SillyTavern.getContext();
+                        context.characters = Array.from({ length: 100 }, (_, i) => ({ name: 'Name & <' + i + '> "quoted"', avatar: 'safe-' + i + '.png' }));
+                        await app.library.renderCharacterLibrary(app.settings);
+                        return { checked, allocations, rows: document.querySelectorAll('.iig-library-entity').length, title: [...document.querySelectorAll('.iig-library-entity strong')].find(title => title.textContent.startsWith('Name')).textContent, unexpectedMarkup: Boolean(window.unexpectedMarkup) };
+                    } finally { document.createElement = create; }
+                }, prefix);
+                report.evidence.htmlEscaping = result;
+                assert.equal(result.checked, 12);
+                assert.equal(result.rows, 80);
+                assert.ok(result.title.includes('& <'));
+                assert.equal(result.unexpectedMarkup, false);
+                assert.equal(result.allocations, 0);
+                await page.screenshot({ path: path.join(artifacts, 'escaped-library.png') });
+            } finally { await page.close(); }
+        });
         await scenario('PNG previews use readback-oriented canvases and preserve rendered pixels', async () => {
             const page = await open();
             try {
