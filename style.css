@@ -2883,7 +2883,6 @@ body.iig-actions-hidden .iig-img-actions {
     transform: translate(0, 0) scale(1);
     transform-origin: center center;
     transition: transform 0.18s cubic-bezier(0.2, 0.75, 0.25, 1);
-    backface-visibility: hidden;
     touch-action: none;
     -webkit-user-drag: none;
 }

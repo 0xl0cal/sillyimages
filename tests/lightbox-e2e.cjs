@@ -96,7 +96,9 @@ const server = createServer((req, res) => {
                         timers:viewerTimers.size,frames:viewerFrames.size,captures:[...pointerIds].filter(id=>img.hasPointerCapture(id)),
                         displayed:getComputedStyle(e).display,source:img.getAttribute('src'),modal:e.matches(':modal'),retained:viewerImages.filter(image=>image.hasAttribute('src')).length};
                 });
-                assert.deepEqual(state,{overflow:'auto',priority:'important',timers:0,frames:0,captures:[],displayed:'none',source:null,modal:false,retained:0});
+                assert.ok(state.retained <= 4, 'Decoded originals must have a bounded owner');
+                delete state.retained;
+                assert.deepEqual(state,{overflow:'auto',priority:'important',timers:0,frames:0,captures:[],displayed:'none',source:null,modal:false});
                 if(mode==='mobile')await page.locator('#app-button').tap();else await page.locator('#app-button').click();
                 await page.locator('#app-input').fill('responsive');
                 await page.locator('#chat').evaluate(e=>e.scrollTop=0);

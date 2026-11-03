@@ -228,6 +228,7 @@ export function observeLibraryImages() {
     // Drop detached queued nodes immediately, rather than retaining old editors.
     for (let i = queue.length - 1; i >= 0; i--) if (!next.has(queue[i].image)) queue.splice(i, 1);
     if (!visible) {
+        if (originalWarmup || cache.size) document.dispatchEvent(new Event('iig-library-images-released'));
         releaseLibraryOriginal();
         pendingVisibility.clear();
         generation++;

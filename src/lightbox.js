@@ -45,7 +45,7 @@ export function initLightbox() {
         <button class="iig-lightbox-nav iig-lightbox-prev" type="button" title="${t`Previous`}" aria-label="${t`Previous`}"><i class="fa-solid fa-chevron-left"></i></button>
         <button class="iig-lightbox-nav iig-lightbox-next" type="button" title="${t`Next`}" aria-label="${t`Next`}"><i class="fa-solid fa-chevron-right"></i></button>
         <div class="iig-lightbox-content">
-            <img class="iig-lightbox-img" src="" alt="" draggable="false">
+            <img class="iig-lightbox-img" src="" alt="" draggable="false" decoding="async">
             <div class="iig-lightbox-caption"></div>
         </div>
     `;
@@ -84,6 +84,34 @@ export function initLightbox() {
     let lastZoomPointY = null;
     let previousBodyOverflow = null;
     let viewSession = 0;
+    const decodedImages = new Map();
+    const releaseOriginals = () => {
+        for (const image of decodedImages.values()) image.removeAttribute('src');
+        decodedImages.clear();
+    };
+    const rememberOriginal = () => {
+        const source = imgEl.src;
+        const pixels = imgEl.naturalWidth * imgEl.naturalHeight;
+        if (!pixels || pixels > 32 * 1024 * 1024) return;
+        let image = decodedImages.get(source);
+        decodedImages.delete(source);
+        if (!image) {
+            image = new Image();
+            image.decoding = 'async';
+            image.src = source;
+            image.decode().catch(() => {});
+        }
+        decodedImages.set(source, image);
+        let total = [...decodedImages.values()].reduce((sum, entry) => sum + entry.naturalWidth * entry.naturalHeight, 0);
+        while (decodedImages.size > 4 || total > 32 * 1024 * 1024) {
+            const [key, entry] = decodedImages.entries().next().value;
+            decodedImages.delete(key);
+            total -= entry.naturalWidth * entry.naturalHeight;
+            entry.removeAttribute('src');
+        }
+    };
+    window.addEventListener('pagehide', releaseOriginals);
+    document.addEventListener('iig-library-images-released', releaseOriginals);
     const geometry = {
         baseWidth: 0,
         baseHeight: 0,
@@ -632,6 +660,7 @@ export function initLightbox() {
     imgEl.addEventListener('load', () => {
         if (!overlay.open) return;
         releaseLibraryOriginal();
+        rememberOriginal();
         refreshGeometry();
         clampPan(false);
         applyTransform(true);
