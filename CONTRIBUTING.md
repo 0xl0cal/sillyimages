@@ -66,6 +66,8 @@ Styles and negatives retain array and record identity after normalization. Chara
 
 Character list rows are reconciled by kind and reference key. Matching rows and avatars retain their DOM identity; filtering removes unmatched rows. Visible previews upgrade when card dimensions or pixel density require a larger size bucket, keeping the displayed image until its replacement is ready. Shrinking a card does not trigger a lower-resolution decode.
 
+New character/persona rows are parsed in the live document. A wholesale replacement assigns the list HTML once; partial searches append only missing rows and preserve matching nodes. Root-level row markup has no whitespace nodes to accumulate between filter passes.
+
 ## Verification
 
 Make Playwright available to Node, using `NODE_PATH` for an external installation. Set `IIG_BROWSER_CHANNEL=msedge` to use installed Edge for Chromium checks. Install the Playwright WebKit runtime for WebKit checks.

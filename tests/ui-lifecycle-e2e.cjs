@@ -235,14 +235,20 @@ const server = createServer((req, res) => {
                     window.fetch = (url, init) => String(url) === '/api/avatars/get' ? Promise.resolve(Response.json(Object.keys(context.powerUserSettings.personas))) : old(url, init);
                     await (await import(prefix + 'src/avatarPicker.js')).fetchUserAvatars();
                     let batches = 0;
+                    let templates = 0;
+                    const create = document.createElement;
+                    document.createElement = function (name, ...args) { if (name === 'template' && new Error().stack.includes('/src/characterLibraryUi.js')) templates++; return create.call(this, name, ...args); };
                     const observer = new MutationObserver(records => batches += records.filter(record => record.addedNodes.length).length);
                     observer.observe(document.getElementById('iig_library_entities'), { childList: true });
                     document.querySelector('[data-library-tab="user"]').click();
                     while (document.querySelectorAll('.iig-library-entity[data-library-kind="user"]').length !== 80) await new Promise(requestAnimationFrame);
-                    observer.disconnect(); return batches;
+                    observer.disconnect(); document.createElement = create;
+                    return { batches, templates };
                 }, prefix);
-                assert.equal(mutations, 2, 'Insert the row fragment and the search note, not 80 separate rows');
-                report.evidence.personaInsertBatches = mutations;
+                assert.equal(mutations.batches, 2, 'Insert the row fragment and the search note, not 80 separate rows');
+                assert.equal(mutations.templates, 0, 'Parse a wholesale replacement directly in the live document');
+                report.evidence.personaInsertBatches = mutations.batches;
+                report.evidence.personaTemplateBatches = mutations.templates;
             } finally { await page.close(); }
         });
         await scenario('canceled departure restores previews; accepted reload remains usable', async () => {
@@ -395,9 +401,22 @@ const server = createServer((req, res) => {
                 await page.locator('.iig-library-display-name').fill('Beta renamed');
                 await page.waitForFunction(() => betaRow.querySelector('strong').textContent === 'Beta renamed');
                 assert.equal(await page.evaluate(() => document.activeElement.classList.contains('iig-library-display-name') && document.querySelector('.iig-library-entity') === betaRow), true);
+                await page.evaluate(() => {
+                    window.partialTemplates = 0; const create = document.createElement;
+                    document.createElement = function (name, ...args) { if (name === 'template' && new Error().stack.includes('/src/characterLibraryUi.js')) partialTemplates++; return create.call(this, name, ...args); };
+                });
                 await page.locator('#iig_library_search').fill('');
                 await page.waitForFunction(() => document.querySelectorAll('.iig-library-entity').length === 2);
+                assert.equal(await page.evaluate(() => partialTemplates), 0);
                 assert.equal(await page.evaluate(() => [...document.querySelectorAll('.iig-library-entity')].includes(betaRow)), true);
+                const childCount = await page.locator('#iig_library_entities').evaluate(host => host.childNodes.length);
+                for (let i = 0; i < 3; i++) {
+                    await page.locator('#iig_library_search').fill('Beta');
+                    await page.waitForFunction(() => document.querySelectorAll('.iig-library-entity').length === 1);
+                    await page.locator('#iig_library_search').fill('');
+                    await page.waitForFunction(() => document.querySelectorAll('.iig-library-entity').length === 2);
+                }
+                assert.equal(await page.locator('#iig_library_entities').evaluate(host => host.childNodes.length), childCount, 'Filtering must not accumulate detached-row whitespace');
                 await page.locator('.iig-library-display-name').fill('A Beta renamed');
                 await page.waitForFunction(() => document.querySelector('.iig-library-entity') === betaRow);
                 assert.equal(await page.evaluate(() => betaRow.querySelector('img') === betaAvatar), true);

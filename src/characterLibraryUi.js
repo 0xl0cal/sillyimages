@@ -369,27 +369,27 @@ async function renderEntityList(settings = getSettings(), providedEntities = nul
     const missing = visibleEntities.filter(entity => !rows.has(keyOf(entity.kind, entity.key)));
     const fresh = new Set();
     if (missing.length) {
-        const template = document.createElement('template');
-        template.innerHTML = missing.map(entity => buildEntityOptionHtml(entity, selectedKeys[kind])).join('');
-        for (const row of template.content.children) {
-            rows.set(keyOf(row.dataset.libraryKind, row.dataset.libraryKey), row);
+        const html = missing.map(entity => buildEntityOptionHtml(entity, selectedKeys[kind]).trim()).join('');
+        if (missing.length === visibleEntities.length) host.innerHTML = html;
+        else host.insertAdjacentHTML('beforeend', html);
+        for (const row of host.querySelectorAll('.iig-library-entity')) {
+            const key = keyOf(row.dataset.libraryKind, row.dataset.libraryKey);
+            if (rows.get(key) === row) continue;
+            rows.set(key, row);
             fresh.add(row);
         }
     }
-    if (missing.length && missing.length === visibleEntities.length) {
-        host.replaceChildren(...visibleEntities.map(entity => rows.get(keyOf(entity.kind, entity.key))));
-    }
     const keep = new Set();
-    let cursor = host.firstChild;
+    let cursor = host.firstElementChild;
     const place = row => {
         keep.add(row);
-        if (row === cursor) cursor = cursor.nextSibling;
+        if (row === cursor) cursor = cursor.nextElementSibling;
         else host.insertBefore(row, cursor);
     };
     for (const entity of visibleEntities) {
         const row = rows.get(keyOf(entity.kind, entity.key));
         const selected = entity.key === selectedKeys[kind];
-        if (row.classList.contains('selected') !== selected) row.classList.toggle('selected', selected);
+        if (!fresh.has(row) && row.classList.contains('selected') !== selected) row.classList.toggle('selected', selected);
         if (fresh.has(row) || rowEntities.get(row) === entity) {
             rowEntities.set(row, entity);
             place(row);
@@ -419,7 +419,7 @@ async function renderEntityList(settings = getSettings(), providedEntities = nul
         if (element.textContent !== note) element.textContent = note;
         place(element);
     }
-    for (const row of [...host.childNodes]) if (!keep.has(row)) row.remove();
+    for (const row of [...host.children]) if (!keep.has(row)) row.remove();
     observeLibraryImages();
     return entities;
 }
