@@ -48,6 +48,33 @@ const server = createServer((req, res) => {
         catch (error) { report.failures.push({ name, error: String(error) }); }
     };
     try {
+        await scenario('server avatar thumbnails use native loading without observer subscriptions', async () => {
+            const page = await open();
+            try {
+                const result = await page.evaluate(async prefix => {
+                    const section = document.getElementById('iig_characters_section');
+                    section.innerHTML = '<div style="width:64px;height:64px"><img data-iig-library-src="/thumbnail?type=avatar&file=fixture.png" loading="lazy" decoding="async" style="width:100%;height:100%"></div>';
+                    const image = section.querySelector('img');
+                    let subscriptions = 0;
+                    const restores = [];
+                    for (const Type of [IntersectionObserver, ResizeObserver]) {
+                        const original = Type.prototype.observe;
+                        Type.prototype.observe = function (target, ...args) { if (target === image.parentElement) subscriptions++; return original.call(this, target, ...args); };
+                        restores.push(() => Type.prototype.observe = original);
+                    }
+                    try {
+                        const module = await import(prefix + 'src/libraryImages.js');
+                        module.observeLibraryImages();
+                        const source = image.getAttribute('src');
+                        section.closest('details').open = false;
+                        module.observeLibraryImages();
+                        return { source, subscriptions, released: !image.hasAttribute('src') };
+                    } finally { restores.forEach(restore => restore()); }
+                }, prefix);
+                assert.deepEqual(result, { source: '/thumbnail?type=avatar&file=fixture.png', subscriptions: 0, released: true });
+                report.evidence.nativeAvatars = result;
+            } finally { await page.close(); }
+        });
         await scenario('a released preview closes its pending bitmap without rasterizing or encoding', async () => {
             const page = await open();
             try {

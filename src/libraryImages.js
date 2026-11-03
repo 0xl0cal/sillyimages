@@ -223,6 +223,7 @@ watchDensity();
 window.addEventListener('resize', scheduleUpgrade, { passive: true });
 
 export function observeLibraryImages() {
+    if (!active) return;
     const section = document.getElementById('iig_characters_section');
     const visible = section?.closest('details')?.open;
     const next = new Set(visible ? section.querySelectorAll('img[data-iig-library-src]') : []);
@@ -236,8 +237,10 @@ export function observeLibraryImages() {
         observedParents.delete(image);
         release(image);
     }
-    const added = [...next].filter(image => !tracked.has(image));
+    const added = [...next].filter(image => !tracked.has(image) && image.hasAttribute('data-iig-full-src'));
     added.forEach(image => observedParents.set(image, image.parentElement));
+    // Server thumbnails already have bounded dimensions and browser-native lazy loading.
+    for (const image of next) if (!image.hasAttribute('data-iig-full-src')) load(image);
     tracked = next;
     // Drop detached queued nodes immediately, rather than retaining old editors.
     for (let i = queue.length - 1; i >= 0; i--) if (!next.has(queue[i].image)) queue.splice(i, 1);
@@ -250,13 +253,15 @@ export function observeLibraryImages() {
         cache.clear();
         return;
     }
-    if (typeof ResizeObserver === 'function') {
+    if (added.length && typeof ResizeObserver === 'function') {
         resizeObserver ||= new ResizeObserver(scheduleUpgrade);
         added.forEach(image => resizeObserver.observe(image.parentElement));
     }
     if (typeof IntersectionObserver !== 'function') { next.forEach(image => { inView.add(image); load(image); }); return; }
-    observer ||= new IntersectionObserver(updateVisibility, { rootMargin: '160px 0px' });
-    added.forEach(image => observer.observe(image.parentElement));
+    if (added.length) {
+        observer ||= new IntersectionObserver(updateVisibility, { rootMargin: '160px 0px' });
+        added.forEach(image => observer.observe(image.parentElement));
+    }
     scheduleOriginalWarmup();
 }
 
