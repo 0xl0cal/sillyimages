@@ -48,6 +48,41 @@ const server = createServer((req, res) => {
         catch (error) { report.failures.push({ name, error: String(error) }); }
     };
     try {
+        await scenario('preview queue waits through viewer reopen and resumes after closing', async () => {
+            const page = await open();
+            try {
+                await page.evaluate(async prefix => {
+                    const create = createImageBitmap;
+                    const openRequest = XMLHttpRequest.prototype.open;
+                    window.secondPreviewRequests = 0;
+                    XMLHttpRequest.prototype.open = function (method, url, ...args) { if (url === '/fast.svg') secondPreviewRequests++; return openRequest.call(this, method, url, ...args); };
+                    window.createImageBitmap = async (...args) => {
+                        if (window.finishPreviewDecode) return create(...args);
+                        const canvas = document.createElement('canvas'); canvas.width = canvas.height = 41;
+                        window.pendingBitmap = await create(canvas);
+                        await new Promise(resolve => window.finishPreviewDecode = resolve);
+                        return pendingBitmap;
+                    };
+                    const section = document.getElementById('iig_characters_section');
+                    section.innerHTML = '<div data-iig-lightbox-gallery style="display:flex;height:140px"><div style="width:120px;height:120px"><img id="queued-viewer-image" data-iig-library-src="/pending.png" data-iig-full-src="/pending.png" data-iig-lightbox style="width:100%;height:100%"></div><div style="width:120px;height:120px"><img id="queued-preview" data-iig-library-src="/fast.svg" data-iig-full-src="/fast.svg" style="width:100%;height:100%"></div></div>';
+                    section.scrollIntoView({ block: 'start' });
+                    (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                }, prefix);
+                await page.waitForFunction(() => typeof finishPreviewDecode === 'function', null, { timeout: 3000 });
+                await page.evaluate(() => {
+                    document.getElementById('queued-viewer-image').click();
+                    document.getElementById('iig_lightbox').close();
+                    document.getElementById('queued-viewer-image').click();
+                    finishPreviewDecode();
+                });
+                await page.waitForFunction(() => pendingBitmap.width === 0, null, { timeout: 3000 });
+                await page.waitForTimeout(200);
+                assert.equal(await page.evaluate(() => secondPreviewRequests), 0);
+                await page.locator('.iig-lightbox-close').evaluate(button => button.click());
+                await page.waitForFunction(() => secondPreviewRequests === 1 && document.getElementById('queued-preview').complete && document.getElementById('queued-preview').naturalWidth > 0, null, { timeout: 3000 });
+                report.evidence.viewerQueueResumeRequests = 1;
+            } finally { await page.close(); }
+        });
         await scenario('server avatar thumbnails use native loading without observer subscriptions', async () => {
             const page = await open();
             try {

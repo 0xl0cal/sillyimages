@@ -162,7 +162,7 @@ async function drain() {
     if (running) return;
     running = true;
     try {
-        while (queue.length) {
+        while (queue.length && !document.getElementById('iig_lightbox')?.open) {
             const job = queue.shift();
             const { image, source, width } = job;
             if (!active || !image.isConnected || image.ownerDocument !== document || states.get(image) !== job) continue;
@@ -281,10 +281,11 @@ function updateVisibility(entries) {
 }
 
 document.addEventListener('close', event => {
-    if (event.target.id !== 'iig_lightbox') return;
+    if (event.target.id !== 'iig_lightbox' || event.target.open) return;
     updateVisibility([...pendingVisibility.values()]);
     pendingVisibility.clear();
     observeLibraryImages();
+    drain();
 }, true);
 
 function dispose() {
