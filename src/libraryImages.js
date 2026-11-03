@@ -34,7 +34,7 @@ function scheduleOriginalWarmup() {
     // One visible original prepares entry to the viewer without retaining a gallery of decodes.
     warmupTimer = setTimeout(() => {
         warmupTimer = 0;
-        const candidate = [...inView].find(image => tracked.has(image) && image.hasAttribute('data-iig-lightbox'));
+        const candidate = [...tracked].find(image => inView.has(image) && image.hasAttribute('data-iig-lightbox'));
         const source = candidate?.getAttribute('data-iig-full-src');
         if (originalWarmup?.getAttribute('src') === source) return;
         releaseLibraryOriginal();
@@ -43,8 +43,15 @@ function scheduleOriginalWarmup() {
         originalWarmup.decoding = 'async';
         originalWarmup.src = source;
         originalWarmup.decode().catch(() => {});
-    }, 100);
+    }, 500);
 }
+
+// Filtering changes gallery visibility; speculative decodes must not compete with typing.
+document.addEventListener('input', event => {
+    if (!(event.target instanceof Element) || !event.target.closest('#iig_characters_section')) return;
+    releaseLibraryOriginal();
+    scheduleOriginalWarmup();
+}, true);
 
 // Let image cancellation finish before WebKit releases its URL resource.
 function revoke(url) { setTimeout(() => URL.revokeObjectURL(url), 250); }

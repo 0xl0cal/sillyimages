@@ -47,6 +47,30 @@ const server = createServer((req, res) => {
         catch (error) { report.failures.push({ name, error: String(error) }); }
     };
     try {
+        await scenario('original preparation waits for input idle and follows visible DOM order', async () => {
+            const page = await open();
+            try {
+                await page.evaluate(async prefix => {
+                    window.warmed = []; const Native = Image;
+                    window.Image = function (...args) { const image = new Native(...args); warmed.push(image); return image; };
+                    const section = document.getElementById('iig_characters_section');
+                    section.innerHTML = '<input id="iig_library_search"><div data-iig-lightbox-gallery style="display:flex;width:300px;height:150px"><div id="first-original" style="width:140px;height:140px;transform:translateY(3000px)"><img data-iig-library-src="/user/images/first.svg" data-iig-full-src="/user/images/first.svg" data-iig-lightbox style="width:100%;height:100%"></div><div style="width:140px;height:140px"><img data-iig-library-src="/user/images/second.svg" data-iig-full-src="/user/images/second.svg" data-iig-lightbox style="width:100%;height:100%"></div></div>';
+                    section.scrollIntoView({ block: 'start' });
+                    (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                    const input = document.getElementById('iig_library_search');
+                    for (let i = 0; i < 10; i++) {
+                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                        await new Promise(resolve => setTimeout(resolve, 80));
+                    }
+                }, prefix);
+                assert.equal(await page.evaluate(() => warmed.some(image => image.getAttribute('src')?.startsWith('/user/images/'))), false, 'Typing must not decode speculative originals');
+                await page.waitForFunction(() => warmed.some(image => image.getAttribute('src') === '/user/images/second.svg' && image.complete));
+                await page.locator('#first-original').evaluate(element => element.style.transform = 'none');
+                await page.waitForFunction(() => warmed.some(image => image.getAttribute('src') === '/user/images/first.svg' && image.complete));
+                assert.equal(await page.evaluate(() => warmed.filter(image => image.getAttribute('src')?.startsWith('/user/images/')).length), 1);
+                await page.screenshot({ path: path.join(artifacts, 'original-input-idle.png') });
+            } finally { await page.close(); }
+        });
         await scenario('stable previews keep observer ownership and release original warmup on collapse', async () => {
             const page = await open();
             try {
