@@ -133,7 +133,7 @@ async function thumbnail(source, width, signal) {
         assertCurrent();
         canvas.width = Math.max(1, Math.min(width, bitmap.width, Math.round(bitmap.width * 1024 / bitmap.height)));
         canvas.height = Math.max(1, Math.round(bitmap.height * canvas.width / bitmap.width));
-        const context = canvas.getContext('2d');
+        const context = canvas.getContext('2d', { willReadFrequently: true });
         context.imageSmoothingQuality = 'high';
         context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
         const encoded = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));

@@ -48,6 +48,29 @@ const server = createServer((req, res) => {
         catch (error) { report.failures.push({ name, error: String(error) }); }
     };
     try {
+        await scenario('PNG previews use readback-oriented canvases and preserve rendered pixels', async () => {
+            const page = await open();
+            try {
+                await page.evaluate(async prefix => {
+                    window.previewContexts = [];
+                    const getContext = HTMLCanvasElement.prototype.getContext;
+                    HTMLCanvasElement.prototype.getContext = function (kind, options) { if (new Error().stack.includes('/src/libraryImages.js')) previewContexts.push(options || {}); return getContext.call(this, kind, options); };
+                    const section = document.getElementById('iig_characters_section');
+                    section.innerHTML = '<div style="width:120px;height:120px"><img id="readback-preview" data-iig-library-src="/fast.svg" data-iig-full-src="/fast.svg" style="width:100%;height:100%"></div>';
+                    section.scrollIntoView({ block: 'start' });
+                    (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                }, prefix);
+                await page.waitForFunction(() => document.getElementById('readback-preview').src.startsWith('blob:') && document.getElementById('readback-preview').complete && document.getElementById('readback-preview').naturalWidth > 0);
+                const result = await page.evaluate(() => {
+                    const image = document.getElementById('readback-preview');
+                    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1;
+                    const context = canvas.getContext('2d'); context.drawImage(image, 0, 0, 1, 1);
+                    return { rgba: [...context.getImageData(0, 0, 1, 1).data], source: image.getAttribute('data-iig-full-src'), readback: previewContexts.length > 0 && previewContexts.every(options => options.willReadFrequently === true) };
+                });
+                assert.deepEqual(result, { rgba: [85, 102, 119, 255], source: '/fast.svg', readback: true });
+                report.evidence.previewReadback = result;
+            } finally { await page.close(); }
+        });
         await scenario('preview queue waits through viewer reopen and resumes after closing', async () => {
             const page = await open();
             try {

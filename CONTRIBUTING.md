@@ -46,6 +46,8 @@ Server avatar thumbnails use native lazy loading and receive their source during
 
 The preview queue finishes its active job when the viewer opens and defers queued decodes until the viewer closes. A stale close event does not resume work under a reopened viewer.
 
+Preview canvases request readback-oriented 2D contexts for PNG encoding. The canvas is temporary and is not composited into the page; original image files remain separate from its output.
+
 Keep UI IDs, event types, validation and save behavior stable. Update focused editors in place instead of replacing their parent lists on each keystroke.
 
 Loading a connection profile synchronizes every provider's rendered controls, including range/number pairs, custom select values and polling fields. Synchronization does not emit input/change events or trigger extra saves.
