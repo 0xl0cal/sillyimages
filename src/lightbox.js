@@ -86,28 +86,30 @@ export function initLightbox() {
     let viewSession = 0;
     const decodedImages = new Map();
     const releaseOriginals = () => {
-        for (const image of decodedImages.values()) image.removeAttribute('src');
+        for (const { image } of decodedImages.values()) image.removeAttribute('src');
         decodedImages.clear();
     };
     const rememberOriginal = () => {
         const source = imgEl.src;
         const pixels = imgEl.naturalWidth * imgEl.naturalHeight;
         if (!pixels || pixels > 32 * 1024 * 1024) return;
-        let image = decodedImages.get(source);
+        let item = decodedImages.get(source);
         decodedImages.delete(source);
-        if (!image) {
-            image = new Image();
+        if (!item) {
+            const image = new Image();
             image.decoding = 'async';
             image.src = source;
             image.decode().catch(() => {});
+            item = { image, pixels };
         }
-        decodedImages.set(source, image);
-        let total = [...decodedImages.values()].reduce((sum, entry) => sum + entry.naturalWidth * entry.naturalHeight, 0);
+        decodedImages.set(source, item);
+        // Reserve the display image's known pixels before a retained image finishes loading.
+        let total = [...decodedImages.values()].reduce((sum, entry) => sum + entry.pixels, 0);
         while (decodedImages.size > 4 || total > 32 * 1024 * 1024) {
             const [key, entry] = decodedImages.entries().next().value;
             decodedImages.delete(key);
-            total -= entry.naturalWidth * entry.naturalHeight;
-            entry.removeAttribute('src');
+            total -= entry.pixels;
+            entry.image.removeAttribute('src');
         }
     };
     window.addEventListener('pagehide', releaseOriginals);

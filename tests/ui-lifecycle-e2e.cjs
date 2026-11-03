@@ -69,12 +69,15 @@ const server = createServer((req, res) => {
                     window.warmed = []; const Native = Image;
                     window.Image = function (...args) { const image = new Native(...args); warmed.push(image); return image; };
                     const section = document.getElementById('iig_characters_section');
-                    section.innerHTML = '<div style="width:140px;height:140px"><img data-iig-library-src="/fast.svg" data-iig-full-src="/fast.svg" data-iig-lightbox style="width:100%;height:100%"></div>';
+                    section.innerHTML = '<div data-iig-lightbox-gallery style="width:140px;height:140px"><img data-iig-library-src="/fast.svg" data-iig-full-src="/fast.svg" data-iig-lightbox style="width:100%;height:100%"></div>';
                     section.scrollIntoView({ block: 'start' });
                 });
                 await page.evaluate(async prefix => (await import(prefix + 'src/libraryImages.js')).observeLibraryImages(), prefix);
                 await page.waitForFunction(() => warmed.some(image => image.getAttribute('src') === '/fast.svg' && image.complete));
                 assert.equal(await page.evaluate(() => warmed.filter(image => image.hasAttribute('src')).length), 1);
+                await page.locator('[data-iig-lightbox]').evaluate(image => image.click());
+                await page.waitForFunction(() => document.querySelector('.iig-lightbox-img').complete && document.querySelector('.iig-lightbox-img').naturalWidth > 0);
+                await page.locator('.iig-lightbox-close').evaluate(button => button.click());
                 await page.locator('#iig_characters_section').evaluate(section => section.closest('details').open = false);
                 await page.waitForFunction(() => warmed.every(image => !image.hasAttribute('src')));
                 report.evidence.stableObserverChanges = work;
