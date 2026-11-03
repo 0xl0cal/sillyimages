@@ -87,6 +87,71 @@ const server = createServer((req, res) => {
                 await page.screenshot({ path: path.join(artifacts, 'escaped-library.png') });
             } finally { await page.close(); }
         });
+        for (const outcome of ['success', 'failure', 'cancel']) await scenario(`fallback preview URLs release their owner: ${outcome}`, async () => {
+            const page = await open();
+            try {
+                await page.evaluate(async ({ prefix, outcome }) => {
+                    const module = await import(prefix + 'src/libraryImages.js');
+                    const section = document.getElementById('iig_characters_section');
+                    section.closest('details').open = false;
+                    module.observeLibraryImages();
+                    window.previewLifecycle = { reads: 0, created: [], revoked: [], decoded: [], encodes: 0 };
+                    const create = URL.createObjectURL, revoke = URL.revokeObjectURL;
+                    URL.createObjectURL = function (blob) { const url = create.call(this, blob); previewLifecycle.created.push(url); return url; };
+                    URL.revokeObjectURL = function (url) { previewLifecycle.revoked.push(url); return revoke.call(this, url); };
+                    const read = FileReader.prototype.readAsDataURL;
+                    FileReader.prototype.readAsDataURL = function (...args) { previewLifecycle.reads++; return read.apply(this, args); };
+                    const encode = HTMLCanvasElement.prototype.toBlob;
+                    HTMLCanvasElement.prototype.toBlob = function (...args) { previewLifecycle.encodes++; return encode.apply(this, args); };
+                    const decode = HTMLImageElement.prototype.decode;
+                    HTMLImageElement.prototype.decode = async function () {
+                        if (this.isConnected) return decode.call(this);
+                        previewLifecycle.decoded.push(this.src);
+                        if (outcome === 'failure') throw new Error('Controlled decoder failure');
+                        await decode.call(this);
+                        if (outcome === 'cancel') await new Promise(resolve => window.completeFallback = resolve);
+                    };
+                    section.innerHTML = '<div style="width:120px;height:120px"><img id="fallback-preview" data-iig-library-src="/fast.svg" data-iig-full-src="/fast.svg" style="width:100%;height:100%"></div>';
+                    section.closest('details').open = true;
+                    section.scrollIntoView({ block: 'start' });
+                    module.observeLibraryImages();
+                }, { prefix, outcome });
+                if (outcome === 'cancel') {
+                    await page.waitForFunction(() => typeof completeFallback === 'function');
+                    await page.evaluate(async prefix => {
+                        document.getElementById('iig_characters_section').closest('details').open = false;
+                        (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                        completeFallback();
+                    }, prefix);
+                } else {
+                    await page.waitForFunction(outcome => {
+                        const image = document.getElementById('fallback-preview');
+                        return image.complete && image.naturalWidth > 0 && (outcome === 'failure' ? image.getAttribute('src') === '/fast.svg' : image.src.startsWith('blob:'));
+                    }, outcome);
+                    if (outcome === 'success') {
+                        const rgba = await page.evaluate(() => {
+                            const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1;
+                            const ctx = canvas.getContext('2d'); ctx.drawImage(document.getElementById('fallback-preview'), 0, 0, 1, 1);
+                            return [...ctx.getImageData(0, 0, 1, 1).data];
+                        });
+                        assert.deepEqual(rgba, [85, 102, 119, 255]);
+                    }
+                    await page.evaluate(async prefix => {
+                        document.getElementById('iig_characters_section').closest('details').open = false;
+                        (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                    }, prefix);
+                }
+                await page.waitForFunction(() => previewLifecycle.created.every(url => previewLifecycle.revoked.includes(url)));
+                const result = await page.evaluate(() => ({ ...previewLifecycle, released: !document.getElementById('fallback-preview').hasAttribute('src') }));
+                report.evidence['fallback-' + outcome] = result;
+                assert.equal(result.reads, 0);
+                assert.equal(result.decoded.length, 1);
+                assert.ok(result.decoded[0].startsWith('blob:'));
+                assert.equal(result.created.length, outcome === 'success' ? 2 : 1);
+                assert.equal(result.encodes, outcome === 'success' ? 1 : 0);
+                assert.equal(result.released, true);
+            } finally { await page.close(); }
+        });
         await scenario('PNG previews use readback-oriented canvases and preserve rendered pixels', async () => {
             const page = await open();
             try {

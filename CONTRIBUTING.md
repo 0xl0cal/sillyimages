@@ -48,7 +48,11 @@ The preview queue finishes its active job when the viewer opens and defers queue
 
 Preview canvases request readback-oriented 2D contexts for PNG encoding. The canvas is temporary and is not composited into the page; original image files remain separate from its output.
 
+Fallback image decoders own a temporary Blob URL until decoding exits. Clear the image source and revoke that URL on success, failure and cancellation. Keep image data binary during preview preparation.
+
 Keep UI IDs, event types, validation and save behavior stable. Update focused editors in place instead of replacing their parent lists on each keystroke.
+
+HTML text and quoted attributes use string escaping without temporary DOM elements. Preserve entity encoding, including non-breaking spaces, and test rendered names and descriptions with markup characters.
 
 Loading a connection profile synchronizes every provider's rendered controls, including range/number pairs, custom select values and polling fields. Synchronization does not emit input/change events or trigger extra saves.
 

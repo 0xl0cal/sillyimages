@@ -111,7 +111,7 @@ async function thumbnail(source, width, signal) {
         request.send();
     });
     assertCurrent();
-    let bitmap;
+    let bitmap, decoderUrl;
     const canvas = document.createElement('canvas');
     try {
         try {
@@ -121,12 +121,7 @@ async function thumbnail(source, width, signal) {
         catch {
             assertCurrent();
             bitmap = new Image();
-            bitmap.src = await new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve(reader.result);
-                reader.onerror = () => reject(reader.error);
-                reader.readAsDataURL(blob);
-            });
+            bitmap.src = decoderUrl = URL.createObjectURL(blob);
             await bitmap.decode();
         }
         // Native decoders finish asynchronously even after their owner has left.
@@ -146,6 +141,7 @@ async function thumbnail(source, width, signal) {
     } finally {
         bitmap?.close?.();
         bitmap?.removeAttribute?.('src');
+        if (decoderUrl) revoke(decoderUrl);
         canvas.width = canvas.height = 0;
     }
 }
