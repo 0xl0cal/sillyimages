@@ -20,6 +20,7 @@ const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180"><r
 const server = createServer((req, res) => {
     let body, type = 'application/javascript';
     if (hosts[req.url]) { body = hosts[req.url]; type = 'text/html'; }
+    else if (req.url === '/pending.png') { body = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'); type = 'image/png'; }
     else if (req.url === '/slow.svg') return; // Released with the browser context after the timeout scenario.
     else if (req.url === '/scripts/i18n.js') body = 'export const t=(s,...v)=>String.raw({raw:s},...v);export const translate=s=>s;';
     else if (req.url === '/scripts/popup.js') body = 'export class Popup{static show={confirm:async()=>false,input:async()=>window.fixtureInput||null};}';
@@ -47,6 +48,36 @@ const server = createServer((req, res) => {
         catch (error) { report.failures.push({ name, error: String(error) }); }
     };
     try {
+        await scenario('a released preview closes its pending bitmap without rasterizing or encoding', async () => {
+            const page = await open();
+            try {
+                await page.evaluate(async prefix => {
+                    const create = createImageBitmap;
+                    const encode = HTMLCanvasElement.prototype.toBlob;
+                    window.previewEncodes = 0;
+                    HTMLCanvasElement.prototype.toBlob = function (...args) { if (this.width === 41) previewEncodes++; return encode.apply(this, args); };
+                    window.createImageBitmap = async () => {
+                        const canvas = document.createElement('canvas'); canvas.width = canvas.height = 41;
+                        window.pendingBitmap = await create(canvas);
+                        await new Promise(resolve => window.finishPreviewDecode = resolve);
+                        return pendingBitmap;
+                    };
+                    const section = document.getElementById('iig_characters_section');
+                    section.innerHTML = '<div style="width:120px;height:120px"><img data-iig-library-src="/pending.png" data-iig-full-src="/pending.png" style="width:100%;height:100%"></div>';
+                    section.scrollIntoView({ block: 'start' });
+                    (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                }, prefix);
+                await page.waitForFunction(() => typeof finishPreviewDecode === 'function', null, { timeout: 3000 });
+                await page.evaluate(async prefix => {
+                    document.getElementById('iig_characters_section').closest('details').open = false;
+                    (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                    finishPreviewDecode();
+                }, prefix);
+                await page.waitForFunction(() => pendingBitmap.width === 0, null, { timeout: 3000 });
+                assert.equal(await page.evaluate(() => previewEncodes), 0);
+                report.evidence.releasedPreviewEncodes = 0;
+            } finally { await page.close(); }
+        });
         await scenario('original preparation waits for input idle and follows visible DOM order', async () => {
             const page = await open();
             try {

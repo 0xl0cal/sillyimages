@@ -74,6 +74,9 @@ function trimCache() {
 async function thumbnail(source, width, signal) {
     if (!active) throw new Error('Preview page released');
     const started = generation;
+    const assertCurrent = () => {
+        if (!active || started !== generation || signal.aborted) throw new Error('Preview released');
+    };
     const key = `${width}:${source}`;
     if (cache.has(key)) {
         const item = cache.get(key);
@@ -97,6 +100,7 @@ async function thumbnail(source, width, signal) {
         if (signal.aborted) { reject(new DOMException('Preview released', 'AbortError')); return; }
         request.send();
     });
+    assertCurrent();
     let bitmap;
     const canvas = document.createElement('canvas');
     try {
@@ -105,6 +109,7 @@ async function thumbnail(source, width, signal) {
             bitmap = await createImageBitmap(blob, { resizeWidth: width, resizeQuality: 'high' });
         }
         catch {
+            assertCurrent();
             bitmap = new Image();
             bitmap.src = await new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -114,6 +119,8 @@ async function thumbnail(source, width, signal) {
             });
             await bitmap.decode();
         }
+        // Native decoders finish asynchronously even after their owner has left.
+        assertCurrent();
         canvas.width = Math.max(1, Math.min(width, bitmap.width, Math.round(bitmap.width * 1024 / bitmap.height)));
         canvas.height = Math.max(1, Math.round(bitmap.height * canvas.width / bitmap.width));
         const context = canvas.getContext('2d');
@@ -121,7 +128,7 @@ async function thumbnail(source, width, signal) {
         context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
         const encoded = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
         if (!encoded) throw new Error('Cannot encode preview');
-        if (started !== generation || signal.aborted) throw new Error('Preview released');
+        assertCurrent();
         const item = { url: URL.createObjectURL(encoded), pixels: canvas.width * canvas.height };
         cache.set(key, item);
         trimCache();
