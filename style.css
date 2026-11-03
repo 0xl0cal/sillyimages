@@ -2880,10 +2880,9 @@ body.iig-actions-hidden .iig-img-actions {
     object-fit: contain;
     cursor: zoom-in;
     background: #000;
-    transform: translate3d(0, 0, 0) scale(1);
+    transform: translate(0, 0) scale(1);
     transform-origin: center center;
     transition: transform 0.18s cubic-bezier(0.2, 0.75, 0.25, 1);
-    will-change: transform;
     backface-visibility: hidden;
     touch-action: none;
     -webkit-user-drag: none;
@@ -2891,10 +2890,12 @@ body.iig-actions-hidden .iig-img-actions {
 
 .iig-lightbox.zoomed .iig-lightbox-img {
     cursor: grab;
+    will-change: transform;
 }
 
 .iig-lightbox.interacting .iig-lightbox-img {
     transition: none;
+    will-change: transform;
 }
 
 .iig-lightbox.interacting.zoomed .iig-lightbox-img {

@@ -47,6 +47,58 @@ const server = createServer((req, res) => {
         catch (error) { report.failures.push({ name, error: String(error) }); }
     };
     try {
+        await scenario('stable previews keep observer ownership and release original warmup on collapse', async () => {
+            const page = await open();
+            try {
+                await page.locator('.iig-library-generation-item').first().evaluate(e => e.scrollIntoView({ block: 'center' }));
+                await page.waitForTimeout(500);
+                const work = await page.evaluate(async prefix => {
+                    const module = await import(prefix + 'src/libraryImages.js');
+                    let changes = 0;
+                    const restores = [];
+                    for (const Type of [IntersectionObserver, ResizeObserver]) for (const name of ['observe', 'unobserve', 'disconnect']) {
+                        const original = Type.prototype[name];
+                        Type.prototype[name] = function (...args) { changes++; return original.apply(this, args); };
+                        restores.push(() => Type.prototype[name] = original);
+                    }
+                    try { module.observeLibraryImages(); module.observeLibraryImages(); return changes; }
+                    finally { restores.forEach(restore => restore()); }
+                }, prefix);
+                assert.equal(work, 0, 'Unchanged previews must not restart observers');
+                await page.evaluate(() => {
+                    window.warmed = []; const Native = Image;
+                    window.Image = function (...args) { const image = new Native(...args); warmed.push(image); return image; };
+                    const section = document.getElementById('iig_characters_section');
+                    section.innerHTML = '<div style="width:140px;height:140px"><img data-iig-library-src="/fast.svg" data-iig-full-src="/fast.svg" data-iig-lightbox style="width:100%;height:100%"></div>';
+                    section.scrollIntoView({ block: 'start' });
+                });
+                await page.evaluate(async prefix => (await import(prefix + 'src/libraryImages.js')).observeLibraryImages(), prefix);
+                await page.waitForFunction(() => warmed.some(image => image.getAttribute('src') === '/fast.svg' && image.complete));
+                assert.equal(await page.evaluate(() => warmed.filter(image => image.hasAttribute('src')).length), 1);
+                await page.locator('#iig_characters_section').evaluate(section => section.closest('details').open = false);
+                await page.waitForFunction(() => warmed.every(image => !image.hasAttribute('src')));
+                report.evidence.stableObserverChanges = work;
+            } finally { await page.close(); }
+        });
+        await scenario('new persona rows enter the live list in one batch', async () => {
+            const page = await open();
+            try {
+                const mutations = await page.evaluate(async prefix => {
+                    context.powerUserSettings.personas = Object.fromEntries(Array.from({ length: 100 }, (_, i) => ['p' + i + '.png', 'Persona ' + i]));
+                    const old = fetch;
+                    window.fetch = (url, init) => String(url) === '/api/avatars/get' ? Promise.resolve(Response.json(Object.keys(context.powerUserSettings.personas))) : old(url, init);
+                    await (await import(prefix + 'src/avatarPicker.js')).fetchUserAvatars();
+                    let batches = 0;
+                    const observer = new MutationObserver(records => batches += records.filter(record => record.addedNodes.length).length);
+                    observer.observe(document.getElementById('iig_library_entities'), { childList: true });
+                    document.querySelector('[data-library-tab="user"]').click();
+                    while (document.querySelectorAll('.iig-library-entity[data-library-kind="user"]').length !== 80) await new Promise(requestAnimationFrame);
+                    observer.disconnect(); return batches;
+                }, prefix);
+                assert.equal(mutations, 2, 'Insert the row fragment and the search note, not 80 separate rows');
+                report.evidence.personaInsertBatches = mutations;
+            } finally { await page.close(); }
+        });
         await scenario('canceled departure restores previews; accepted reload remains usable', async () => {
             const page = await open();
             try {

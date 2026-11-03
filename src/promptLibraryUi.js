@@ -135,11 +135,11 @@ function renderSelectedStyleEditor(settings = getSettings()) {
     }
 }
 
-export function renderStyleSettings() {
+export function renderStyleSettings(scrollTop) {
     const settings = getSettings();
     const listContainer = document.getElementById('iig_style_presets');
     const editorContainer = document.getElementById('iig_style_editor');
-    const previousScrollTop = listContainer?.querySelector('.iig-style-list')?.scrollTop || 0;
+    const previousScrollTop = scrollTop ?? (listContainer?.querySelector('.iig-style-list')?.scrollTop || 0);
     if (listContainer) {
         listContainer.innerHTML = buildStyleListHtml(settings);
     }
@@ -148,7 +148,7 @@ export function renderStyleSettings() {
     }
     filterStyleList();
     const nextList = listContainer?.querySelector('.iig-style-list');
-    if (nextList) {
+    if (nextList && previousScrollTop) {
         nextList.scrollTop = previousScrollTop;
     }
     document.querySelectorAll('[data-style-library]').forEach(button => {
@@ -210,9 +210,7 @@ export function bindStylesSectionEvents(settings) {
         styleLibraryTab = next;
         selectedStyleId = styleLibraryStates[next].selectedStyleId || '';
         styleSearchQuery = styleLibraryStates[next].styleSearchQuery || '';
-        renderStyleSettings();
-        const list = document.querySelector('#iig_style_presets .iig-style-list');
-        if (list) list.scrollTop = styleLibraryStates[next].scrollTop || 0;
+        renderStyleSettings(styleLibraryStates[next].scrollTop || 0);
     });
     document.getElementById('iig_style_add')?.addEventListener('click', () => {
         createStyleFromPrompt(settings).catch((error) => console.warn('[IIG] Failed to create style:', error));

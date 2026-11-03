@@ -3,6 +3,7 @@ const cache = new Map();
 const leases = new Map();
 const retired = new Set();
 const states = new WeakMap();
+const observedParents = new WeakMap();
 const inView = new Set();
 let tracked = new Set();
 let observer;
@@ -12,11 +13,38 @@ let densityQuery;
 let running = false;
 let active = true;
 let generation = 0;
+const pendingVisibility = new Map();
+let originalWarmup = null;
+let warmupTimer = 0;
 const queue = [];
 const MAX_PIXELS = 4 * 1024 * 1024;
 // A complete 48-image gallery must fit without cycling through fresh URLs.
 const MAX_ENTRIES = 96;
 const REQUEST_TIMEOUT_MS = 15000;
+
+export function releaseLibraryOriginal() {
+    clearTimeout(warmupTimer);
+    warmupTimer = 0;
+    originalWarmup?.removeAttribute('src');
+    originalWarmup = null;
+}
+
+function scheduleOriginalWarmup() {
+    if (warmupTimer || document.getElementById('iig_lightbox')?.open) return;
+    // One visible original prepares entry to the viewer without retaining a gallery of decodes.
+    warmupTimer = setTimeout(() => {
+        warmupTimer = 0;
+        const candidate = [...inView].find(image => tracked.has(image) && image.hasAttribute('data-iig-lightbox'));
+        const source = candidate?.getAttribute('data-iig-full-src');
+        if (originalWarmup?.getAttribute('src') === source) return;
+        releaseLibraryOriginal();
+        if (!active || !source || document.getElementById('iig_lightbox')?.open) return;
+        originalWarmup = new Image();
+        originalWarmup.decoding = 'async';
+        originalWarmup.src = source;
+        originalWarmup.decode().catch(() => {});
+    }, 100);
+}
 
 // Let image cancellation finish before WebKit releases its URL resource.
 function revoke(url) { setTimeout(() => URL.revokeObjectURL(url), 250); }
@@ -93,6 +121,7 @@ async function thumbnail(source, width, signal) {
         return item.url;
     } finally {
         bitmap?.close?.();
+        bitmap?.removeAttribute?.('src');
         canvas.width = canvas.height = 0;
     }
 }
@@ -184,14 +213,23 @@ export function observeLibraryImages() {
     const visible = section?.closest('details')?.open;
     const next = new Set(visible ? section.querySelectorAll('img[data-iig-library-src]') : []);
     for (const image of tracked) if (!next.has(image)) {
-        if (image.parentElement) observer?.unobserve(image.parentElement);
+        const parent = observedParents.get(image);
+        if (parent) {
+            observer?.unobserve(parent);
+            resizeObserver?.unobserve(parent);
+            pendingVisibility.delete(parent);
+        }
+        observedParents.delete(image);
         release(image);
     }
+    const added = [...next].filter(image => !tracked.has(image));
+    added.forEach(image => observedParents.set(image, image.parentElement));
     tracked = next;
     // Drop detached queued nodes immediately, rather than retaining old editors.
     for (let i = queue.length - 1; i >= 0; i--) if (!next.has(queue[i].image)) queue.splice(i, 1);
     if (!visible) {
-        resizeObserver?.disconnect();
+        releaseLibraryOriginal();
+        pendingVisibility.clear();
         generation++;
         for (const item of cache.values()) retire(item.url);
         cache.clear();
@@ -199,32 +237,41 @@ export function observeLibraryImages() {
     }
     if (typeof ResizeObserver === 'function') {
         resizeObserver ||= new ResizeObserver(scheduleUpgrade);
-        resizeObserver.disconnect();
-        next.forEach(image => resizeObserver.observe(image.parentElement));
+        added.forEach(image => resizeObserver.observe(image.parentElement));
     }
     if (typeof IntersectionObserver !== 'function') { next.forEach(image => { inView.add(image); load(image); }); return; }
-    if (!observer) observer = new IntersectionObserver(entries => {
-        // A modal viewer temporarily covers the library; retain its visible previews.
-        if (document.getElementById('iig_lightbox')?.open) return;
-        for (const entry of entries) {
-            const image = entry.target.querySelector('img[data-iig-library-src]');
-            if (!tracked.has(image)) continue;
-            if (entry.isIntersecting) { inView.add(image); load(image); }
-            else release(image);
-        }
-    }, { rootMargin: '160px 0px' });
-    observer.disconnect();
-    observer.takeRecords();
-    next.forEach(image => observer.observe(image.parentElement));
+    observer ||= new IntersectionObserver(updateVisibility, { rootMargin: '160px 0px' });
+    added.forEach(image => observer.observe(image.parentElement));
+    scheduleOriginalWarmup();
+}
+
+function updateVisibility(entries) {
+    // Preserve visible previews under the modal and reconcile deferred entries on close.
+    if (document.getElementById('iig_lightbox')?.open) {
+        for (const entry of entries) pendingVisibility.set(entry.target, entry);
+        return;
+    }
+    for (const entry of entries) {
+        const image = entry.target.querySelector('img[data-iig-library-src]');
+        if (!tracked.has(image)) continue;
+        if (entry.isIntersecting) { inView.add(image); load(image); }
+        else release(image);
+    }
+    scheduleOriginalWarmup();
 }
 
 document.addEventListener('close', event => {
-    if (event.target.id === 'iig_lightbox') observeLibraryImages();
+    if (event.target.id !== 'iig_lightbox') return;
+    updateVisibility([...pendingVisibility.values()]);
+    pendingVisibility.clear();
+    observeLibraryImages();
 }, true);
 
 function dispose() {
     active = false;
     generation++;
+    releaseLibraryOriginal();
+    pendingVisibility.clear();
     observer?.disconnect();
     resizeObserver?.disconnect();
     if (upgradeFrame) cancelAnimationFrame(upgradeFrame);

@@ -6,6 +6,7 @@ import { t } from './i18n.js';
 import { planGenerationImageDeletion, deleteGenerationImages } from './generationImages.js';
 import { Popup } from '../../../../popup.js';
 import { getImagePlaceholderKind } from './utils.js';
+import { releaseLibraryOriginal } from './libraryImages.js';
 
 const OVERLAY_ID = 'iig_lightbox';
 const IMG_SELECTOR = 'img[data-iig-instruction]:not(.iig-error-image)';
@@ -83,33 +84,6 @@ export function initLightbox() {
     let lastZoomPointY = null;
     let previousBodyOverflow = null;
     let viewSession = 0;
-    const decodedImages = new Map();
-    const rememberOriginal = () => {
-        const source = imgEl.src;
-        const pixels = imgEl.naturalWidth * imgEl.naturalHeight;
-        if (!pixels || pixels > 32 * 1024 * 1024) return;
-        let item = decodedImages.get(source);
-        decodedImages.delete(source);
-        if (!item) {
-            const image = new Image();
-            image.decoding = 'async';
-            image.src = source;
-            image.decode().catch(() => {});
-            item = { image, pixels };
-        }
-        decodedImages.set(source, item);
-        let total = [...decodedImages.values()].reduce((sum, entry) => sum + entry.pixels, 0);
-        while (decodedImages.size > 4 || total > 32 * 1024 * 1024) {
-            const [key, entry] = decodedImages.entries().next().value;
-            decodedImages.delete(key);
-            total -= entry.pixels;
-            entry.image.removeAttribute('src');
-        }
-    };
-    window.addEventListener('pagehide', () => {
-        for (const item of decodedImages.values()) item.image.removeAttribute('src');
-        decodedImages.clear();
-    });
     const geometry = {
         baseWidth: 0,
         baseHeight: 0,
@@ -121,7 +95,7 @@ export function initLightbox() {
 
     const renderTransform = () => {
         transformFrame = 0;
-        imgEl.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(${scale})`;
+        imgEl.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
     };
 
     const applyTransform = (immediate = false) => {
@@ -657,7 +631,7 @@ export function initLightbox() {
 
     imgEl.addEventListener('load', () => {
         if (!overlay.open) return;
-        rememberOriginal();
+        releaseLibraryOriginal();
         refreshGeometry();
         clampPan(false);
         applyTransform(true);

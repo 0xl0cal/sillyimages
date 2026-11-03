@@ -49,6 +49,7 @@ const pendingContextSync = { character: false, user: false };
 
 const MAX_RENDERED_ENTITIES = 80;
 const entityCatalogs = { char: null, user: null };
+const rowEntities = new WeakMap();
 
 function catalogSignature(activeKey, labels, library) {
     return JSON.stringify([activeKey, labels, Object.entries(library).map(([key, entry]) => [
@@ -366,10 +367,17 @@ async function renderEntityList(settings = getSettings(), providedEntities = nul
     const keyOf = (kind, key) => JSON.stringify([kind, key]);
     const rows = new Map([...host.querySelectorAll('.iig-library-entity')].map(row => [keyOf(row.dataset.libraryKind, row.dataset.libraryKey), row]));
     const missing = visibleEntities.filter(entity => !rows.has(keyOf(entity.kind, entity.key)));
+    const fresh = new Set();
     if (missing.length) {
         const template = document.createElement('template');
         template.innerHTML = missing.map(entity => buildEntityOptionHtml(entity, selectedKeys[kind])).join('');
-        for (const row of template.content.children) rows.set(keyOf(row.dataset.libraryKind, row.dataset.libraryKey), row);
+        for (const row of template.content.children) {
+            rows.set(keyOf(row.dataset.libraryKind, row.dataset.libraryKey), row);
+            fresh.add(row);
+        }
+    }
+    if (missing.length && missing.length === visibleEntities.length) {
+        host.replaceChildren(...visibleEntities.map(entity => rows.get(keyOf(entity.kind, entity.key))));
     }
     const keep = new Set();
     let cursor = host.firstChild;
@@ -380,7 +388,13 @@ async function renderEntityList(settings = getSettings(), providedEntities = nul
     };
     for (const entity of visibleEntities) {
         const row = rows.get(keyOf(entity.kind, entity.key));
-        row.classList.toggle('selected', entity.key === selectedKeys[kind]);
+        const selected = entity.key === selectedKeys[kind];
+        if (row.classList.contains('selected') !== selected) row.classList.toggle('selected', selected);
+        if (fresh.has(row) || rowEntities.get(row) === entity) {
+            rowEntities.set(row, entity);
+            place(row);
+            continue;
+        }
         const searchable = `${entity.title} ${entity.fallbackTitle} ${entity.key}`.toLowerCase();
         if (row.dataset.librarySearch !== searchable) row.dataset.librarySearch = searchable;
         const title = row.querySelector('strong'), status = row.querySelector('small');
@@ -391,6 +405,7 @@ async function renderEntityList(settings = getSettings(), providedEntities = nul
         if ((avatar.querySelector('img')?.getAttribute('data-iig-library-src') || '') !== normalizeStoredImagePath(entity.avatarUrl)) {
             avatar.innerHTML = buildAvatarHtml(entity.avatarUrl, entity.kind === 'char' ? 'fa-user-pen' : 'fa-user');
         }
+        rowEntities.set(row, entity);
         place(row);
     }
     const note = !visibleEntities.length

@@ -29,6 +29,7 @@ window.SillyTavern={getContext:()=>context};
 window.actions=0;document.querySelector('#app-button').onclick=()=>actions++;
 document.querySelector('#popup-action').onclick=()=>actions++;
 window.removed=[];window.pointerIds=new Set();
+window.viewerImages=[];const NativeImage=Image;window.Image=function(...args){const image=new NativeImage(...args);if(new Error().stack.includes('/src/lightbox.js'))viewerImages.push(image);return image;};
 document.addEventListener('pointerdown',e=>{if(e.target.matches('.iig-lightbox-img'))pointerIds.add(e.pointerId);},true);
 window.viewerTimers=new Set();window.viewerFrames=new Set();
 const timeout=window.setTimeout.bind(window),clear=window.clearTimeout.bind(window),raf=window.requestAnimationFrame.bind(window),cancel=window.cancelAnimationFrame.bind(window);
@@ -93,9 +94,9 @@ const server = createServer((req, res) => {
                     const e=document.querySelector('#iig_lightbox'),img=e.querySelector('img');
                     return {overflow:document.body.style.getPropertyValue('overflow'),priority:document.body.style.getPropertyPriority('overflow'),
                         timers:viewerTimers.size,frames:viewerFrames.size,captures:[...pointerIds].filter(id=>img.hasPointerCapture(id)),
-                        displayed:getComputedStyle(e).display,source:img.getAttribute('src'),modal:e.matches(':modal')};
+                        displayed:getComputedStyle(e).display,source:img.getAttribute('src'),modal:e.matches(':modal'),retained:viewerImages.filter(image=>image.hasAttribute('src')).length};
                 });
-                assert.deepEqual(state,{overflow:'auto',priority:'important',timers:0,frames:0,captures:[],displayed:'none',source:null,modal:false});
+                assert.deepEqual(state,{overflow:'auto',priority:'important',timers:0,frames:0,captures:[],displayed:'none',source:null,modal:false,retained:0});
                 if(mode==='mobile')await page.locator('#app-button').tap();else await page.locator('#app-button').click();
                 await page.locator('#app-input').fill('responsive');
                 await page.locator('#chat').evaluate(e=>e.scrollTop=0);
