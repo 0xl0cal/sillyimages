@@ -192,8 +192,11 @@ const server = createServer((req, res) => {
                 await page.evaluate(async prefix => (await import(prefix + 'src/libraryImages.js')).observeLibraryImages(), prefix);
                 await page.waitForFunction(() => warmed.some(image => image.getAttribute('src') === '/fast.svg' && image.complete));
                 assert.equal(await page.evaluate(() => warmed.filter(image => image.hasAttribute('src')).length), 1);
+                await page.evaluate(() => window.preparedOriginal = warmed.find(image => image.getAttribute('src') === '/fast.svg'));
                 await page.locator('[data-iig-lightbox]').evaluate(image => image.click());
                 await page.waitForFunction(() => document.querySelector('.iig-lightbox-img').complete && document.querySelector('.iig-lightbox-img').naturalWidth > 0);
+                await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+                assert.equal(await page.evaluate(() => preparedOriginal.getAttribute('src')), '/fast.svg', 'The viewer must reuse the prepared resource instead of dropping and decoding it again');
                 await page.locator('.iig-lightbox-close').evaluate(button => button.click());
                 await page.locator('#iig_characters_section').evaluate(section => section.closest('details').open = false);
                 await page.waitForFunction(() => warmed.every(image => !image.hasAttribute('src')));
@@ -393,7 +396,7 @@ const server = createServer((req, res) => {
                         const original = fetch; window.fixtureInput = 'https://fixture.invalid/reference.png';
                         window.fetch = async (url, init) => {
                             if (String(url) === fixtureInput) return new Response(Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6JQAAAABJRU5ErkJggg=='), c => c.charCodeAt(0)), { headers: { 'Content-Type': 'image/png' } });
-                            if (String(url) === '/api/images/upload') { window.uploadStarted = true; await new Promise(r => setTimeout(r, 450)); window.uploadFinished = true; return Response.json({ path: '/user/images/Alpha & One/uploaded.png' }); }
+                            if (String(url) === '/api/images/upload') { window.uploadStarted = true; await new Promise(resolve => window.completeUpload = resolve); window.uploadFinished = true; return Response.json({ path: '/user/images/Alpha & One/uploaded.png' }); }
                             return original(url, init);
                         };
                     });
@@ -410,6 +413,7 @@ const server = createServer((req, res) => {
                         const field = mode === 'persona-url' ? '.iig-library-appearance-description' : '.iig-library-primary-description';
                         await page.locator(field).first().fill('edited during upload');
                     }
+                    await page.evaluate(() => completeUpload());
                     await page.waitForFunction(() => window.uploadFinished);
                     await page.waitForTimeout(120);
                     const result = await page.evaluate(({ before, itemId }) => {
@@ -454,14 +458,17 @@ const server = createServer((req, res) => {
                 await page.evaluate(() => {
                     window.catalogErrors = []; toastr.error = message => catalogErrors.push(String(message));
                     Object.assign(app.settings, { apiType: 'electronhub', endpoint: 'https://fixture.invalid', apiKey: 'fixture', rawEndpoint: false });
-                    const original = fetch; window.fetch = async (url, init) => { if (String(url).includes('fixture.invalid')) { window.catalogStarted = true; await new Promise(r => setTimeout(r, 350)); return new Response('old failure', { status: 500 }); } return original(url, init); };
+                    const original = fetch; window.fetch = async (url, init) => { if (String(url).includes('fixture.invalid')) { window.catalogStarted = true; await new Promise(resolve => window.completeCatalog = resolve); return new Response('controlled failure', { status: 500 }); } return original(url, init); };
                     document.getElementById('iig_refresh_models').click();
                 });
                 await page.waitForFunction(() => window.catalogStarted);
                 await page.locator('#iig_api_type').evaluate(e => { e.value = 'novelai'; e.dispatchEvent(new Event('change', { bubbles: true })); });
-                await page.waitForTimeout(550); assert.deepEqual(await page.evaluate(() => catalogErrors), []);
-                await page.evaluate(() => { app.settings.apiType = 'electronhub'; document.getElementById('iig_refresh_models').click(); });
-                await page.waitForTimeout(550); assert.equal(await page.evaluate(() => catalogErrors.length), 1);
+                await page.evaluate(async () => { completeCatalog(); await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); });
+                assert.deepEqual(await page.evaluate(() => catalogErrors), []);
+                await page.evaluate(() => { window.catalogStarted = false; Object.assign(app.settings, { apiType: 'electronhub', endpoint: 'https://fixture.invalid', apiKey: 'fixture', rawEndpoint: false }); document.getElementById('iig_refresh_models').click(); });
+                await page.waitForFunction(() => window.catalogStarted);
+                await page.evaluate(() => completeCatalog());
+                await page.waitForFunction(() => catalogErrors.length === 1);
             } finally { await page.close(); }
         });
     } finally {

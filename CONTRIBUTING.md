@@ -40,7 +40,7 @@ Viewer and library deletion use the same path plan and protection check. Deletin
 
 Viewer geometry is sampled at gesture start, image load and viewport resize. Pointer/wheel movement uses cached dimensions and batches transforms into animation frames. Original image files and viewer sources are not resized or recompressed.
 
-The library prepares the first visible gallery original after 500 ms without input. It releases that resource during editing, when the viewer image loads, the candidate leaves view, the section collapses or the page leaves. The viewer retains at most four original resources and 32 megapixels to reuse decodes during navigation, and releases them on library collapse or pagehide. Library previews retain their viewport resources under the modal and reconcile deferred visibility entries after it closes. Stable previews keep their observer subscriptions during list edits.
+The library prepares the first visible gallery original after 500 ms without input. A matching loaded original passes directly to the viewer cache. Unused preparations are released during editing, when the candidate leaves view, the section collapses or the page leaves. The viewer retains at most four original resources and 32 megapixels to reuse decodes during navigation, and releases them on library collapse or pagehide. Library previews retain their viewport resources under the modal and reconcile deferred visibility entries after it closes. Stable previews keep their observer subscriptions during list edits.
 
 Server avatar thumbnails use native lazy loading and receive their source during library reconciliation. Resize and intersection observers own only previews derived from full-size images. Closing the section clears both kinds of image sources.
 

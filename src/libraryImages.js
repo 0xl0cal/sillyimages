@@ -22,11 +22,21 @@ const MAX_PIXELS = 4 * 1024 * 1024;
 const MAX_ENTRIES = 96;
 const REQUEST_TIMEOUT_MS = 15000;
 
-export function releaseLibraryOriginal() {
+function releaseLibraryOriginal() {
     clearTimeout(warmupTimer);
     warmupTimer = 0;
     originalWarmup?.removeAttribute('src');
     originalWarmup = null;
+}
+
+export function takeLibraryOriginal(source) {
+    const image = originalWarmup;
+    // Detach ownership before clearing the timer so the decoded resource survives transfer.
+    originalWarmup = null;
+    releaseLibraryOriginal();
+    if (image?.complete && image.naturalWidth > 0 && image.src === source) return image;
+    image?.removeAttribute('src');
+    return null;
 }
 
 function scheduleOriginalWarmup() {

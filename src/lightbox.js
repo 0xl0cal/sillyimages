@@ -6,7 +6,7 @@ import { t } from './i18n.js';
 import { planGenerationImageDeletion, deleteGenerationImages } from './generationImages.js';
 import { Popup } from '../../../../popup.js';
 import { getImagePlaceholderKind } from './utils.js';
-import { releaseLibraryOriginal } from './libraryImages.js';
+import { takeLibraryOriginal } from './libraryImages.js';
 
 const OVERLAY_ID = 'iig_lightbox';
 const IMG_SELECTOR = 'img[data-iig-instruction]:not(.iig-error-image)';
@@ -89,17 +89,23 @@ export function initLightbox() {
         for (const { image } of decodedImages.values()) image.removeAttribute('src');
         decodedImages.clear();
     };
-    const rememberOriginal = () => {
+    const rememberOriginal = (prepared) => {
         const source = imgEl.src;
         const pixels = imgEl.naturalWidth * imgEl.naturalHeight;
-        if (!pixels || pixels > 32 * 1024 * 1024) return;
+        if (!pixels || pixels > 32 * 1024 * 1024) {
+            prepared?.removeAttribute('src');
+            return;
+        }
         let item = decodedImages.get(source);
         decodedImages.delete(source);
+        if (item && prepared && item.image !== prepared) prepared.removeAttribute('src');
         if (!item) {
-            const image = new Image();
-            image.decoding = 'async';
-            image.src = source;
-            image.decode().catch(() => {});
+            const image = prepared || new Image();
+            if (!prepared) {
+                image.decoding = 'async';
+                image.src = source;
+                image.decode().catch(() => {});
+            }
             item = { image, pixels };
         }
         decodedImages.set(source, item);
@@ -661,8 +667,7 @@ export function initLightbox() {
 
     imgEl.addEventListener('load', () => {
         if (!overlay.open) return;
-        releaseLibraryOriginal();
-        rememberOriginal();
+        rememberOriginal(takeLibraryOriginal(imgEl.src));
         refreshGeometry();
         clampPan(false);
         applyTransform(true);
