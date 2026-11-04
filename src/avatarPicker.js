@@ -80,8 +80,9 @@ export function buildUserAvatarSelectedHtml(avatarFile) {
 }
 
 export function closeUserAvatarDropdowns() {
-    for (const { rootId } of getUserAvatarDropdownConfigs()) {
-        document.getElementById(rootId)?.classList.remove('open');
+    // Even redundant class writes wake DOM observers on unrelated settings clicks.
+    for (const dropdown of document.querySelectorAll('#iig_settings_root .iig-avatar-dropdown.open')) {
+        dropdown.classList.remove('open');
     }
 }
 

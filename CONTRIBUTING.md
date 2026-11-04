@@ -52,6 +52,8 @@ Fallback image decoders own a temporary Blob URL until decoding exits. Clear the
 
 Keep UI IDs, event types, validation and save behavior stable. Update focused editors in place instead of replacing their parent lists on each keystroke.
 
+Outside clicks close only open avatar menus inside the settings root. Closed menus retain their class attributes so unrelated section clicks do not wake DOM observers.
+
 HTML text and quoted attributes use string escaping without temporary DOM elements. Preserve entity encoding, including non-breaking spaces, and test rendered names and descriptions with markup characters.
 
 Loading a connection profile synchronizes every provider's rendered controls, including range/number pairs, custom select values and polling fields. Synchronization does not emit input/change events or trigger extra saves.

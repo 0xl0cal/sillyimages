@@ -48,6 +48,41 @@ const server = createServer((req, res) => {
         catch (error) { report.failures.push({ name, error: String(error) }); }
     };
     try {
+        await scenario('Styles clicks retain closed avatar menus and close only open menus', async () => {
+            const page = await open('/api-test');
+            try {
+                const result = await page.evaluate(async prefix => {
+                    const { closeUserAvatarDropdowns } = await import(prefix + 'src/avatarPicker.js');
+                    app.settings.styles = [{ id: 'style-click', name: 'Style click', value: 'detailed' }];
+                    (await import(prefix + 'src/promptLibraryUi.js')).renderStyleSettings();
+                    const roots = [...document.querySelectorAll('.iig-avatar-dropdown')];
+                    if (roots.length !== 2) throw new Error('Expected both provider avatar menus');
+                    closeUserAvatarDropdowns();
+                    const row = document.querySelector('.iig-style-item');
+                    if (!row) throw new Error('Expected a rendered style row');
+                    const observer = new MutationObserver(() => {});
+                    roots.forEach(root => observer.observe(root, { attributes: true, attributeFilter: ['class'] }));
+                    const toggle = document.getElementById('iig_styles_section').closest('details').querySelector('summary');
+                    for (let i = 0; i < 3; i++) toggle.click();
+                    const closedWrites = observer.takeRecords().length;
+                    roots.forEach(root => root.classList.add('open'));
+                    observer.takeRecords();
+                    roots[0].click();
+                    const insidePreservesOpen = roots.every(root => root.classList.contains('open'));
+                    observer.takeRecords();
+                    toggle.click();
+                    const openWrites = observer.takeRecords().length;
+                    observer.disconnect();
+                    return { closedWrites, openWrites, insidePreservesOpen, allClosed: roots.every(root => !root.classList.contains('open')), sameStyleRow: document.querySelector('.iig-style-item') === row };
+                }, prefix);
+                report.evidence.stylesAvatarWrites = result;
+                assert.equal(result.closedWrites, 0);
+                assert.equal(result.openWrites, 2);
+                assert.equal(result.insidePreservesOpen, true);
+                assert.equal(result.allClosed, true);
+                assert.equal(result.sameStyleRow, true);
+            } finally { await page.close(); }
+        });
         await scenario('HTML text and quoted attributes preserve names and descriptions without DOM allocation', async () => {
             const page = await open();
             try {
