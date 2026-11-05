@@ -301,8 +301,9 @@ function updateVisibility(entries) {
         const image = entry.target.querySelector('img[data-iig-library-src]');
         if (!tracked.has(image) || observedParents.get(image) !== entry.target) continue;
         if (entry.isIntersecting) {
+            const alreadyVisible = inView.has(image);
             watchSize(image);
-            load(image);
+            if (!alreadyVisible) load(image);
             if (!image.hasAttribute('data-iig-full-src')) {
                 observer.unobserve(entry.target);
                 observedParents.delete(image);
@@ -319,7 +320,6 @@ document.addEventListener('close', event => {
     if (event.target.id !== 'iig_lightbox' || event.target.open) return;
     updateVisibility([...pendingVisibility.values()]);
     pendingVisibility.clear();
-    observeLibraryImages();
     drain();
 }, true);
 

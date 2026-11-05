@@ -113,6 +113,20 @@ const server = createServer((req, res) => {
             checks.push(mode+': close restores scroll, input, clicks and removes modal/hit targets');
 
             await page.evaluate(()=>{
+                window.viewerOpeningLayoutReads=0;
+                const width=Object.getOwnPropertyDescriptor(HTMLElement.prototype,'offsetWidth');
+                window.restoreViewerWidth=()=>Object.defineProperty(HTMLElement.prototype,'offsetWidth',width);
+                Object.defineProperty(HTMLElement.prototype,'offsetWidth',{...width,get(){
+                    if(this.matches('.iig-lightbox-img')&&new Error().stack.includes('resetZoom'))viewerOpeningLayoutReads++;
+                    return width.get.call(this);
+                }});
+            });
+            await open();await page.locator('.iig-lightbox-close').click();await released();
+            const openingReads=await page.evaluate(()=>{restoreViewerWidth();return viewerOpeningLayoutReads;});
+            assert.equal(openingReads,0,'A hidden viewer prepares its transform without forcing image layout');
+            checks.push(mode+': viewer prepares its image before modal layout');
+
+            await page.evaluate(()=>{
                 window.originalBudgetScans=0;window.originalReduce=Array.prototype.reduce;
                 Array.prototype.reduce=function(...args){if(new Error().stack.includes('rememberOriginal'))originalBudgetScans++;return originalReduce.apply(this,args);};
             });

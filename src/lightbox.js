@@ -6,7 +6,7 @@ import { t } from './i18n.js';
 import { planGenerationImageDeletion, deleteGenerationImages } from './generationImages.js';
 import { Popup } from '../../../../popup.js';
 import { getImagePlaceholderKind } from './utils.js';
-import { takeLibraryOriginal } from './libraryImages.js';
+import { observeLibraryImages, takeLibraryOriginal } from './libraryImages.js';
 
 const OVERLAY_ID = 'iig_lightbox';
 const IMG_SELECTOR = 'img[data-iig-instruction]:not(.iig-error-image)';
@@ -237,7 +237,7 @@ export function initLightbox() {
         updateZoomState();
         applyTransform(true);
         if (!animate) {
-            void imgEl.offsetWidth;
+            if (overlay.open) void imgEl.offsetWidth;
             overlay.classList.remove('interacting');
         }
     };
@@ -353,6 +353,9 @@ export function initLightbox() {
             imageList = [img];
             currentIndex = 0;
         }
+        // Commit the source, caption and initial transform before the modal's first layout.
+        updateNavVisibility();
+        showImage(currentIndex);
         if (!overlay.open) {
             previousBodyOverflow = ['overflow', 'overflow-x', 'overflow-y'].map(name => ({
                 name, value: document.body.style.getPropertyValue(name),
@@ -364,8 +367,6 @@ export function initLightbox() {
             overlay.showModal();
             document.body.style.overflow = 'hidden';
         }
-        updateNavVisibility();
-        showImage(currentIndex);
         overlay.classList.add('open');
         overlay.setAttribute('aria-hidden', 'false');
         overlay.querySelector('.iig-lightbox-close')?.focus({ preventScroll: true });
@@ -443,6 +444,7 @@ export function initLightbox() {
                     image.closest('.iig-library-generation-item')?.remove();
                 }
             }
+            observeLibraryImages();
             const remainingImages = gallery
                 ? Array.from(gallery.querySelectorAll(GALLERY_IMG_SELECTOR)).filter(getImageSource)
                 : [];

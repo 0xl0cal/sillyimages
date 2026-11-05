@@ -247,6 +247,30 @@ const server = createServer((req, res) => {
                 report.evidence.viewerQueueResumeRequests = 1;
             } finally { await page.close(); }
         });
+        await scenario('viewer close resumes previews without rescanning unchanged library rows', async () => {
+            const page = await open();
+            try {
+                await page.locator('.iig-library-generation-item').first().evaluate(element => element.scrollIntoView({ block: 'center' }));
+                await page.waitForFunction(() => document.querySelector('.iig-library-generation-item img').naturalWidth > 0);
+                const scans = await page.evaluate(async () => {
+                    const section = document.getElementById('iig_characters_section');
+                    const query = section.querySelectorAll;
+                    let scans = 0;
+                    section.querySelectorAll = function (selector, ...args) { if (selector === 'img[data-iig-library-src]') scans++; return query.call(this, selector, ...args); };
+                    document.querySelector('.iig-library-generation-item img').click();
+                    await document.querySelector('.iig-lightbox-img').decode();
+                    const closed = new Promise(resolve => document.getElementById('iig_lightbox').addEventListener('close', resolve, { once: true }));
+                    document.querySelector('.iig-lightbox-close').click();
+                    await closed;
+                    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                    section.querySelectorAll = query;
+                    return scans;
+                });
+                report.evidence.viewerCloseImageScans = scans;
+                assert.equal(scans, 0, 'Closing a viewer with no library edits needs no DOM ownership scan');
+                assert.equal(await page.locator('.iig-library-generation-item img').first().evaluate(image => image.complete && image.naturalWidth > 0), true);
+            } finally { await page.close(); }
+        });
         await scenario('library reopening reuses bounded previews and visible server avatars', async () => {
             const page = await open();
             try {
