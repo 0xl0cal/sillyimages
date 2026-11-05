@@ -21,6 +21,7 @@ const server = createServer((req, res) => {
     let body, type = 'application/javascript';
     if (hosts[req.url]) { body = hosts[req.url]; type = 'text/html'; }
     else if (req.url === '/pending.png') { body = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'); type = 'image/png'; }
+    else if (req.url.startsWith('/large.svg')) { body = '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="1024"><rect width="512" height="1024" fill="#567"/></svg>'; type = 'image/svg+xml'; }
     else if (req.url === '/slow.svg') return; // Released with the browser context after the timeout scenario.
     else if (req.url === '/scripts/i18n.js') body = 'export const t=(s,...v)=>String.raw({raw:s},...v);export const translate=s=>s;';
     else if (req.url === '/scripts/popup.js') body = 'export class Popup{static show={confirm:async()=>false,input:async()=>window.fixtureInput||null};}';
@@ -176,6 +177,7 @@ const server = createServer((req, res) => {
                         (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
                     }, prefix);
                 }
+                await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
                 await page.waitForFunction(() => previewLifecycle.created.every(url => previewLifecycle.revoked.includes(url)));
                 const result = await page.evaluate(() => ({ ...previewLifecycle, released: !document.getElementById('fallback-preview').hasAttribute('src') }));
                 report.evidence['fallback-' + outcome] = result;
@@ -245,6 +247,95 @@ const server = createServer((req, res) => {
                 report.evidence.viewerQueueResumeRequests = 1;
             } finally { await page.close(); }
         });
+        await scenario('library reopening reuses bounded previews and visible server avatars', async () => {
+            const page = await open();
+            try {
+                await page.evaluate(async prefix => {
+                    const section = document.getElementById('iig_characters_section');
+                    const images = await import(prefix + 'src/libraryImages.js');
+                    section.closest('details').open = false;
+                    images.observeLibraryImages();
+                    const open = XMLHttpRequest.prototype.open, encode = HTMLCanvasElement.prototype.toBlob, revoke = URL.revokeObjectURL;
+                    window.reopenWork = { requests: 0, encodes: 0, revoked: [], avatarWrites: 0 };
+                    XMLHttpRequest.prototype.open = function (method, url, ...args) { if (url === '/fast.svg') reopenWork.requests++; return open.call(this, method, url, ...args); };
+                    HTMLCanvasElement.prototype.toBlob = function (...args) { reopenWork.encodes++; return encode.apply(this, args); };
+                    URL.revokeObjectURL = function (url) { reopenWork.revoked.push(url); return revoke.call(this, url); };
+                    section.innerHTML = '<div style="display:flex;height:130px"><div style="width:120px;height:120px"><img id="reuse-preview" data-iig-library-src="/fast.svg" data-iig-full-src="/fast.svg" style="width:100%;height:100%"></div><div style="width:64px;height:64px"><img id="reuse-avatar" data-iig-library-src="/thumbnail?type=avatar&file=reuse.png" style="width:100%;height:100%"></div></div>';
+                    section.closest('details').open = true;
+                    section.scrollIntoView({ block: 'start' });
+                    images.observeLibraryImages();
+                }, prefix);
+                await page.waitForFunction(() => ['reuse-preview','reuse-avatar'].every(id => { const image = document.getElementById(id); return image.complete && image.naturalWidth > 0; }));
+                const first = await page.locator('#reuse-preview').getAttribute('src');
+                await page.evaluate(() => {
+                    window.reopenAvatarObserver = new MutationObserver(records => reopenWork.avatarWrites += records.length);
+                    reopenAvatarObserver.observe(document.getElementById('reuse-avatar'), { attributes: true, attributeFilter: ['src'] });
+                });
+                const urls = [first];
+                for (let i = 0; i < 3; i++) {
+                    await page.evaluate(async prefix => {
+                        document.getElementById('iig_characters_section').closest('details').open = false;
+                        (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                    }, prefix);
+                    assert.equal(await page.locator('#reuse-preview').getAttribute('src'), null);
+                    await page.evaluate(async prefix => {
+                        document.getElementById('iig_characters_section').closest('details').open = true;
+                        (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                    }, prefix);
+                    await page.waitForFunction(() => document.getElementById('reuse-preview').src.startsWith('blob:') && document.getElementById('reuse-preview').complete && document.getElementById('reuse-preview').naturalWidth > 0);
+                    urls.push(await page.locator('#reuse-preview').getAttribute('src'));
+                }
+                const result = await page.evaluate(() => ({ requests: reopenWork.requests, encodes: reopenWork.encodes, avatarWrites: reopenWork.avatarWrites + reopenAvatarObserver.takeRecords().length }));
+                report.evidence.reopenWork = { ...result, uniquePreviewUrls: new Set(urls).size };
+                assert.deepEqual(result, { requests: 1, encodes: 1, avatarWrites: 0 });
+                assert.equal(new Set(urls).size, 1);
+                await page.evaluate(async prefix => {
+                    document.getElementById('iig_characters_section').closest('details').open = false;
+                    (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                    window.dispatchEvent(new Event('pagehide'));
+                }, prefix);
+                await page.waitForFunction(first => reopenWork.revoked.includes(first), first);
+                assert.equal(await page.locator('#reuse-avatar').getAttribute('src'), null);
+            } finally { await page.close(); }
+        });
+        await scenario('collapsed preview cache stays within four megapixels and releases on pagehide', async () => {
+            const page = await open();
+            try {
+                await page.evaluate(() => {
+                    window.budgetPreviews = []; window.budgetRevoked = [];
+                    window.budgetPendingRevocations = 0;
+                    const timeout = window.setTimeout;
+                    window.setTimeout = function (callback, delay, ...args) {
+                        if (delay !== 250 || !new Error().stack.includes('/src/libraryImages.js')) return timeout(callback, delay, ...args);
+                        budgetPendingRevocations++;
+                        return timeout(() => { try { callback(...args); } finally { budgetPendingRevocations--; } }, delay);
+                    };
+                    const revoke = URL.revokeObjectURL;
+                    URL.revokeObjectURL = function (url) { budgetRevoked.push(url); return revoke.call(this, url); };
+                    document.getElementById('iig_characters_section').innerHTML = '<div id="budget-card" style="width:512px;height:1024px"></div>';
+                });
+                for (let i = 0; i < 12; i++) {
+                    await page.evaluate(async ({prefix, i}) => {
+                        const card = document.getElementById('budget-card');
+                        card.innerHTML = `<img id="budget-preview" data-iig-library-src="/large.svg?index=${i}" data-iig-full-src="/large.svg?index=${i}" style="width:100%;height:100%">`;
+                        card.scrollIntoView({ block: 'start' });
+                        (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                    }, {prefix, i});
+                    await page.waitForFunction(() => { const image = document.getElementById('budget-preview'); return image.src.startsWith('blob:') && image.complete && image.naturalWidth > 0; });
+                    await page.evaluate(() => { const image = document.getElementById('budget-preview'); budgetPreviews.push({ url: image.src, pixels: image.naturalWidth * image.naturalHeight }); });
+                }
+                await page.evaluate(async prefix => {
+                    document.getElementById('iig_characters_section').closest('details').open = false;
+                    (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                }, prefix);
+                await page.waitForFunction(() => budgetPendingRevocations === 0 && budgetPreviews.filter(item => budgetRevoked.includes(item.url)).length >= 4);
+                const result = await page.evaluate(() => { const live = budgetPreviews.filter(item => !budgetRevoked.includes(item.url)); return { entries: live.length, pixels: live.reduce((sum, item) => sum + item.pixels, 0) }; });
+                report.evidence.collapsedPreviewBudget = result;
+                assert.deepEqual(result, { entries: 8, pixels: 4 * 1024 * 1024 });
+                await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+                await page.waitForFunction(() => budgetPreviews.every(item => budgetRevoked.includes(item.url)));
+            } finally { await page.close(); }
+        });
         await scenario('server avatars load on visibility without resize subscriptions', async () => {
             const page = await open();
             try {
@@ -267,6 +358,8 @@ const server = createServer((req, res) => {
                     document.getElementById('iig_characters_section').closest('details').open = false;
                     (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
                 }, prefix);
+                assert.equal(await page.locator('#far-avatar').getAttribute('src'), '/thumbnail?type=avatar&file=far.png');
+                await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
                 assert.equal(await page.evaluate(() => [...document.querySelectorAll('#avatar-scroll img')].every(image => !image.hasAttribute('src'))), true);
             } finally { await page.close(); }
         });

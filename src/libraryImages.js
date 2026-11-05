@@ -12,6 +12,7 @@ let upgradeFrame = 0;
 let densityQuery;
 let running = false;
 let active = true;
+let libraryOpen = false;
 let generation = 0;
 const pendingVisibility = new Map();
 let originalWarmup = null;
@@ -194,9 +195,7 @@ function load(image) {
     const source = image.getAttribute('data-iig-library-src');
     if (!source) return;
     if (!image.hasAttribute('data-iig-full-src')) {
-        if (states.has(image)) return;
-        states.set(image, true);
-        image.src = source;
+        if (image.getAttribute('src') !== source) image.src = source;
         return;
     }
     const target = Math.max(128, Math.min(512, (image.clientWidth || 128) * Math.min(devicePixelRatio || 1, 3)));
@@ -231,7 +230,9 @@ window.addEventListener('resize', scheduleUpgrade, { passive: true });
 export function observeLibraryImages() {
     if (!active) return;
     const section = document.getElementById('iig_characters_section');
-    const visible = section?.closest('details')?.open;
+    const visible = Boolean(section?.closest('details')?.open);
+    const closing = libraryOpen && !visible;
+    libraryOpen = visible;
     const next = new Set(visible ? section.querySelectorAll('img[data-iig-library-src]') : []);
     for (const image of tracked) if (!next.has(image)) {
         const parent = observedParents.get(image);
@@ -241,7 +242,9 @@ export function observeLibraryImages() {
             pendingVisibility.delete(parent);
         }
         observedParents.delete(image);
-        release(image);
+        // Retained rows own their small server thumbnails while the section is closed.
+        if (!visible && image.isConnected && !image.hasAttribute('data-iig-full-src')) inView.delete(image);
+        else release(image);
     }
     const added = [...next].filter(image => !tracked.has(image));
     added.forEach(image => observedParents.set(image, image.parentElement));
@@ -249,12 +252,10 @@ export function observeLibraryImages() {
     // Drop detached queued nodes immediately, rather than retaining old editors.
     for (let i = queue.length - 1; i >= 0; i--) if (!next.has(queue[i].image)) queue.splice(i, 1);
     if (!visible) {
-        if (originalWarmup || cache.size) document.dispatchEvent(new Event('iig-library-images-released'));
+        if (closing) document.dispatchEvent(new Event('iig-library-images-released'));
         releaseLibraryOriginal();
         pendingVisibility.clear();
         generation++;
-        for (const item of cache.values()) retire(item.url);
-        cache.clear();
         return;
     }
     const resizable = added.filter(image => image.hasAttribute('data-iig-full-src'));
@@ -295,6 +296,7 @@ document.addEventListener('close', event => {
 
 function dispose() {
     active = false;
+    libraryOpen = false;
     generation++;
     releaseLibraryOriginal();
     pendingVisibility.clear();
@@ -302,7 +304,8 @@ function dispose() {
     resizeObserver?.disconnect();
     if (upgradeFrame) cancelAnimationFrame(upgradeFrame);
     upgradeFrame = 0;
-    for (const image of tracked) release(image);
+    const ownedImages = new Set([...tracked, ...document.querySelectorAll('#iig_characters_section img[data-iig-library-src]')]);
+    for (const image of ownedImages) release(image);
     tracked.clear();
     queue.length = 0;
     for (const item of cache.values()) retire(item.url);
