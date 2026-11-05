@@ -787,7 +787,7 @@ export function bindCharacterLibraryEvents(settings = getSettings()) {
     const details = section.closest('details');
 
     details?.addEventListener('toggle', () => {
-        observeLibraryImages();
+        observeLibraryImages({ visibilityOnly: libraryRendered });
         if (details.open && !libraryRendered) {
             renderCharacterLibrary(settings).catch((error) => console.warn('[IIG] Failed to render character library:', error));
         }

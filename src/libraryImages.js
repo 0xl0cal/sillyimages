@@ -6,11 +6,13 @@ const states = new WeakMap();
 const observedParents = new WeakMap();
 const inView = new Set();
 let tracked = new Set();
+let ownerSection = null;
 let observer;
 let resizeObserver;
 let upgradeFrame = 0;
 let densityQuery;
 let running = false;
+let resumeTimer = 0;
 let active = true;
 let libraryOpen = false;
 let generation = 0;
@@ -158,7 +160,7 @@ function releaseLease(image, url) {
 
 function release(image) {
     const job = states.get(image);
-    job?.controller?.abort();
+    if (job && !job.committed) job.controller.abort();
     const url = image.getAttribute('src');
     if (url !== null) {
         image.removeAttribute('src');
@@ -169,10 +171,10 @@ function release(image) {
 }
 
 async function drain() {
-    if (running) return;
+    if (running || resumeTimer) return;
     running = true;
     try {
-        while (queue.length && !document.getElementById('iig_lightbox')?.open) {
+        while (queue.length && !resumeTimer && !document.getElementById('iig_lightbox')?.open) {
             const job = queue.shift();
             const { image, source, width } = job;
             if (!active || !image.isConnected || image.ownerDocument !== document || states.get(image) !== job) continue;
@@ -206,7 +208,7 @@ function load(image) {
     const width = target <= 128 ? 128 : target <= 256 ? 256 : 512;
     const previous = states.get(image);
     if (previous?.source === source && previous.width >= width) return;
-    previous?.controller?.abort();
+    if (previous && !previous.committed) previous.controller.abort();
     const job = { image, source, width, controller: new AbortController() };
     states.set(image, job);
     queue.push(job);
@@ -231,21 +233,23 @@ function densityChanged() { watchDensity(); scheduleUpgrade(); }
 watchDensity();
 window.addEventListener('resize', scheduleUpgrade, { passive: true });
 
-export function observeLibraryImages() {
+export function observeLibraryImages({ visibilityOnly = false } = {}) {
     if (!active) return;
     const section = document.getElementById('iig_characters_section');
     const visible = Boolean(section?.closest('details')?.open);
     const closing = libraryOpen && !visible;
     libraryOpen = visible;
-    const next = new Set(section?.querySelectorAll('img[data-iig-library-src]') || []);
+    const next = visibilityOnly && section === ownerSection
+        ? tracked : new Set(section?.querySelectorAll('img[data-iig-library-src]') || []);
+    ownerSection = section;
     const retainedUrls = closing ? new Set([...cache.values()].map(item => item.url)) : null;
-    const resetObservers = closing || tracked.size > 0 && ![...tracked].some(image => next.has(image));
+    const resetObservers = closing || next !== tracked && tracked.size > 0 && ![...tracked].some(image => next.has(image));
     if (resetObservers) {
         observer?.disconnect();
         resizeObserver?.disconnect();
         pendingVisibility.clear();
     }
-    for (const image of tracked) if (!next.has(image) || closing) {
+    for (const image of tracked) if (closing || next !== tracked && !next.has(image)) {
         const parent = observedParents.get(image);
         if (parent && !resetObservers) {
             observer?.unobserve(parent);
@@ -268,6 +272,8 @@ export function observeLibraryImages() {
     // Drop detached queued nodes immediately, rather than retaining old editors.
     for (let i = queue.length - 1; i >= 0; i--) if (!visible || !next.has(queue[i].image)) queue.splice(i, 1);
     if (!visible) {
+        clearTimeout(resumeTimer);
+        resumeTimer = 0;
         if (closing) document.dispatchEvent(new Event('iig-library-images-released'));
         releaseLibraryOriginal();
         pendingVisibility.clear();
@@ -321,14 +327,19 @@ function updateVisibility(entries) {
 
 document.addEventListener('close', event => {
     if (event.target.id !== 'iig_lightbox' || event.target.open) return;
+    // Give rapid reopening priority over queued preview raster work.
+    clearTimeout(resumeTimer);
+    resumeTimer = setTimeout(() => { resumeTimer = 0; drain(); }, 150);
     updateVisibility([...pendingVisibility.values()]);
     pendingVisibility.clear();
-    drain();
 }, true);
 
 function dispose() {
     active = false;
     libraryOpen = false;
+    ownerSection = null;
+    clearTimeout(resumeTimer);
+    resumeTimer = 0;
     generation++;
     releaseLibraryOriginal();
     pendingVisibility.clear();

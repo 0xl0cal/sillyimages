@@ -7,6 +7,7 @@ const { chromium, webkit } = require('playwright');
 const root = path.resolve(__dirname, '..');
 const prefix = '/scripts/extensions/third-party/sillyimages/';
 const engine = process.env.IIG_BROWSER_ENGINE || 'chromium';
+const scenarioFilter = process.env.IIG_UI_SCENARIO_FILTER ? new RegExp(process.env.IIG_UI_SCENARIO_FILTER) : null;
 const artifacts = path.join(__dirname, 'artifacts', 'ui-lifecycle-' + engine);
 fs.mkdirSync(artifacts, { recursive: true });
 function fixture(name) {
@@ -37,7 +38,7 @@ const server = createServer((req, res) => {
 (async () => {
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const browser = await (engine === 'webkit' ? webkit : chromium).launch({ headless: true, ...(engine === 'chromium' ? { channel: process.env.IIG_BROWSER_CHANNEL || 'msedge' } : {}) });
-    const report = { engine, checks: [], failures: [], evidence: {} };
+    const report = { engine, scenarioFilter: process.env.IIG_UI_SCENARIO_FILTER || null, checks: [], failures: [], evidence: {} };
     const open = async (url = '/') => {
         const page = await browser.newPage({ viewport: { width: 1100, height: 950 } });
         await page.goto('http://127.0.0.1:' + server.address().port + url);
@@ -45,6 +46,7 @@ const server = createServer((req, res) => {
         return page;
     };
     const scenario = async (name, run) => {
+        if (scenarioFilter && !scenarioFilter.test(name)) return;
         try { await run(); report.checks.push(name); }
         catch (error) { report.failures.push({ name, error: String(error) }); }
     };
@@ -219,7 +221,7 @@ const server = createServer((req, res) => {
                     const create = createImageBitmap;
                     const openRequest = XMLHttpRequest.prototype.open;
                     window.secondPreviewRequests = 0;
-                    XMLHttpRequest.prototype.open = function (method, url, ...args) { if (url === '/fast.svg') secondPreviewRequests++; return openRequest.call(this, method, url, ...args); };
+                    XMLHttpRequest.prototype.open = function (method, url, ...args) { if (url === '/fast.svg') { secondPreviewRequests++; window.secondPreviewStartedAt = performance.now(); } return openRequest.call(this, method, url, ...args); };
                     window.createImageBitmap = async (...args) => {
                         if (window.finishPreviewDecode) return create(...args);
                         const canvas = document.createElement('canvas'); canvas.width = canvas.height = 41;
@@ -242,8 +244,11 @@ const server = createServer((req, res) => {
                 await page.waitForFunction(() => pendingBitmap.width === 0, null, { timeout: 3000 });
                 await page.waitForTimeout(200);
                 assert.equal(await page.evaluate(() => secondPreviewRequests), 0);
-                await page.locator('.iig-lightbox-close').evaluate(button => button.click());
+                await page.locator('.iig-lightbox-close').evaluate(button => { window.viewerClosedAt = performance.now(); button.click(); });
                 await page.waitForFunction(() => secondPreviewRequests === 1 && document.getElementById('queued-preview').complete && document.getElementById('queued-preview').naturalWidth > 0, null, { timeout: 3000 });
+                const delay = await page.evaluate(() => secondPreviewStartedAt - viewerClosedAt);
+                report.evidence.previewResumeDelayMs = delay;
+                assert.ok(delay >= 140, 'Queued previews resume after an idle window, not between rapid viewer openings');
                 report.evidence.viewerQueueResumeRequests = 1;
             } finally { await page.close(); }
         });
@@ -438,6 +443,40 @@ const server = createServer((req, res) => {
                 assert.equal(replacement.unobserve, 0, 'A complete replacement disconnects observers once, not once per old image');
                 assert.ok(replacement.disconnect > 0);
                 await page.screenshot({ path: path.join(artifacts, 'image-observer-replacement.png') });
+            } finally { await page.close(); }
+        });
+        await scenario('visibility toggles reuse image membership and do not abort completed previews', async () => {
+            const page = await open();
+            try {
+                await page.evaluate(async prefix => {
+                    const section = document.getElementById('iig_characters_section');
+                    section.innerHTML = '<div style="width:120px;height:120px"><img id="stable-preview" data-iig-library-src="/fast.svg" data-iig-full-src="/fast.svg" style="width:100%;height:100%"></div>';
+                    section.scrollIntoView({ block: 'start' });
+                    (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                }, prefix);
+                await page.waitForFunction(() => document.getElementById('stable-preview').getAttribute('src')?.startsWith('blob:') && document.getElementById('stable-preview').naturalWidth > 0);
+                const work = await page.evaluate(async prefix => {
+                    const module = await import(prefix + 'src/libraryImages.js');
+                    const section = document.getElementById('iig_characters_section'), details = section.closest('details');
+                    let imageScans = 0, completedAborts = 0;
+                    const query = section.querySelectorAll;
+                    section.querySelectorAll = function (selector, ...args) { if (selector === 'img[data-iig-library-src]') imageScans++; return query.call(this, selector, ...args); };
+                    const abort = AbortController.prototype.abort;
+                    AbortController.prototype.abort = function (...args) { if (new Error().stack.includes('/src/libraryImages.js')) completedAborts++; return abort.apply(this, args); };
+                    for (const rapid of [true, false]) {
+                        details.open = false; module.observeLibraryImages({ visibilityOnly: true });
+                        if (!rapid) await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                        details.open = true; module.observeLibraryImages({ visibilityOnly: true });
+                        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                    }
+                    const visibilityScans = imageScans;
+                    section.innerHTML = '';
+                    module.observeLibraryImages();
+                    return { visibilityScans, completedAborts };
+                }, prefix);
+                report.evidence.stableCollapseWork = work;
+                assert.deepEqual(work, { visibilityScans: 0, completedAborts: 0 });
+                await page.screenshot({ path: path.join(artifacts, 'stable-collapse-ownership.png') });
             } finally { await page.close(); }
         });
         await scenario('a released preview closes its pending bitmap without rasterizing or encoding', async () => {
@@ -827,7 +866,7 @@ const server = createServer((req, res) => {
             } finally { await page.close(); }
         });
     } finally {
-        report.passed = report.failures.length === 0;
+        report.passed = report.failures.length === 0 && report.checks.length > 0;
         fs.writeFileSync(path.join(artifacts, 'report.json'), JSON.stringify(report, null, 2));
         await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
     }
