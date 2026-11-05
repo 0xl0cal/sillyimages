@@ -230,7 +230,6 @@ export function initLightbox() {
     };
 
     const resetZoom = (animate = true) => {
-        const transformed = scale !== 1 || tx !== 0 || ty !== 0;
         if (!animate) overlay.classList.add('interacting');
         scale = 1;
         tx = 0;
@@ -238,7 +237,7 @@ export function initLightbox() {
         updateZoomState();
         applyTransform(true);
         if (!animate) {
-            if (transformed) void imgEl.offsetWidth;
+            void imgEl.offsetWidth;
             overlay.classList.remove('interacting');
         }
     };
@@ -325,7 +324,7 @@ export function initLightbox() {
         nextBtn.style.display = multi ? '' : 'none';
     };
 
-    const showImage = (idx) => {
+    const showImage = (idx, opening = false) => {
         if (imageList.length === 0) return;
         cancelInteraction();
         currentIndex = (idx + imageList.length) % imageList.length;
@@ -338,7 +337,8 @@ export function initLightbox() {
         imgEl.src = getImageSource(src);
         imgEl.alt = caption;
         captionEl.textContent = caption;
-        resetZoom(false);
+        // A closed viewer owns an identity transform; navigation must also cancel rendered transitions.
+        resetZoom(opening);
     };
 
     const openAt = (img) => {
@@ -354,7 +354,8 @@ export function initLightbox() {
             imageList = [img];
             currentIndex = 0;
         }
-        if (!overlay.open) {
+        const opening = !overlay.open;
+        if (opening) {
             previousBodyOverflow = ['overflow', 'overflow-x', 'overflow-y'].map(name => ({
                 name, value: document.body.style.getPropertyValue(name),
                 priority: document.body.style.getPropertyPriority(name),
@@ -367,7 +368,7 @@ export function initLightbox() {
         }
         // Start the display decode in the visible modal, without a redundant unit-scale reset layout.
         updateNavVisibility();
-        showImage(currentIndex);
+        showImage(currentIndex, opening);
         overlay.classList.add('open');
         overlay.setAttribute('aria-hidden', 'false');
         overlay.querySelector('.iig-lightbox-close')?.focus({ preventScroll: true });

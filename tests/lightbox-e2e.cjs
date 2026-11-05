@@ -135,6 +135,23 @@ const server = createServer((req, res) => {
             assert.equal(budgetScans,0,'Reopening a retained original must not rescan its unchanged pixel budget');
             checks.push(mode+': warm original reuse skips budget scans and retains bounded ownership');
 
+            await open();
+            await page.locator('.iig-lightbox-zoom-in').evaluate(button=>{button.click();button.click();});
+            await page.waitForFunction(()=>new DOMMatrixReadOnly(getComputedStyle(document.querySelector('.iig-lightbox-img')).transform).a>1.95);
+            const resetDuringNavigation=await page.evaluate(async()=>{
+                const image=document.querySelector('.iig-lightbox-img');
+                document.querySelector('.iig-lightbox-zoom-reset').click();
+                void image.offsetWidth;
+                await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+                const before=new DOMMatrixReadOnly(getComputedStyle(image).transform).a;
+                document.querySelector('.iig-lightbox-next').click();
+                return {before,after:new DOMMatrixReadOnly(getComputedStyle(image).transform).a};
+            });
+            assert.ok(resetDuringNavigation.before>1.01,'Navigate while the previous reset is still animating');
+            assert.ok(Math.abs(resetDuringNavigation.after-1)<0.001,'The next image starts at unit scale, not in the previous reset animation');
+            await page.locator('.iig-lightbox-close').click();await released();
+            checks.push(mode+': navigation during reset animation fits the next image immediately');
+
             await open();await full.tap();
             await page.waitForFunction(()=>!document.querySelector('#iig_lightbox').open);await released();
             checks.push(mode+': tapping the image closes without leaving a scroll or input lock');
