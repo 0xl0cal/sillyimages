@@ -20,10 +20,29 @@ const pendingVisibility = new Map();
 let originalWarmup = null;
 let warmupTimer = 0;
 const queue = [];
+const idleWaiters = new Set();
 const MAX_PIXELS = 4 * 1024 * 1024;
-// A complete 48-image gallery must fit without cycling through fresh URLs.
+// Entry and pixel caps bound galleries with mixed preview sizes.
 const MAX_ENTRIES = 96;
 const REQUEST_TIMEOUT_MS = 15000;
+
+async function waitForPreviewIdle(signal) {
+    if (signal.aborted) throw new DOMException('Preview released', 'AbortError');
+    if (!resumeTimer && !document.getElementById('iig_lightbox')?.open) return;
+    return new Promise((resolve, reject) => {
+        const finish = error => {
+            idleWaiters.delete(resume);
+            signal.removeEventListener('abort', abort);
+            if (error) reject(error);
+            else resolve();
+        };
+        const resume = () => finish();
+        const abort = () => finish(new DOMException('Preview released', 'AbortError'));
+        idleWaiters.add(resume);
+        signal.addEventListener('abort', abort, { once: true });
+        if (signal.aborted) abort();
+    });
+}
 
 function releaseLibraryOriginal() {
     clearTimeout(warmupTimer);
@@ -113,6 +132,7 @@ async function thumbnail(source, width, signal) {
         if (signal.aborted) { reject(new DOMException('Preview released', 'AbortError')); return; }
         request.send();
     });
+    await waitForPreviewIdle(signal);
     assertCurrent();
     let bitmap, decoderUrl;
     const canvas = document.createElement('canvas');
@@ -122,12 +142,14 @@ async function thumbnail(source, width, signal) {
             bitmap = await createImageBitmap(blob, { resizeWidth: width, resizeQuality: 'high' });
         }
         catch {
+            await waitForPreviewIdle(signal);
             assertCurrent();
             bitmap = new Image();
             bitmap.src = decoderUrl = URL.createObjectURL(blob);
             await bitmap.decode();
         }
         // Native decoders finish asynchronously even after their owner has left.
+        await waitForPreviewIdle(signal);
         assertCurrent();
         canvas.width = Math.max(1, Math.min(width, bitmap.width, Math.round(bitmap.width * 1024 / bitmap.height)));
         canvas.height = Math.max(1, Math.round(bitmap.height * canvas.width / bitmap.width));
@@ -181,6 +203,8 @@ async function drain() {
             let src;
             try { src = await thumbnail(source, width, job.controller.signal); }
             catch { src = source; }
+            try { await waitForPreviewIdle(job.controller.signal); }
+            catch { continue; }
             // A scroll, editor change or collapse can invalidate an in-flight decode.
             if (image.isConnected && states.get(image) === job) {
                 const previous = image.getAttribute('src');
@@ -329,7 +353,11 @@ document.addEventListener('close', event => {
     if (event.target.id !== 'iig_lightbox' || event.target.open) return;
     // Give rapid reopening priority over queued preview raster work.
     clearTimeout(resumeTimer);
-    resumeTimer = setTimeout(() => { resumeTimer = 0; drain(); }, 150);
+    resumeTimer = setTimeout(() => {
+        resumeTimer = 0;
+        if (!document.getElementById('iig_lightbox')?.open) for (const resume of idleWaiters) resume();
+        drain();
+    }, 150);
     updateVisibility([...pendingVisibility.values()]);
     pendingVisibility.clear();
 }, true);
@@ -349,6 +377,7 @@ function dispose() {
     upgradeFrame = 0;
     const ownedImages = new Set([...tracked, ...document.querySelectorAll('#iig_characters_section img[data-iig-library-src]')]);
     for (const image of ownedImages) { release(image); observedParents.delete(image); }
+    for (const resume of idleWaiters) resume();
     tracked.clear();
     queue.length = 0;
     for (const item of cache.values()) retire(item.url);

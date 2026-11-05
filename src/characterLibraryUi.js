@@ -74,9 +74,8 @@ function getContext() {
     }
 }
 
-function getPersonaTitle(avatarFile) {
-    const context = getContext();
-    const configuredName = context?.powerUserSettings?.personas?.[avatarFile];
+function getPersonaTitle(avatarFile, personas) {
+    const configuredName = personas[avatarFile];
     return String(configuredName || avatarFile.replace(/\.[^.]+$/, '') || avatarFile).trim();
 }
 
@@ -139,13 +138,14 @@ async function getUserEntities(settings = getSettings()) {
     if (avatars.length === 0) avatars = await fetchUserAvatars();
     const activeKey = await getCurrentUserReferenceKey(settings);
     const library = settings.characterReferenceLibrary?.users || {};
-    const signature = catalogSignature(activeKey, avatars.map(file => [file, getPersonaTitle(file)]), library);
+    const personas = getContext()?.powerUserSettings?.personas || {};
+    const labels = avatars.map(file => [file, getPersonaTitle(file, personas)]);
+    const signature = catalogSignature(activeKey, labels, library);
     if (entityCatalogs.user?.signature === signature) return entityCatalogs.user.entities;
     const entities = new Map();
-    for (const avatarFile of avatars) {
+    for (const [avatarFile, fallbackTitle] of labels) {
         const key = getUserReferenceKeyForAvatar(avatarFile);
         const { displayName, configured } = getEntityLibraryMetadata('user', key, settings);
-        const fallbackTitle = getPersonaTitle(avatarFile);
         entities.set(key, {
             kind: 'user',
             key,
@@ -162,7 +162,7 @@ async function getUserEntities(settings = getSettings()) {
         if (entities.has(key)) continue;
         const { displayName } = getEntityLibraryMetadata('user', key, settings);
         const avatarFile = key.replace(/^avatar:/, '');
-        const fallbackTitle = getPersonaTitle(avatarFile);
+        const fallbackTitle = getPersonaTitle(avatarFile, personas);
         entities.set(key, {
             kind: 'user',
             key,
@@ -368,10 +368,10 @@ async function renderEntityList(settings = getSettings(), providedEntities = nul
         ? (kind === 'char' ? t`No characters found.` : t`No personas found.`)
         : matchedEntities.length > visibleEntities.length
             ? t`Showing ${visibleEntities.length} of ${matchedEntities.length}. Use search to narrow the list.` : '';
-    const keyOf = (kind, key) => JSON.stringify([kind, key]);
+    const keyOf = (kind, key) => `${kind}:${key}`;
     const rows = new Map(host.firstElementChild?.dataset.libraryKind === kind
         ? [...host.querySelectorAll('.iig-library-entity')].map(row => [keyOf(row.dataset.libraryKind, row.dataset.libraryKey), row]) : []);
-    const missing = visibleEntities.filter(entity => !rows.has(keyOf(entity.kind, entity.key)));
+    const missing = rows.size ? visibleEntities.filter(entity => !rows.has(keyOf(entity.kind, entity.key))) : visibleEntities;
     if (missing.length && missing.length === visibleEntities.length) {
         host.innerHTML = visibleEntities.map(entity => buildEntityOptionHtml(entity, selectedKeys[kind]).trim()).join('')
             + (note ? `<div class="iig-library-list-note">${sanitizeForHtml(note)}</div>` : '');

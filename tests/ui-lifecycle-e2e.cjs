@@ -221,12 +221,16 @@ const server = createServer((req, res) => {
                     const create = createImageBitmap;
                     const openRequest = XMLHttpRequest.prototype.open;
                     window.secondPreviewRequests = 0;
+                    window.queuedPreviewEncodes = 0;
+                    const encode = HTMLCanvasElement.prototype.toBlob;
+                    HTMLCanvasElement.prototype.toBlob = function (...args) { if (this.width === 41) queuedPreviewEncodes++; return encode.apply(this, args); };
                     XMLHttpRequest.prototype.open = function (method, url, ...args) { if (url === '/fast.svg') { secondPreviewRequests++; window.secondPreviewStartedAt = performance.now(); } return openRequest.call(this, method, url, ...args); };
                     window.createImageBitmap = async (...args) => {
                         if (window.finishPreviewDecode) return create(...args);
                         const canvas = document.createElement('canvas'); canvas.width = canvas.height = 41;
                         window.pendingBitmap = await create(canvas);
                         await new Promise(resolve => window.finishPreviewDecode = resolve);
+                        window.previewBitmapReady = true;
                         return pendingBitmap;
                     };
                     const section = document.getElementById('iig_characters_section');
@@ -241,14 +245,16 @@ const server = createServer((req, res) => {
                     document.getElementById('queued-viewer-image').click();
                     finishPreviewDecode();
                 });
-                await page.waitForFunction(() => pendingBitmap.width === 0, null, { timeout: 3000 });
+                await page.waitForFunction(() => window.previewBitmapReady, null, { timeout: 3000 });
                 await page.waitForTimeout(200);
+                assert.equal(await page.evaluate(() => queuedPreviewEncodes), 0, 'An in-flight bitmap must not start raster work over the viewer');
                 assert.equal(await page.evaluate(() => secondPreviewRequests), 0);
                 await page.locator('.iig-lightbox-close').evaluate(button => { window.viewerClosedAt = performance.now(); button.click(); });
                 await page.waitForFunction(() => secondPreviewRequests === 1 && document.getElementById('queued-preview').complete && document.getElementById('queued-preview').naturalWidth > 0, null, { timeout: 3000 });
                 const delay = await page.evaluate(() => secondPreviewStartedAt - viewerClosedAt);
                 report.evidence.previewResumeDelayMs = delay;
                 assert.ok(delay >= 140, 'Queued previews resume after an idle window, not between rapid viewer openings');
+                assert.equal(await page.evaluate(() => pendingBitmap.width), 0);
                 report.evidence.viewerQueueResumeRequests = 1;
             } finally { await page.close(); }
         });
@@ -580,6 +586,9 @@ const server = createServer((req, res) => {
                     const old = fetch;
                     window.fetch = (url, init) => String(url) === '/api/avatars/get' ? Promise.resolve(Response.json(Object.keys(context.powerUserSettings.personas))) : old(url, init);
                     await (await import(prefix + 'src/avatarPicker.js')).fetchUserAvatars();
+                    const personaNames = context.powerUserSettings.personas;
+                    let personaNameReads = 0;
+                    Object.defineProperty(context.powerUserSettings, 'personas', { configurable: true, get() { personaNameReads++; return personaNames; } });
                     let batches = 0;
                     let templates = 0;
                     let imageScans = 0;
@@ -593,14 +602,16 @@ const server = createServer((req, res) => {
                     document.querySelector('[data-library-tab="user"]').click();
                     while (document.querySelectorAll('.iig-library-entity[data-library-kind="user"]').length !== 80 || document.querySelector('.iig-library-editor')?.dataset.libraryKind !== 'user') await new Promise(requestAnimationFrame);
                     observer.disconnect(); document.createElement = create; section.querySelectorAll = query;
-                    return { batches, templates, imageScans };
+                    return { batches, templates, imageScans, personaNameReads };
                 }, prefix);
                 report.evidence.personaInsertBatches = mutations.batches;
                 report.evidence.personaTemplateBatches = mutations.templates;
                 report.evidence.personaImageScans = mutations.imageScans;
+                report.evidence.personaNameReads = mutations.personaNameReads;
                 assert.equal(mutations.batches, 1, 'Insert the rows and search note together');
                 assert.equal(mutations.imageScans, 1, 'Reconcile images after the list and editor are both current');
                 assert.equal(mutations.templates, 0, 'Parse a wholesale replacement directly in the live document');
+                assert.equal(mutations.personaNameReads, 1, 'Read persona metadata once for a coherent catalog snapshot');
             } finally { await page.close(); }
         });
         await scenario('canceled departure restores previews; accepted reload remains usable', async () => {
