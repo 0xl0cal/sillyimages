@@ -230,6 +230,7 @@ export function initLightbox() {
     };
 
     const resetZoom = (animate = true) => {
+        const transformed = scale !== 1 || tx !== 0 || ty !== 0;
         if (!animate) overlay.classList.add('interacting');
         scale = 1;
         tx = 0;
@@ -237,7 +238,7 @@ export function initLightbox() {
         updateZoomState();
         applyTransform(true);
         if (!animate) {
-            if (overlay.open) void imgEl.offsetWidth;
+            if (transformed) void imgEl.offsetWidth;
             overlay.classList.remove('interacting');
         }
     };
@@ -353,9 +354,6 @@ export function initLightbox() {
             imageList = [img];
             currentIndex = 0;
         }
-        // Commit the source, caption and initial transform before the modal's first layout.
-        updateNavVisibility();
-        showImage(currentIndex);
         if (!overlay.open) {
             previousBodyOverflow = ['overflow', 'overflow-x', 'overflow-y'].map(name => ({
                 name, value: document.body.style.getPropertyValue(name),
@@ -367,6 +365,9 @@ export function initLightbox() {
             overlay.showModal();
             document.body.style.overflow = 'hidden';
         }
+        // Start the display decode in the visible modal, without a redundant unit-scale reset layout.
+        updateNavVisibility();
+        showImage(currentIndex);
         overlay.classList.add('open');
         overlay.setAttribute('aria-hidden', 'false');
         overlay.querySelector('.iig-lightbox-close')?.focus({ preventScroll: true });

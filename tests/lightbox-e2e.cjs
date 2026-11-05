@@ -123,8 +123,8 @@ const server = createServer((req, res) => {
             });
             await open();await page.locator('.iig-lightbox-close').click();await released();
             const openingReads=await page.evaluate(()=>{restoreViewerWidth();return viewerOpeningLayoutReads;});
-            assert.equal(openingReads,0,'A hidden viewer prepares its transform without forcing image layout');
-            checks.push(mode+': viewer prepares its image before modal layout');
+            assert.equal(openingReads,0,'A unit-scale viewer needs no forced reset layout');
+            checks.push(mode+': opening at unit scale skips forced reset layout');
 
             await page.evaluate(()=>{
                 window.originalBudgetScans=0;window.originalReduce=Array.prototype.reduce;
