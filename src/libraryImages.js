@@ -1,4 +1,4 @@
-/** Viewport-owned image previews. Original URLs remain on gallery items. */
+/** Bounded image previews with viewport-driven loading. Originals remain on gallery items. */
 const cache = new Map();
 const leases = new Map();
 const retired = new Set();
@@ -89,8 +89,11 @@ document.addEventListener('input', event => {
 function revoke(url) { setTimeout(() => URL.revokeObjectURL(url), 250); }
 
 function retire(url) {
-    if (leases.has(url)) retired.add(url);
-    else revoke(url);
+    const owners = leases.get(url);
+    if (!owners) { revoke(url); return; }
+    retired.add(url);
+    // Offscreen rows share the cache budget; visible owners keep their source until exit.
+    for (const image of owners) if (!inView.has(image)) release(image);
 }
 
 function trimCache() {
@@ -103,6 +106,16 @@ function trimCache() {
     }
 }
 
+function cachedThumbnail(source, width) {
+    const key = `${width}:${source}`;
+    const item = cache.get(key);
+    if (item) {
+        cache.delete(key);
+        cache.set(key, item);
+    }
+    return item;
+}
+
 async function thumbnail(source, width, signal) {
     if (!active) throw new Error('Preview page released');
     const started = generation;
@@ -110,12 +123,8 @@ async function thumbnail(source, width, signal) {
         if (!active || started !== generation || signal.aborted) throw new Error('Preview released');
     };
     const key = `${width}:${source}`;
-    if (cache.has(key)) {
-        const item = cache.get(key);
-        cache.delete(key);
-        cache.set(key, item);
-        return item.url;
-    }
+    const cached = cachedThumbnail(source, width);
+    if (cached) return cached.url;
     const blob = await new Promise((resolve, reject) => {
         const request = new XMLHttpRequest();
         const abort = () => request.abort();
@@ -180,15 +189,17 @@ function releaseLease(image, url) {
     }
 }
 
-function release(image) {
+function release(image, { retainCached = false } = {}) {
     const job = states.get(image);
     if (job && !job.committed) job.controller.abort();
     const url = image.getAttribute('src');
-    if (url !== null) {
+    const retained = retainCached && (!image.hasAttribute('data-iig-full-src')
+        || leases.get(url)?.has(image) && !retired.has(url));
+    if (url !== null && !retained) {
         image.removeAttribute('src');
         releaseLease(image, url);
     }
-    if (job) states.delete(image);
+    if (job && (!retained || !job.committed)) states.delete(image);
     inView.delete(image);
 }
 
@@ -208,7 +219,7 @@ async function drain() {
             // A scroll, editor change or collapse can invalidate an in-flight decode.
             if (image.isConnected && states.get(image) === job) {
                 const previous = image.getAttribute('src');
-                if (src.startsWith('blob:')) {
+                if (src !== source && src.startsWith('blob:')) {
                     if (!leases.has(src)) leases.set(src, new Set());
                     leases.get(src).add(image);
                 }
@@ -231,7 +242,10 @@ function load(image) {
     const target = Math.max(128, Math.min(512, (image.clientWidth || 128) * Math.min(devicePixelRatio || 1, 3)));
     const width = target <= 128 ? 128 : target <= 256 ? 256 : 512;
     const previous = states.get(image);
-    if (previous?.source === source && previous.width >= width) return;
+    if (previous?.source === source && previous.width >= width) {
+        if (previous.committed) cachedThumbnail(source, previous.width);
+        return;
+    }
     if (previous && !previous.committed) previous.controller.abort();
     const job = { image, source, width, controller: new AbortController() };
     states.set(image, job);
@@ -266,7 +280,6 @@ export function observeLibraryImages({ visibilityOnly = false } = {}) {
     const next = visibilityOnly && section === ownerSection
         ? tracked : new Set(section?.querySelectorAll('img[data-iig-library-src]') || []);
     ownerSection = section;
-    const retainedUrls = closing ? new Set([...cache.values()].map(item => item.url)) : null;
     const resetObservers = closing || next !== tracked && tracked.size > 0 && ![...tracked].some(image => next.has(image));
     if (resetObservers) {
         observer?.disconnect();
@@ -281,12 +294,7 @@ export function observeLibraryImages({ visibilityOnly = false } = {}) {
             pendingVisibility.delete(parent);
         }
         observedParents.delete(image);
-        // Closed DOM owners retain only server thumbnails and previews in the bounded cache.
-        if (closing && next.has(image) && (!image.hasAttribute('data-iig-full-src') || retainedUrls.has(image.getAttribute('src')))) {
-            const job = states.get(image);
-            if (job && !job.committed) { job.controller.abort(); states.delete(image); }
-            inView.delete(image);
-        } else release(image);
+        release(image, { retainCached: closing && next.has(image) });
     }
     // Loaded server thumbnails belong to their DOM rows; only custom previews need exit tracking.
     const added = visible ? [...next].filter(image => !observedParents.has(image)
@@ -343,7 +351,7 @@ function updateVisibility(entries) {
             }
         } else if (inView.has(image) || states.has(image)) {
             if (inView.has(image)) resizeObserver?.unobserve(entry.target);
-            release(image);
+            release(image, { retainCached: true });
         }
     }
     scheduleOriginalWarmup();

@@ -50,7 +50,195 @@ const server = createServer((req, res) => {
         try { await run(); report.checks.push(name); }
         catch (error) { report.failures.push({ name, error: String(error) }); }
     };
+    // Scroll ownership failures: blank cached rows, unbounded leases, stale LRU order,
+    // canceled upgrades replacing retained images, and ownership of fallback originals.
+    const scrollPreviews = async (page, options = {}) => {
+        await page.evaluate(async ({ prefix, count = 3, width = 120, large = false, fallback = '' }) => {
+            const images = await import(prefix + 'src/libraryImages.js');
+            const section = document.getElementById('iig_characters_section');
+            section.closest('details').open = false;
+            images.observeLibraryImages();
+            window.scrollWork = { requests: 0, encodes: 0, mutations: 0, exits: [], revoked: [] };
+            const open = XMLHttpRequest.prototype.open, encode = HTMLCanvasElement.prototype.toBlob;
+            const unobserve = ResizeObserver.prototype.unobserve, revoke = URL.revokeObjectURL;
+            XMLHttpRequest.prototype.open = function (method, url, ...args) {
+                if (String(url).includes('scroll-preview')) scrollWork.requests++;
+                return open.call(this, method, url, ...args);
+            };
+            HTMLCanvasElement.prototype.toBlob = function (callback, ...args) {
+                scrollWork.encodes++;
+                if (fallback) { callback(null); return; }
+                if (window.pausePreviewEncode) {
+                    window.pausePreviewEncode = false;
+                    return encode.call(this, blob => window.finishPreviewEncode = () => callback(blob), ...args);
+                }
+                return encode.call(this, callback, ...args);
+            };
+            ResizeObserver.prototype.unobserve = function (target, ...args) {
+                const id = target.querySelector('img')?.id;
+                if (id?.startsWith('scroll-preview')) scrollWork.exits.push(id);
+                return unobserve.call(this, target, ...args);
+            };
+            URL.revokeObjectURL = function (url) { scrollWork.revoked.push(url); return revoke.call(this, url); };
+            if (fallback === 'blob') window.foreignOriginal = URL.createObjectURL(new Blob([
+                '<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180"><rect width="180" height="180" fill="#567"/></svg>',
+            ], { type: 'image/svg+xml' }));
+            section.innerHTML = '<div id="preview-scroll" style="position:relative;height:140px;overflow:auto">' + Array.from({ length: count }, (_, i) => {
+                const src = i === 0 && fallback === 'blob' ? foreignOriginal : `/${large ? 'large' : 'fast'}.svg?scroll-preview=${i}`;
+                return `<div style="width:${width}px;height:120px;margin-bottom:360px"><img id="scroll-preview-${i}" data-iig-library-src="${src}" data-iig-full-src="${src}" style="width:100%;height:100%;object-fit:contain"></div>`;
+            }).join('') + '</div>';
+            new MutationObserver(records => scrollWork.mutations += records.length).observe(section, { subtree: true, attributes: true, attributeFilter: ['src'] });
+            section.closest('details').open = true;
+            section.scrollIntoView({ block: 'start' });
+            images.observeLibraryImages();
+        }, { prefix, ...options });
+    };
+    const previewReady = (page, index) => page.waitForFunction(index => {
+        const image = document.getElementById('scroll-preview-' + index);
+        return image.hasAttribute('src') && image.complete && image.naturalWidth > 0;
+    }, index);
+    const scrollToPreview = async (page, index, previous) => {
+        await page.evaluate(index => {
+            scrollWork.exits.length = 0;
+            document.getElementById('preview-scroll').scrollTop = document.getElementById('scroll-preview-' + index).parentElement.offsetTop;
+        }, index);
+        await page.waitForFunction(previous => scrollWork.exits.includes('scroll-preview-' + previous), previous);
+    };
     try {
+        for (const width of [390, 1100]) await scenario(`scroll previews retain decoded rows on round trips at ${width}px`, async () => {
+            const page = await open();
+            try {
+                await page.setViewportSize({ width, height: 950 });
+                await scrollPreviews(page);
+                await previewReady(page, 0);
+                const first = await page.locator('#scroll-preview-0').getAttribute('src');
+                const retained = [];
+                for (let i = 0; i < 3; i++) {
+                    await scrollToPreview(page, 1, 0);
+                    await previewReady(page, 1);
+                    retained.push(await page.locator('#scroll-preview-0').getAttribute('src') === first);
+                    await scrollToPreview(page, 0, 1);
+                    await previewReady(page, 0);
+                }
+                const result = await page.evaluate(() => ({ requests: scrollWork.requests, encodes: scrollWork.encodes, mutations: scrollWork.mutations }));
+                report.evidence['scrollRoundTrips' + width] = { ...result, retained };
+                await page.screenshot({ path: path.join(artifacts, `scroll-round-trips-${width}.png`) });
+                assert.deepEqual(retained, [true, true, true], 'Offscreen cached rows keep their decoded source');
+                assert.deepEqual(result, { requests: 2, encodes: 2, mutations: 2 }, 'Returning to cached rows does not rewrite src or enter the preview worker');
+                await page.evaluate(async prefix => {
+                    window.detachedPreviews = [...document.querySelectorAll('#preview-scroll img')];
+                    document.getElementById('preview-scroll').remove();
+                    (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                }, prefix);
+                assert.equal(await page.evaluate(() => detachedPreviews.every(image => !image.hasAttribute('src'))), true);
+            } finally { await page.close(); }
+        });
+        for (const [limit, width, large] of [[96, 120, false], [8, 512, true]]) await scenario(`scroll previews enforce the ${large ? 'pixel' : 'entry'} budget and refresh LRU on return`, async () => {
+            const page = await open();
+            try {
+                await scrollPreviews(page, { count: limit + 4, width, large });
+                const urls = [];
+                let previous = 0;
+                for (let i = 0; i < limit + 4; i++) {
+                    if (i) await scrollToPreview(page, i, previous);
+                    await previewReady(page, i);
+                    urls.push(await page.locator('#scroll-preview-' + i).getAttribute('src'));
+                    previous = i;
+                    if (i === limit - 1) {
+                        await scrollToPreview(page, 0, i);
+                        await previewReady(page, 0);
+                        previous = 0;
+                    }
+                }
+                await page.waitForFunction(urls => urls.filter(url => scrollWork.revoked.includes(url)).length >= 4, urls);
+                const result = await page.evaluate(() => {
+                    const retained = [...document.querySelectorAll('#preview-scroll img')].filter(image => image.hasAttribute('src'));
+                    return { entries: retained.length, pixels: retained.reduce((sum, image) => sum + image.naturalWidth * image.naturalHeight, 0), ids: retained.map(image => image.id) };
+                });
+                report.evidence['scrollBudget' + limit] = result;
+                assert.equal(result.entries, limit, 'Offscreen DOM owners share the bounded cache, not a second unbounded cache');
+                assert.ok(result.pixels <= 4 * 1024 * 1024);
+                assert.ok(result.ids.includes('scroll-preview-0'), 'Returning to a row renews its cache priority');
+                assert.ok(!result.ids.includes('scroll-preview-1'), 'The least recently viewed row releases its source');
+                await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+                await page.waitForFunction(urls => urls.every(url => scrollWork.revoked.includes(url)), urls);
+                assert.equal(await page.evaluate(() => [...document.querySelectorAll('#preview-scroll img')].every(image => !image.hasAttribute('src'))), true);
+            } finally { await page.close(); }
+        });
+        await scenario('scroll previews retain the previous image while canceling an offscreen size upgrade', async () => {
+            const page = await open();
+            try {
+                await scrollPreviews(page);
+                await previewReady(page, 0);
+                const first = await page.locator('#scroll-preview-0').getAttribute('src');
+                await page.evaluate(() => {
+                    window.pausePreviewEncode = true;
+                    document.getElementById('scroll-preview-0').parentElement.style.width = '300px';
+                });
+                await page.waitForFunction(() => typeof finishPreviewEncode === 'function');
+                await scrollToPreview(page, 1, 0);
+                const whilePending = await page.locator('#scroll-preview-0').getAttribute('src');
+                await page.evaluate(() => finishPreviewEncode());
+                await previewReady(page, 1);
+                const afterCanceled = await page.locator('#scroll-preview-0').getAttribute('src');
+                await scrollToPreview(page, 0, 1);
+                await page.waitForFunction(first => {
+                    const image = document.getElementById('scroll-preview-0');
+                    return image.getAttribute('src') !== first && image.complete && image.naturalWidth === 180;
+                }, first);
+                report.evidence.scrollUpgrade = { retainedWhilePending: whilePending === first, retainedAfterCancel: afterCanceled === first, upgradedOnReturn: true };
+                assert.equal(whilePending, first);
+                assert.equal(afterCanceled, first);
+            } finally { await page.close(); }
+        });
+        await scenario('scroll previews release evicted shared URLs only after their last visible owner leaves', async () => {
+            const page = await open();
+            try {
+                await scrollPreviews(page, { count: 10, width: 512, large: true });
+                await previewReady(page, 0);
+                const first = await page.locator('#scroll-preview-0').getAttribute('src');
+                await page.evaluate(async prefix => {
+                    const scroll = document.getElementById('preview-scroll');
+                    const copy = document.getElementById('scroll-preview-0').parentElement.cloneNode(true);
+                    copy.querySelector('img').id = 'scroll-preview-copy';
+                    copy.querySelector('img').removeAttribute('src');
+                    scroll.append(copy);
+                    Object.assign(copy.style, { position: 'absolute', top: '0px', marginBottom: '0px' });
+                    (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                }, prefix);
+                await previewReady(page, 'copy');
+                assert.equal(await page.locator('#scroll-preview-copy').getAttribute('src'), first);
+                await page.locator('#preview-scroll').evaluate(scroll => {
+                    for (const row of scroll.children) Object.assign(row.style, { position: 'absolute', top: '0px', marginBottom: '0px' });
+                });
+                await previewReady(page, 9);
+                await page.waitForFunction(() => scrollWork.encodes >= 10);
+                await page.locator('#scroll-preview-0').evaluate(image => image.parentElement.style.display = 'none');
+                await page.waitForFunction(() => scrollWork.exits.includes('scroll-preview-0'));
+                assert.equal(await page.locator('#scroll-preview-0').getAttribute('src'), null);
+                assert.equal(await page.locator('#scroll-preview-copy').getAttribute('src'), first);
+                assert.equal(await page.evaluate(first => scrollWork.revoked.includes(first), first), false);
+                await page.locator('#scroll-preview-copy').evaluate(image => image.parentElement.style.display = 'none');
+                await page.waitForFunction(first => scrollWork.revoked.includes(first), first);
+                report.evidence.scrollSharedLease = { visibleOwnerPreserved: true, revokedAfterLastOwner: true };
+            } finally { await page.close(); }
+        });
+        for (const fallback of ['http', 'blob']) await scenario(`scroll previews release fallback ${fallback} originals outside the viewport`, async () => {
+            const page = await open();
+            try {
+                await scrollPreviews(page, { fallback });
+                await previewReady(page, 0);
+                const source = await page.locator('#scroll-preview-0').getAttribute('data-iig-library-src');
+                assert.equal(await page.locator('#scroll-preview-0').getAttribute('src'), source);
+                await scrollToPreview(page, 1, 0);
+                assert.equal(await page.locator('#scroll-preview-0').getAttribute('src'), null);
+                if (fallback === 'blob') {
+                    await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+                    assert.equal(await page.evaluate(async source => !scrollWork.revoked.includes(source) && (await fetch(source)).ok, source), true, 'The preview cache does not own the original Blob URL');
+                }
+                report.evidence['scrollFallback' + fallback] = { offscreenOriginalReleased: true };
+            } finally { await page.close(); }
+        });
         await scenario('contained persona lists preserve narrow scrolling and editor selection', async () => {
             const page = await open();
             try {
