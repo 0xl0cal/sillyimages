@@ -46,13 +46,15 @@ Preview raster work resumes after 150 ms without another viewer close, so rapid 
 
 The preview worker waits at decode, raster and display boundaries while the viewer owns interaction. Cancellation releases parked bitmaps and waiters. Persona catalogs read their name map once after asynchronous avatar/context reads and reuse the same labels for signatures and row data.
 
+The scrollable entity list and fixed-size viewer contain their own layout and style calculations without size or paint containment. List height follows its contents and the editor remains outside that boundary. Only an open viewer requests a transform layer for its original image; closing releases that hint together with the displayed source.
+
 The library prepares the first visible gallery original after 500 ms without input. A matching loaded original passes directly to the viewer cache. Unused preparations are released during editing, when the candidate leaves view, the section collapses or the page leaves. The viewer retains at most four original resources and 32 megapixels to reuse decodes during navigation, and releases them on library collapse or pagehide. Library previews retain their viewport resources under the modal and reconcile deferred visibility entries after it closes. Stable previews keep their observer subscriptions during list edits.
 
 Avatar sources are assigned when their cards enter the viewport margin. Loaded server thumbnails leave visibility tracking and use the browser decoder without canvas processing or resize subscriptions. Custom previews track card size only within that margin. Full tab replacements and collapse disconnect observers in one batch. Collapsed rows retain their loaded server thumbnails and committed preview sources whose URLs remain in the LRU cache. The cache retains at most 96 entries and four megapixels. Unfinished upgrades are canceled, and removed rows release their ownership even while collapsed.
 
 Page departure releases all library sources and cached preview URLs, including retained collapsed rows. Full-size original resources are released on the transition to a collapsed library, not on subsequent reconciliation of an already closed section.
 
-The preview queue finishes its active job when the viewer opens and defers queued decodes until the viewer closes. A stale close event does not resume work under a reopened viewer.
+Queued native close events resume preview work only while the viewer remains closed.
 
 Preview canvases request readback-oriented 2D contexts for PNG encoding. The canvas is temporary and is not composited into the page; original image files remain separate from its output.
 

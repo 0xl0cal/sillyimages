@@ -51,6 +51,38 @@ const server = createServer((req, res) => {
         catch (error) { report.failures.push({ name, error: String(error) }); }
     };
     try {
+        await scenario('contained persona lists preserve narrow scrolling and editor selection', async () => {
+            const page = await open();
+            try {
+                await page.evaluate(async prefix => {
+                    const original = fetch;
+                    window.fetch = (url, init) => String(url) === '/api/avatars/get'
+                        ? Promise.resolve(Response.json(Array.from({ length: 100 }, (_, i) => `person-${String(i).padStart(3, '0')}.png`)))
+                        : original(url, init);
+                    await (await import(prefix + 'src/avatarPicker.js')).fetchUserAvatars();
+                }, prefix);
+                for (const width of [390, 1100]) {
+                    await page.setViewportSize({ width, height: 900 });
+                    await page.locator('[data-library-tab="user"]').click();
+                    await page.waitForFunction(() => document.querySelectorAll('.iig-library-entity[data-library-kind="user"]').length === 80);
+                    const list = page.locator('.iig-library-entities');
+                    assert.ok((await list.evaluate(e => getComputedStyle(e).contain)).includes('layout'));
+                    const last = page.locator('.iig-library-entity').last();
+                    const key = await last.getAttribute('data-library-key');
+                    await last.scrollIntoViewIfNeeded();
+                    await last.click();
+                    await page.waitForFunction(key => document.querySelector('.iig-library-editor')?.dataset.libraryKey === key, key);
+                    const geometry = await list.evaluate(e => ({ scrollTop: e.scrollTop, clientHeight: e.clientHeight, scrollHeight: e.scrollHeight, width: e.getBoundingClientRect().width }));
+                    assert.ok(geometry.scrollTop > 0 && geometry.scrollHeight > geometry.clientHeight && geometry.width > 0);
+                    await page.locator('.iig-library-primary-description').fill('Persona description remains editable');
+                    await page.locator('.iig-library-primary-description').evaluate(e => { e.style.height = '240px'; });
+                    assert.equal(await page.locator('.iig-library-primary-description').inputValue(), 'Persona description remains editable');
+                    report.evidence['contained-personas-' + width] = { key, ...geometry };
+                    await page.screenshot({ path: path.join(artifacts, `contained-personas-${width}.png`) });
+                    await page.locator('[data-library-tab="char"]').click();
+                }
+            } finally { await page.close(); }
+        });
         await scenario('Styles clicks retain closed avatar menus and close only open menus', async () => {
             const page = await open('/api-test');
             try {

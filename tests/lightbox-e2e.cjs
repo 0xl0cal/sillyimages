@@ -108,8 +108,12 @@ const server = createServer((req, res) => {
             };
             assert.equal(await overlay.count(),1);
             await open();assert.equal(await page.locator('.iig-lightbox-delete').isVisible(),false);
+            assert.equal(await full.evaluate(e=>getComputedStyle(e).willChange),'transform','An open viewer prepares its transform layer before a gesture');
+            assert.ok((await overlay.evaluate(e=>getComputedStyle(e).contain)).includes('layout'));
             assert.equal(await page.evaluate(()=>genericImageClicks),0);
             await page.locator('.iig-lightbox-close').click();await released();
+            assert.equal(await full.evaluate(e=>getComputedStyle(e).willChange),'auto','A closed viewer does not reserve a transform layer');
+            checks.push(mode+': transform layer belongs only to the open viewer');
             checks.push(mode+': close restores scroll, input, clicks and removes modal/hit targets');
 
             await page.evaluate(()=>{

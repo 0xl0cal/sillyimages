@@ -760,6 +760,7 @@
 
 .iig-library-entities {
     display: flex;
+    contain: layout style;
     max-height: 560px;
     min-width: 0;
     flex-direction: column;
@@ -2737,6 +2738,7 @@ body.iig-actions-hidden .iig-img-actions {
 /* ==================== Lightbox ==================== */
 
 .iig-lightbox {
+    contain: layout style;
     margin: 0;
     border: 0;
     max-width: none;
@@ -2887,14 +2889,16 @@ body.iig-actions-hidden .iig-img-actions {
     -webkit-user-drag: none;
 }
 
+.iig-lightbox[open] .iig-lightbox-img {
+    will-change: transform;
+}
+
 .iig-lightbox.zoomed .iig-lightbox-img {
     cursor: grab;
-    will-change: transform;
 }
 
 .iig-lightbox.interacting .iig-lightbox-img {
     transition: none;
-    will-change: transform;
 }
 
 .iig-lightbox.interacting.zoomed .iig-lightbox-img {
