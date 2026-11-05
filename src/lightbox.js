@@ -367,9 +367,9 @@ export function initLightbox() {
             document.body.style.overflow = 'hidden';
         }
         updateNavVisibility();
-        overlay.classList.add('open');
         overlay.setAttribute('aria-hidden', 'false');
         showImage(currentIndex, opening);
+        overlay.classList.add('open');
         if (!opening) overlay.querySelector('.iig-lightbox-close')?.focus({ preventScroll: true });
     };
 

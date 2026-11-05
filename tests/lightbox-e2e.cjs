@@ -109,10 +109,14 @@ const server = createServer((req, res) => {
             assert.equal(await overlay.count(),1);
             await page.evaluate(()=>{
                 window.openingFocus=[];
-                document.getElementById('iig_lightbox').addEventListener('focusin',e=>openingFocus.push(e.target.className));
+                document.getElementById('iig_lightbox').addEventListener('focusin',e=>{
+                    if(!openingFocus.length)window.openingOpacity=getComputedStyle(e.currentTarget).opacity;
+                    openingFocus.push(e.target.className);
+                });
             });
             await open();assert.equal(await page.locator('.iig-lightbox-delete').isVisible(),false);
             assert.deepEqual(await page.evaluate(()=>openingFocus),['iig-lightbox-btn iig-lightbox-close'],'Opening focuses Close directly, without a second focus/layout pass');
+            assert.equal(await page.evaluate(()=>openingOpacity),'0','Native opening retains the starting frame of the opacity transition');
             checks.push(mode+': native opening focuses Close directly');
             assert.equal(await full.evaluate(e=>getComputedStyle(e).willChange),'transform','An open viewer prepares its transform layer before a gesture');
             assert.ok((await overlay.evaluate(e=>getComputedStyle(e).contain)).includes('layout'));
