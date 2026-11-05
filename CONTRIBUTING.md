@@ -72,7 +72,7 @@ Styles and negatives retain array and record identity after normalization. Chara
 
 Character list rows are reconciled by kind and reference key. Matching rows and avatars retain their DOM identity; filtering removes unmatched rows. Visible previews upgrade when card dimensions or pixel density require a larger size bucket, keeping the displayed image until its replacement is ready. Shrinking a card does not trigger a lower-resolution decode.
 
-New character/persona rows are parsed in the live document. A wholesale replacement assigns the list HTML once; partial searches append only missing rows and preserve matching nodes. Root-level row markup has no whitespace nodes to accumulate between filter passes.
+New character/persona rows are parsed in the live document. A wholesale replacement commits rows and its search note in one HTML assignment, without reconciling detached rows from the other tab. Partial searches append only missing rows and preserve matching nodes. A full list/editor render reconciles image ownership once after both updates. Root-level row markup has no whitespace nodes to accumulate between filter passes.
 
 ## Verification
 

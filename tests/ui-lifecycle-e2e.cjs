@@ -466,19 +466,25 @@ const server = createServer((req, res) => {
                     await (await import(prefix + 'src/avatarPicker.js')).fetchUserAvatars();
                     let batches = 0;
                     let templates = 0;
+                    let imageScans = 0;
+                    const section = document.getElementById('iig_characters_section');
+                    const query = section.querySelectorAll;
+                    section.querySelectorAll = function (selector, ...args) { if (selector === 'img[data-iig-library-src]') imageScans++; return query.call(this, selector, ...args); };
                     const create = document.createElement;
                     document.createElement = function (name, ...args) { if (name === 'template' && new Error().stack.includes('/src/characterLibraryUi.js')) templates++; return create.call(this, name, ...args); };
                     const observer = new MutationObserver(records => batches += records.filter(record => record.addedNodes.length).length);
                     observer.observe(document.getElementById('iig_library_entities'), { childList: true });
                     document.querySelector('[data-library-tab="user"]').click();
-                    while (document.querySelectorAll('.iig-library-entity[data-library-kind="user"]').length !== 80) await new Promise(requestAnimationFrame);
-                    observer.disconnect(); document.createElement = create;
-                    return { batches, templates };
+                    while (document.querySelectorAll('.iig-library-entity[data-library-kind="user"]').length !== 80 || document.querySelector('.iig-library-editor')?.dataset.libraryKind !== 'user') await new Promise(requestAnimationFrame);
+                    observer.disconnect(); document.createElement = create; section.querySelectorAll = query;
+                    return { batches, templates, imageScans };
                 }, prefix);
-                assert.equal(mutations.batches, 2, 'Insert the row fragment and the search note, not 80 separate rows');
-                assert.equal(mutations.templates, 0, 'Parse a wholesale replacement directly in the live document');
                 report.evidence.personaInsertBatches = mutations.batches;
                 report.evidence.personaTemplateBatches = mutations.templates;
+                report.evidence.personaImageScans = mutations.imageScans;
+                assert.equal(mutations.batches, 1, 'Insert the rows and search note together');
+                assert.equal(mutations.imageScans, 1, 'Reconcile images after the list and editor are both current');
+                assert.equal(mutations.templates, 0, 'Parse a wholesale replacement directly in the live document');
             } finally { await page.close(); }
         });
         await scenario('canceled departure restores previews; accepted reload remains usable', async () => {

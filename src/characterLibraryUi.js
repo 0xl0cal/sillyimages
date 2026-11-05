@@ -364,14 +364,25 @@ async function renderEntityList(settings = getSettings(), providedEntities = nul
         ? entities.filter((entity) => `${entity.title} ${entity.fallbackTitle} ${entity.key}`.toLowerCase().includes(query))
         : entities;
     const visibleEntities = matchedEntities.slice(0, MAX_RENDERED_ENTITIES);
+    const note = !visibleEntities.length
+        ? (kind === 'char' ? t`No characters found.` : t`No personas found.`)
+        : matchedEntities.length > visibleEntities.length
+            ? t`Showing ${visibleEntities.length} of ${matchedEntities.length}. Use search to narrow the list.` : '';
     const keyOf = (kind, key) => JSON.stringify([kind, key]);
-    const rows = new Map([...host.querySelectorAll('.iig-library-entity')].map(row => [keyOf(row.dataset.libraryKind, row.dataset.libraryKey), row]));
+    const rows = new Map(host.firstElementChild?.dataset.libraryKind === kind
+        ? [...host.querySelectorAll('.iig-library-entity')].map(row => [keyOf(row.dataset.libraryKind, row.dataset.libraryKey), row]) : []);
     const missing = visibleEntities.filter(entity => !rows.has(keyOf(entity.kind, entity.key)));
+    if (missing.length && missing.length === visibleEntities.length) {
+        host.innerHTML = visibleEntities.map(entity => buildEntityOptionHtml(entity, selectedKeys[kind]).trim()).join('')
+            + (note ? `<div class="iig-library-list-note">${sanitizeForHtml(note)}</div>` : '');
+        visibleEntities.forEach((entity, index) => rowEntities.set(host.children[index], entity));
+        if (!providedEntities) observeLibraryImages();
+        return entities;
+    }
     const fresh = new Set();
     if (missing.length) {
         const html = missing.map(entity => buildEntityOptionHtml(entity, selectedKeys[kind]).trim()).join('');
-        if (missing.length === visibleEntities.length) host.innerHTML = html;
-        else host.insertAdjacentHTML('beforeend', html);
+        host.insertAdjacentHTML('beforeend', html);
         for (const row of host.querySelectorAll('.iig-library-entity')) {
             const key = keyOf(row.dataset.libraryKind, row.dataset.libraryKey);
             if (rows.get(key) === row) continue;
@@ -408,10 +419,6 @@ async function renderEntityList(settings = getSettings(), providedEntities = nul
         rowEntities.set(row, entity);
         place(row);
     }
-    const note = !visibleEntities.length
-        ? (kind === 'char' ? t`No characters found.` : t`No personas found.`)
-        : matchedEntities.length > visibleEntities.length
-            ? t`Showing ${visibleEntities.length} of ${matchedEntities.length}. Use search to narrow the list.` : '';
     if (note) {
         const className = visibleEntities.length ? 'iig-library-list-note' : 'iig-library-empty';
         const element = host.querySelector(`:scope > .${className}`) || document.createElement('div');
@@ -420,7 +427,8 @@ async function renderEntityList(settings = getSettings(), providedEntities = nul
         place(element);
     }
     for (const row of [...host.children]) if (!keep.has(row)) row.remove();
-    observeLibraryImages();
+    // A full render reconciles images after committing its editor as well.
+    if (!providedEntities) observeLibraryImages();
     return entities;
 }
 
