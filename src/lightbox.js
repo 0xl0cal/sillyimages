@@ -91,24 +91,26 @@ export function initLightbox() {
     };
     const rememberOriginal = (prepared) => {
         const source = imgEl.src;
+        const existing = decodedImages.get(source);
+        if (existing) {
+            if (prepared && existing.image !== prepared) prepared.removeAttribute('src');
+            // A cache hit changes recency, not the reserved pixel budget.
+            decodedImages.delete(source);
+            decodedImages.set(source, existing);
+            return;
+        }
         const pixels = imgEl.naturalWidth * imgEl.naturalHeight;
         if (!pixels || pixels > 32 * 1024 * 1024) {
             prepared?.removeAttribute('src');
             return;
         }
-        let item = decodedImages.get(source);
-        decodedImages.delete(source);
-        if (item && prepared && item.image !== prepared) prepared.removeAttribute('src');
-        if (!item) {
-            const image = prepared || new Image();
-            if (!prepared) {
-                image.decoding = 'async';
-                image.src = source;
-                image.decode().catch(() => {});
-            }
-            item = { image, pixels };
+        const image = prepared || new Image();
+        if (!prepared) {
+            image.decoding = 'async';
+            image.src = source;
+            image.decode().catch(() => {});
         }
-        decodedImages.set(source, item);
+        decodedImages.set(source, { image, pixels });
         // Reserve the display image's known pixels before a retained image finishes loading.
         let total = [...decodedImages.values()].reduce((sum, entry) => sum + entry.pixels, 0);
         while (decodedImages.size > 4 || total > 32 * 1024 * 1024) {

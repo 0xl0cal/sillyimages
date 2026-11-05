@@ -86,17 +86,30 @@ const server=createServer((req,res)=>{
             await reset();
             await page.locator('.iig-library-generation-item').first().evaluate(element=>element.scrollIntoView({block:'center'}));
             await page.waitForFunction(()=>{const image=document.querySelector('.iig-library-generation-item img');return image?.src.startsWith('blob:')&&image.complete&&image.naturalWidth>0;});
-            const preview=await page.locator('.iig-library-generation-item img').first().evaluate(image=>({width:image.naturalWidth,original:image.getAttribute('data-iig-full-src')}));
+            const preview=await page.locator('.iig-library-generation-item img').first().evaluate(image=>({width:image.naturalWidth,source:image.getAttribute('src'),original:image.getAttribute('data-iig-full-src')}));
             assert.ok(preview.width<=512);assert.ok(preview.original.startsWith('/user/images/'));
             await page.locator('.iig-library-generation-item img').first().evaluate(image=>image.click());
             await page.waitForFunction(()=>document.querySelector('.iig-lightbox-img')?.getAttribute('src')===document.querySelector('.iig-library-generation-item img')?.getAttribute('data-iig-full-src'));
             await page.locator('.iig-lightbox-close').evaluate(button=>button.click());
-            await page.locator('#iig_characters_section').evaluate(section=>section.closest('details').open=false);
-            await page.waitForFunction(()=>[...document.querySelectorAll('#iig_characters_section img')].every(image=>!image.hasAttribute('src')));
+            await page.locator('#iig_characters_section').evaluate(section=>new Promise(resolve=>{
+                document.addEventListener('iig-library-images-released',()=>resolve(),{once:true});
+                section.closest('details').open=false;
+            }));
+            const retained=await page.evaluate(()=>{
+                const previews=new Map();let originalSources=0;
+                for(const image of document.querySelectorAll('#iig_characters_section img[data-iig-full-src][src]')){
+                    if(!image.src.startsWith('blob:'))originalSources++;
+                    else previews.set(image.src,image.naturalWidth*image.naturalHeight);
+                }
+                return {originalSources,pixels:[...previews.values()].reduce((sum,pixels)=>sum+pixels,0)};
+            });
+            assert.equal(retained.originalSources,0,'Collapsed cards must not retain full-size original sources');
+            assert.ok(retained.pixels<=4*1024*1024,'Retained previews must fit the pixel budget');
             await page.locator('#iig_characters_section').evaluate(section=>section.closest('details').open=true);
             await page.locator('.iig-library-generation-item').first().evaluate(element=>element.scrollIntoView({block:'center'}));
             await page.waitForFunction(()=>{const image=document.querySelector('.iig-library-generation-item img');return image?.src.startsWith('blob:')&&image.complete&&image.naturalWidth>0;});
-            checks.push(mode+': bounded previews retain originals, release on collapse and reload on reopening');
+            assert.equal(await page.locator('.iig-library-generation-item img').first().getAttribute('src'),preview.source);
+            checks.push(mode+': bounded previews survive collapse without retaining original sources');
             assert.equal(await page.locator('#iig_characters_section .iig-library-generations-clear-all').count(),0);
             assert.equal(await page.locator('#iig_debug_section .iig-library-generations-clear-all').count(),1);
             await page.locator('#iig_debug_section').screenshot({path:path.join(artifacts,mode+'-debug.png')});

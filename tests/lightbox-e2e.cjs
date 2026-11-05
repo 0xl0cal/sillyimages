@@ -112,6 +112,15 @@ const server = createServer((req, res) => {
             await page.locator('.iig-lightbox-close').click();await released();
             checks.push(mode+': close restores scroll, input, clicks and removes modal/hit targets');
 
+            await page.evaluate(()=>{
+                window.originalBudgetScans=0;window.originalReduce=Array.prototype.reduce;
+                Array.prototype.reduce=function(...args){if(new Error().stack.includes('rememberOriginal'))originalBudgetScans++;return originalReduce.apply(this,args);};
+            });
+            for(let i=0;i<3;i++){await open();await page.locator('.iig-lightbox-close').click();await released();}
+            const budgetScans=await page.evaluate(()=>{Array.prototype.reduce=originalReduce;return originalBudgetScans;});
+            assert.equal(budgetScans,0,'Reopening a retained original must not rescan its unchanged pixel budget');
+            checks.push(mode+': warm original reuse skips budget scans and retains bounded ownership');
+
             await open();await full.tap();
             await page.waitForFunction(()=>!document.querySelector('#iig_lightbox').open);await released();
             checks.push(mode+': tapping the image closes without leaving a scroll or input lock');
