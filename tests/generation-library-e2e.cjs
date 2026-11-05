@@ -7,7 +7,8 @@ const { chromium, webkit } = require('playwright');
 // Real library, viewer and deletion service with an in-memory image API.
 // Failure cases: accidental viewer opening during selection, canceled deletion,
 // wrong character scope, truncated history, duplicate paths, lost failures,
-// reference deletion, unsafe URLs, repeated submits and folder discovery failure.
+// reference deletion, unsafe URLs, repeated submits, folder discovery failure,
+// and refresh completion after chat edits, switches or library/history replacement.
 const root = path.resolve(__dirname, '..');
 const prefix = '/scripts/extensions/third-party/sillyimages/';
 const picture = '<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180"><rect width="180" height="180" fill="#557383"/><circle cx="90" cy="70" r="40" fill="#dcc299"/></svg>';
@@ -83,6 +84,54 @@ const server=createServer((req,res)=>{
             const click=async selector=>{if(mode==='mobile')await page.locator(selector).tap();else await page.locator(selector).click();};
             const ids=()=>page.evaluate(()=>app.settings.characterReferenceLibrary.characters['avatar:a.png'].generations.map(g=>g.id));
             const idle=()=>page.waitForFunction(()=>!document.querySelector('.iig-library-generations-clear-all').disabled&&!document.querySelector('#confirm-delete'));
+            for(const scenario of ['leave-owner','enter-owner','edit-chat','delete-owner','replace-owner','new-generation','edit-current-editor','edit-other-editor']){
+                await reset();
+                if(scenario==='enter-owner')await click('[data-library-key="avatar:b.png"].iig-library-entity');
+                await page.evaluate(()=>{
+                    context.chat=[{mes:'<img data-iig-instruction=\'{}\' src="/user/images/Chat/iig_snapshot.png">'}];
+                    window.refreshButton=document.querySelector('.iig-library-generations-refresh');
+                    const originalFetch=fetch;
+                    window.fetch=(url,init)=>String(url)==='/api/images/list'
+                        ?new Promise(resolve=>{window.releaseListing=()=>resolve(originalFetch(url,init));})
+                        :originalFetch(url,init);
+                });
+                await click('.iig-library-generations-refresh');
+                await page.waitForFunction(()=>typeof window.releaseListing==='function');
+                if(scenario==='delete-owner'){
+                    await click('.iig-library-entry-delete');await click('#confirm-yes');
+                }else if(scenario.startsWith('edit-')&&scenario!=='edit-chat'){
+                    if(scenario==='edit-other-editor')await click('[data-library-key="avatar:b.png"].iig-library-entity');
+                    await page.locator('.iig-library-primary-description').fill('Editing while discovery completes');
+                    await page.evaluate(()=>window.focusedDescription=document.activeElement);
+                }else await page.evaluate(async({scenario,prefix})=>{
+                    if(scenario==='leave-owner'||scenario==='enter-owner')window.context={...context,characterId:1,chat:[]};
+                    if(scenario==='edit-chat')context.chat[0].mes='<img data-iig-instruction=\'{}\' src="/user/images/Chat/iig_edited.png">';
+                    const references=await import(prefix+'src/references.js');
+                    if(scenario==='replace-owner'){
+                        references.deleteCharacterLibraryEntry('char','avatar:a.png',app.settings);
+                        references.recordCharacterGeneration('/user/images/Chat/iig_replacement.png','replacement',app.settings,'avatar:a.png');
+                    }
+                    if(scenario==='new-generation')references.recordCharacterGeneration('/user/images/Chat/iig_new.png','new',app.settings,'avatar:a.png');
+                },{scenario,prefix});
+                await page.evaluate(()=>releaseListing());
+                await page.waitForFunction(()=>!refreshButton.disabled);
+                const key=scenario==='enter-owner'?'avatar:b.png':'avatar:a.png';
+                const paths=await page.evaluate(key=>app.settings.characterReferenceLibrary.characters[key]?.generations.map(item=>item.imagePath),key);
+                if(scenario==='delete-owner')assert.equal(paths,undefined,'Refresh must not recreate a deleted entry');
+                else if(scenario==='replace-owner')assert.deepEqual(paths,['/user/images/Chat/iig_replacement.png'],'Refresh must not overwrite a replaced entry');
+                else if(scenario==='new-generation')assert.ok(paths.includes('/user/images/Chat/iig_new.png'),'A pending refresh must preserve a newer generation');
+                else{
+                    assert.equal(paths.includes('/user/images/Chat/iig_snapshot.png'),scenario!=='enter-owner','Chat images belong to the character active at refresh start');
+                    assert.equal(paths.includes('/user/images/Chat/iig_edited.png'),false,'A refresh uses its captured chat, not later edits');
+                    assert.ok(paths.some(path=>path.includes(scenario==='enter-owner'?'/Beta/':'/Alpha%20%26%20One/')),'Folder discovery remains available');
+                }
+                if(scenario==='edit-current-editor'||scenario==='edit-other-editor'){
+                    assert.equal(await page.evaluate(()=>focusedDescription.isConnected&&document.activeElement===focusedDescription),true,'Discovery must preserve the active editor and focus');
+                    assert.equal(await page.locator('.iig-library-primary-description').inputValue(),'Editing while discovery completes');
+                    if(scenario==='edit-current-editor')assert.equal(await page.locator('.iig-library-generation-item').count(),paths.length,'The refreshed gallery must update without replacing description fields');
+                }
+                checks.push(mode+': generation refresh preserves ownership on '+scenario);
+            }
             await reset();
             await page.locator('.iig-library-generation-item').first().evaluate(element=>element.scrollIntoView({block:'center'}));
             await page.waitForFunction(()=>{const image=document.querySelector('.iig-library-generation-item img');return image?.src.startsWith('blob:')&&image.complete&&image.naturalWidth>0;});

@@ -22,69 +22,63 @@ The extension runs as browser ES modules inside SillyTavern. There is no build s
 - `libraryImages.js` owns viewport-scoped previews, a sequential decode queue and a 96-entry/4-megapixel thumbnail cache. Gallery original URLs remain separate from display URLs. Collapse retains ready previews within that cache; stale decodes cannot update removed editors. Preview failure displays the original.
 - `lightbox.js` owns the modal viewer and gesture lifecycle. `imageActions.js` owns inline controls and message image hydration.
 
-## Data And Runtime Contracts
+## Stored Data
 
 Treat storage keys, profile fields, lorebook entries, character/persona library entries and saved message instructions as public contracts. Retain their names, types and meanings. Runtime refactoring does not introduce schema versions, rewrite stored collections or require an upgrade migration.
 
-Keep provider-specific reference order and limits explicit. Primary avatars precede appearance images; additional references precede context images. Requests and the debug snapshot use the same avatar description builder.
+Normalize prompt-library arrays, character/persona entries and appearance items once on first read after creation, import or replacement. Keep their identities stable during editing. Histories are normalized only when their entry is used, not while searching names.
+
+Keep UI IDs, event types, validation and save behavior stable. Loading a connection profile synchronizes every provider's controls, including range/number pairs, custom select values and polling fields, without emitting input/change events or triggering extra saves.
+
+## Generation And Requests
+
+Keep provider-specific reference order and limits explicit. Collect the first successful image from each enabled avatar in provider order, then appearance images, additional references and context images. Fetch and encode only the remaining image budget. Requests and the debug snapshot use the same avatar description builder.
 
 A1111 model catalog failures propagate to the caller. Optional catalogs return their configured fallback on empty, malformed, HTTP or network responses. The connection check only requires a successful HTTP status. Preserve these distinctions when sharing catalog requests.
 
 Bind a rendered image to its source instruction before generation. Preserve tag order for identical instructions. Do not guess between ambiguous media or copy arbitrary source HTML attributes into the rendered DOM. Keep source indexes stable while loading placeholders replace images.
 
-Initial generation persists an error placeholder for retry. A failed regeneration retains the stored image. Cancellation persists a stopped placeholder. Always release generation controllers and locks. Viewer closure releases timers, frames, pointer capture, modal state and scroll locks.
+Initial generation persists an error placeholder for retry. A failed regeneration retains the stored image. Cancellation persists a stopped placeholder. Always release generation controllers and locks.
 
 Acquire generation ownership by message identity before parsing and retain it through saving. Chat replacement, source edits and swipes cancel stale work without writing to another chat. Each request owns its API settings, prompt libraries, matched references and selected appearances; generation histories and connection profiles stay outside the snapshot. Retries reuse that configuration. Naistera catalog metadata is request-owned, while NovelAI allowance checks share one serialized queue.
 
-Viewer and library deletion use the same path plan and protection check. Deleting a file removes its links from every character/persona history. Reference paths are indexed per operation and settings revision. Call `saveSettings()` after reference edits so asynchronous deletion observes the new protections. Revisions and ownership state live only in memory.
+`fetchWithTimeout` owns the response consumer and the HTTP request. Consume JSON, text or blobs inside its callback so deadlines and cancellation cover decoding; each exit releases listeners and closes the request. Reference downloads and avatar catalogs use a 15-second deadline. Reference FileReaders share the generation signal. Naistera discovery uses 15 seconds, generation uses 10 minutes, and polling requests consume their remaining deadline. Failed avatar refreshes retain the cached list and release the shared request for retry.
 
-Viewer geometry is sampled at gesture start, image load and viewport resize. Pointer/wheel movement uses cached dimensions and batches transforms into animation frames. Original image files and viewer sources are not resized or recompressed.
+Catalog responses and error notifications apply only to the current request and connection identity. Profile selection refreshes its catalog; Naistera capability metadata uses the same connection ownership.
 
-The viewer starts display decoding in the visible modal. Opening from the closed identity transform needs no forced reset layout. Navigation commits an immediate reset, including when the previous reset animation is still running. Closing resumes deferred preview visibility and decoding without rescanning unchanged rows. Gallery mutations, including viewer deletion, reconcile image ownership at the mutation site.
+Message hydration caches parsed instructions by source and external-block mode; class-only image updates refresh controls without rebinding. Ordinary messages skip generation snapshots.
 
-Preview raster work resumes after 150 ms without another viewer close, so rapid reopenings take priority over the background queue. Collapse and page departure cancel the resume timer. Completed preview jobs release their sources without aborting finished controllers. Visibility-only toggles reuse image membership for the same section; DOM mutations and section replacements perform a full reconciliation.
+## Library Updates
 
-The preview worker waits at decode, raster and display boundaries while the viewer owns interaction. Cancellation releases parked bitmaps and waiters. Persona catalogs read their name map once after asynchronous avatar/context reads and reuse the same labels for signatures and row data.
+Character/persona catalogs reuse sorted entities while names, avatars, configured titles and active keys match their metadata signature. Persona catalogs read the name map once after avatar/context reads and use those labels for signatures and row data. Searches read display metadata only. Toggling active-persona mode leaves a collapsed library unloaded.
 
-The scrollable entity list and fixed-size viewer contain their own layout and style calculations without size or paint containment. List height follows its contents and the editor remains outside that boundary. Only an open viewer requests a transform layer for its original image; closing releases that hint together with the displayed source.
+Reconcile rows by kind and reference key, retaining matching rows and avatars. Parse new rows in the live document without root-level whitespace nodes. Replace a complete tab and its search note in one HTML assignment; partial searches insert missing rows and remove unmatched ones. Reconcile image ownership once after a complete list/editor render.
 
-Viewer controls, caption and accessibility state are ready before `showModal()`, which focuses Close through `autofocus`. The original source is assigned after the modal becomes visible. Navigation preserves immediate zoom reset and does not reopen the dialog.
+List and editor renders capture their kind and revision before asynchronous reads. Reference uploads resolve the current entry and item by key after saving the file; deleted targets stay deleted. Update matching previews and focused editor fields in place.
 
-The library prepares the first visible gallery original after 500 ms without input. A matching loaded original passes directly to the viewer cache. Unused preparations are released during editing, when the candidate leaves view, the section collapses or the page leaves. The viewer retains at most four original resources and 32 megapixels to reuse decodes during navigation, and releases them on library collapse or pagehide. Library previews retain their viewport resources under the modal and reconcile deferred visibility entries after it closes. Stable previews keep their observer subscriptions during list edits.
+Generation discovery captures the selected character's chat URLs before network requests. Its result can replace only the same entry and history array: a newer generation or replacement entry takes precedence. Completion updates that character's visible gallery and count in place, preserving editor fields and focus.
 
-Avatar sources are assigned when their cards enter the viewport margin. Loaded server thumbnails leave visibility tracking and use the browser decoder without canvas processing or resize subscriptions. Custom previews track card size only within that margin. Full tab replacements and collapse disconnect observers in one batch. Collapsed rows retain their loaded server thumbnails and committed preview sources whose URLs remain in the LRU cache. The cache retains at most 96 entries and four megapixels. Unfinished upgrades are canceled, and removed rows release their ownership even while collapsed.
+Viewer and library deletion share a path plan and reference protection check. Deleting a file removes its links from every history. Call `saveSettings()` after reference edits so asynchronous deletion observes the new protections; ownership and revision state stay in memory.
 
-Page departure releases all library sources and cached preview URLs, including retained collapsed rows. Full-size original resources are released on the transition to a collapsed library, not on subsequent reconciliation of an already closed section.
+Outside clicks close only open avatar menus inside the settings root. Preserve closed menus' class attributes to avoid waking DOM observers. Escape HTML text and quoted attributes as strings, including non-breaking spaces, without temporary DOM elements.
 
-Queued native close events resume preview work only while the viewer remains closed.
+## Image Ownership
 
-Preview canvases request readback-oriented 2D contexts for PNG encoding. The canvas is temporary and is not composited into the page; original image files remain separate from its output.
+Original files and viewer sources retain their resolution and encoding. The preview cache owns at most 96 entries and four megapixels; the viewer owns at most four decoded originals and 32 megapixels. The first visible gallery original is prepared after 500 ms without input and transfers directly to the viewer cache on a matching load. Release unused preparation during editing, when its candidate leaves view, on collapse and on page departure.
 
-Fallback image decoders own a temporary Blob URL until decoding exits. Clear the image source and revoke that URL on success, failure and cancellation. Keep image data binary during preview preparation.
+Assign avatar sources within the viewport margin. Loaded server thumbnails use the native decoder and leave visibility tracking. Custom previews track card size only within that margin; upgrade size buckets for larger cards or higher pixel density, retaining the displayed preview until replacement. Shrinking cards keeps their current bucket.
 
-Keep UI IDs, event types, validation and save behavior stable. Update focused editors in place instead of replacing their parent lists on each keystroke.
+Stable rows retain observer subscriptions. Full tab replacements and collapse disconnect observers in one batch. Collapse retains loaded server thumbnails and committed previews in the bounded cache, cancels unfinished upgrades and releases viewer originals. Removed rows release sources even while collapsed. Page departure releases all sources and cache URLs; a canceled departure restores observation. Visibility-only toggles reuse membership for the same section; mutations and replacements reconcile it fully.
 
-Outside clicks close only open avatar menus inside the settings root. Closed menus retain their class attributes so unrelated section clicks do not wake DOM observers.
+The sequential preview worker waits at decode, raster and display boundaries while the viewer is open. Retain visible previews beneath the modal and reconcile deferred visibility on close. Resume raster work after 150 ms without another close; queued close events cannot resume it under a reopened viewer. Collapse and page departure cancel that timer. Cancellation releases parked bitmaps and waiters; completed jobs release sources without aborting finished controllers.
 
-HTML text and quoted attributes use string escaping without temporary DOM elements. Preserve entity encoding, including non-breaking spaces, and test rendered names and descriptions with markup characters.
+Preview encoding uses temporary readback-oriented canvases. Fallback decoders own binary Blob URLs until decoding exits; clear sources and revoke URLs on success, failure and cancellation. Preview requests time out after 15 seconds.
 
-Loading a connection profile synchronizes every provider's rendered controls, including range/number pairs, custom select values and polling fields. Synchronization does not emit input/change events or trigger extra saves.
+## Viewer Interaction
 
-Catalog responses apply only to the current request and connection identity. Profile selection refreshes its catalog; Naistera capability metadata uses the same connection ownership. Preview network requests time out after 15 seconds, and canceled departures restore observation in the active document.
+Sample geometry at gesture start, image load and viewport resize. Pointer/wheel movement uses cached dimensions and batches transforms into animation frames. The scrollable entity list and fixed-size viewer contain layout and style, without size or paint containment. List height follows its contents; the editor stays outside that boundary. Only an open viewer requests a transform layer.
 
-Catalog error notifications use the same request ownership as catalog data. Library list and editor renders capture their kind and revision before asynchronous reads. Reference uploads resolve the current entry and item by key after saving the file; deleted targets are not recreated. Completion updates the matching preview in place and preserves editor input and focus.
-
-Character/persona searches read display metadata only. Normalize created, imported or replaced entries once on first read; keep entry, item and history identities stable during editing. Do not traverse generation histories to filter names or load a collapsed library when toggling active-persona mode.
-
-Reference collection consumes images lazily up to the provider limit. Take the first successful image from each enabled avatar in provider order, then appearance images, additional references and context images. Do not fetch or encode images beyond the remaining budget.
-
-`fetchWithTimeout` owns the response consumer as well as the HTTP request. Consume JSON, text or blobs inside its callback; the deadline and abort signal stay attached through decoding. Each exit releases listeners and closes the request. Reference downloads use a 15-second deadline, and their HTTP requests and FileReaders share the generation signal. Naistera discovery uses 15 seconds, generation uses 10 minutes, and polling requests consume only their remaining deadline.
-
-Styles and negatives retain array and record identity after normalization. Character/persona catalogs reuse sorted entities while their names, avatars, configured titles and active keys match the current metadata signature. Message hydration caches parsed instructions by source and external-block mode; class-only image updates refresh controls without rebinding. Ordinary messages skip generation snapshots, and image requests copy only the selected character/persona appearances.
-
-Character list rows are reconciled by kind and reference key. Matching rows and avatars retain their DOM identity; filtering removes unmatched rows. Visible previews upgrade when card dimensions or pixel density require a larger size bucket, keeping the displayed image until its replacement is ready. Shrinking a card does not trigger a lower-resolution decode.
-
-New character/persona rows are parsed in the live document. A wholesale replacement commits rows and its search note in one HTML assignment, without reconciling detached rows from the other tab. Partial searches append only missing rows and preserve matching nodes. A full list/editor render reconciles image ownership once after both updates. Root-level row markup has no whitespace nodes to accumulate between filter passes.
+Prepare controls, caption and accessibility state before `showModal()`, which focuses Close through `autofocus`. Start original decoding in the visible modal. Opening uses the closed identity transform without a forced reset layout; navigation immediately resets zoom even during an active reset animation. Closing releases the displayed source, transform hint, timers, frames, pointer capture, modal state and scroll locks. Gallery mutations reconcile image ownership at the mutation site, including viewer deletion.
 
 ## Verification
 

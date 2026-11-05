@@ -671,13 +671,18 @@ async function refreshCharacterGenerations(state, button, settings) {
     button.querySelector('i')?.classList.add('fa-spin');
     try {
         const context = getContext();
-        const folderImagePaths = await listCharacterGenerationPaths(folder);
+        const history = state.entry.generations;
+        const isCurrent = () => getCharacterLibraryEntry('char', state.key, settings, { create: false }) === state.entry
+            && state.entry.generations === history;
+        // Capture chat URLs before I/O; completion may only replace the history it started with.
         const contextChatCandidates = state.key === getCurrentCharacterReferenceKey()
             ? [...new Set([...(Array.isArray(context.chat) ? context.chat : [])]
                 .reverse()
                 .flatMap((message) => extractGeneratedImageUrlsFromText(getMessageRenderText(message, settings)))
                 .filter((path) => /\.(?:png|jpe?g|webp|gif)(?:[?#].*)?$/i.test(path)))]
             : [];
+        const folderImagePaths = await listCharacterGenerationPaths(folder);
+        if (!isCurrent()) return;
         const contextChatPaths = (await Promise.all(contextChatCandidates.map(async (path) => {
             try {
                 const imageResponse = await fetch(path, { method: 'HEAD' });
@@ -686,12 +691,20 @@ async function refreshCharacterGenerations(state, button, settings) {
                 return '';
             }
         }))).filter(Boolean);
+        if (!isCurrent()) return;
         const generations = syncCharacterGenerationHistory(
             state.key,
             [...contextChatPaths, ...folderImagePaths],
             settings,
         );
-        await renderEditor(settings);
+        const editor = document.querySelector('#iig_library_editor_host .iig-library-editor');
+        if (editor?.dataset.libraryKind === 'char' && editor.dataset.libraryKey === state.key) {
+            const section = editor.querySelector('.iig-library-generations-refresh').closest('.iig-library-editor-section');
+            section.querySelector('.iig-library-section-count').textContent = String(generations.length);
+            section.querySelector('.iig-library-generation-gallery, .iig-library-empty').outerHTML = buildGenerationsHtml(state.entry, state.key);
+            updateGenerationControls();
+            observeLibraryImages();
+        }
         toastr.success(t`Generations found: ${generations.length}`, t`Image Generation`);
     } catch (error) {
         console.error('[IIG] Failed to refresh character generations:', error);
