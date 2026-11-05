@@ -237,16 +237,14 @@ export function observeLibraryImages() {
         const parent = observedParents.get(image);
         if (parent) {
             observer?.unobserve(parent);
-            resizeObserver?.unobserve(parent);
+            if (image.hasAttribute('data-iig-full-src')) resizeObserver?.unobserve(parent);
             pendingVisibility.delete(parent);
         }
         observedParents.delete(image);
         release(image);
     }
-    const added = [...next].filter(image => !tracked.has(image) && image.hasAttribute('data-iig-full-src'));
+    const added = [...next].filter(image => !tracked.has(image));
     added.forEach(image => observedParents.set(image, image.parentElement));
-    // Server thumbnails already have bounded dimensions and browser-native lazy loading.
-    for (const image of next) if (!image.hasAttribute('data-iig-full-src')) load(image);
     tracked = next;
     // Drop detached queued nodes immediately, rather than retaining old editors.
     for (let i = queue.length - 1; i >= 0; i--) if (!next.has(queue[i].image)) queue.splice(i, 1);
@@ -259,9 +257,10 @@ export function observeLibraryImages() {
         cache.clear();
         return;
     }
-    if (added.length && typeof ResizeObserver === 'function') {
+    const resizable = added.filter(image => image.hasAttribute('data-iig-full-src'));
+    if (resizable.length && typeof ResizeObserver === 'function') {
         resizeObserver ||= new ResizeObserver(scheduleUpgrade);
-        added.forEach(image => resizeObserver.observe(image.parentElement));
+        resizable.forEach(image => resizeObserver.observe(image.parentElement));
     }
     if (typeof IntersectionObserver !== 'function') { next.forEach(image => { inView.add(image); load(image); }); return; }
     if (added.length) {

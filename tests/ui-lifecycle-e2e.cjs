@@ -245,31 +245,29 @@ const server = createServer((req, res) => {
                 report.evidence.viewerQueueResumeRequests = 1;
             } finally { await page.close(); }
         });
-        await scenario('server avatar thumbnails use native loading without observer subscriptions', async () => {
+        await scenario('server avatars load on visibility without resize subscriptions', async () => {
             const page = await open();
             try {
-                const result = await page.evaluate(async prefix => {
+                await page.evaluate(async prefix => {
                     const section = document.getElementById('iig_characters_section');
-                    section.innerHTML = '<div style="width:64px;height:64px"><img data-iig-library-src="/thumbnail?type=avatar&file=fixture.png" loading="lazy" decoding="async" style="width:100%;height:100%"></div>';
-                    const image = section.querySelector('img');
-                    let subscriptions = 0;
-                    const restores = [];
-                    for (const Type of [IntersectionObserver, ResizeObserver]) {
-                        const original = Type.prototype.observe;
-                        Type.prototype.observe = function (target, ...args) { if (target === image.parentElement) subscriptions++; return original.call(this, target, ...args); };
-                        restores.push(() => Type.prototype.observe = original);
-                    }
-                    try {
-                        const module = await import(prefix + 'src/libraryImages.js');
-                        module.observeLibraryImages();
-                        const source = image.getAttribute('src');
-                        section.closest('details').open = false;
-                        module.observeLibraryImages();
-                        return { source, subscriptions, released: !image.hasAttribute('src') };
-                    } finally { restores.forEach(restore => restore()); }
+                    section.innerHTML = '<div id="avatar-scroll" style="height:140px;overflow:auto"><div style="width:64px;height:64px"><img id="near-avatar" data-iig-library-src="/thumbnail?type=avatar&file=near.png" loading="lazy" decoding="async" style="width:100%;height:100%"></div><div style="height:2500px"></div><div style="width:64px;height:64px"><img id="far-avatar" data-iig-library-src="/thumbnail?type=avatar&file=far.png" loading="lazy" decoding="async" style="width:100%;height:100%"></div></div>';
+                    window.avatarResizeSubscriptions = 0;
+                    const observe = ResizeObserver.prototype.observe;
+                    ResizeObserver.prototype.observe = function (target, ...args) { if (target.closest('#avatar-scroll')) avatarResizeSubscriptions++; return observe.call(this, target, ...args); };
+                    section.scrollIntoView({ block: 'start' });
+                    (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
                 }, prefix);
-                assert.deepEqual(result, { source: '/thumbnail?type=avatar&file=fixture.png', subscriptions: 0, released: true });
-                report.evidence.nativeAvatars = result;
+                await page.waitForFunction(() => document.getElementById('near-avatar').complete && document.getElementById('near-avatar').naturalWidth > 0);
+                const first = await page.evaluate(() => ({ near: document.getElementById('near-avatar').getAttribute('src'), far: document.getElementById('far-avatar').getAttribute('src'), resizeSubscriptions: avatarResizeSubscriptions }));
+                report.evidence.viewportAvatars = first;
+                assert.deepEqual(first, { near: '/thumbnail?type=avatar&file=near.png', far: null, resizeSubscriptions: 0 });
+                await page.locator('#avatar-scroll').evaluate(element => element.scrollTop = element.scrollHeight);
+                await page.waitForFunction(() => document.getElementById('far-avatar').complete && document.getElementById('far-avatar').naturalWidth > 0);
+                await page.evaluate(async prefix => {
+                    document.getElementById('iig_characters_section').closest('details').open = false;
+                    (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                }, prefix);
+                assert.equal(await page.evaluate(() => [...document.querySelectorAll('#avatar-scroll img')].every(image => !image.hasAttribute('src'))), true);
             } finally { await page.close(); }
         });
         await scenario('a released preview closes its pending bitmap without rasterizing or encoding', async () => {
