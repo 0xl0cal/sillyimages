@@ -64,7 +64,7 @@ Outside clicks close only open avatar menus inside the settings root. Preserve c
 
 ## Image Ownership
 
-Original files and viewer sources retain their resolution and encoding. The preview cache owns at most 96 entries and four megapixels; the viewer owns at most four decoded originals and 32 megapixels. The first visible gallery original is prepared after 500 ms without input and transfers directly to the viewer cache on a matching load. Release unused preparation during editing, when its candidate leaves view, on collapse and on page departure.
+Original files and viewer sources retain their resolution and encoding. The preview cache owns at most 96 entries and four megapixels; the viewer owns at most four decoded originals and 32 megapixels. The first visible gallery original is prepared after visible previews finish and 500 ms without input, then transfers directly to the viewer cache on a matching load. Release unused preparation during editing, new preview downloads, collapse and page departure.
 
 Assign avatar sources within the viewport margin. Loaded server thumbnails use the native decoder and leave visibility tracking. Custom previews track card size only within that margin; upgrade size buckets for larger cards or higher pixel density, retaining the displayed preview until replacement. Shrinking cards keeps their current bucket.
 
@@ -72,7 +72,9 @@ Offscreen rows retain decoded previews while their URLs belong to the bounded ca
 
 Stable rows retain observer subscriptions. Full tab replacements and collapse disconnect observers in one batch. Collapse retains loaded server thumbnails and committed previews in the bounded cache, cancels unfinished upgrades and releases viewer originals. Removed rows release sources even while collapsed. Page departure releases all sources and cache URLs; a canceled departure restores observation. Visibility-only toggles reuse membership for the same section; mutations and replacements reconcile it fully.
 
-The sequential preview worker waits at decode, raster and display boundaries while the viewer is open. Retain visible previews beneath the modal and reconcile deferred visibility on close. Resume raster work after 150 ms without another close; queued close events cannot resume it under a reopened viewer. Collapse and page departure cancel that timer. Cancellation releases parked bitmaps and waiters; completed jobs release sources without aborting finished controllers.
+At most three preview jobs download or wait for the single decoder. Process downloads in completion order; duplicate source/size requests share the resulting cache entry. Cached rows bypass pending downloads and decoding. The library observer owns deferred loading; assigned previews load eagerly at normal priority and decode asynchronously.
+
+Preview jobs wait at decode, raster and display boundaries while the viewer is open; queued downloads stay parked. Retain visible previews beneath the modal and reconcile deferred visibility on close. Resume work after 150 ms without another close; queued close events cannot resume it under a reopened viewer. Collapse and page departure cancel that timer. Cancellation releases parked bitmaps and waiters; completed jobs release sources without aborting finished controllers.
 
 Preview encoding uses temporary readback-oriented canvases. Fallback decoders own binary Blob URLs until decoding exits; clear sources and revoke URLs on success, failure and cancellation. Preview requests time out after 15 seconds.
 

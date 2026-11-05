@@ -21,6 +21,12 @@ const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180"><r
 const server = createServer((req, res) => {
     let body, type = 'application/javascript';
     if (hosts[req.url]) { body = hosts[req.url]; type = 'text/html'; }
+    else if (req.url.startsWith('/loading.svg?')) {
+        const delay = Number(new URL(req.url, 'http://fixture').searchParams.get('delay')) || 0;
+        const timer = setTimeout(() => res.writeHead(200, { 'Content-Type': 'image/svg+xml' }).end(svg), delay);
+        res.on('close', () => clearTimeout(timer));
+        return;
+    }
     else if (req.url === '/pending.png') { body = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'); type = 'image/png'; }
     else if (req.url.startsWith('/large.svg')) { body = '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="1024"><rect width="512" height="1024" fill="#567"/></svg>'; type = 'image/svg+xml'; }
     else if (req.url === '/slow.svg') return; // Released with the browser context after the timeout scenario.
@@ -104,7 +110,177 @@ const server = createServer((req, res) => {
         }, index);
         await page.waitForFunction(previous => scrollWork.exits.includes('scroll-preview-' + previous), previous);
     };
+    // Loading failures: one slow download blocks siblings or cached rows, duplicate
+    // requests/decodes grow memory, speculative originals compete with previews,
+    // and modal/collapse transitions leak work or leave the queue stalled.
+    const loadingPreviews = async (page, sources) => {
+        await page.evaluate(async ({ prefix, sources }) => {
+            const module = await import(prefix + 'src/libraryImages.js');
+            const section = document.getElementById('iig_characters_section');
+            section.closest('details').open = false;
+            module.observeLibraryImages();
+            if (!window.loadingWork) {
+                window.loadingWork = { active: 0, peak: 0, encodes: 0, activeEncodes: 0, peakEncodes: 0, requests: [], warmups: [] };
+                const open = XMLHttpRequest.prototype.open, send = XMLHttpRequest.prototype.send;
+                XMLHttpRequest.prototype.open = function (method, url, ...args) { this.loadingSource = String(url); return open.call(this, method, url, ...args); };
+                XMLHttpRequest.prototype.send = function (...args) {
+                    if (this.loadingSource.startsWith('/loading.svg?')) {
+                        const request = { source: this.loadingSource, started: performance.now() };
+                        loadingWork.requests.push(request);
+                        loadingWork.peak = Math.max(loadingWork.peak, ++loadingWork.active);
+                        this.addEventListener('loadend', () => { loadingWork.active--; request.finished = performance.now(); request.status = this.status; }, { once: true });
+                    }
+                    return send.apply(this, args);
+                };
+                const encode = HTMLCanvasElement.prototype.toBlob;
+                HTMLCanvasElement.prototype.toBlob = function (callback, ...args) {
+                    if (!new Error().stack.includes('/src/libraryImages.js')) return encode.call(this, callback, ...args);
+                    loadingWork.encodes++;
+                    loadingWork.peakEncodes = Math.max(loadingWork.peakEncodes, ++loadingWork.activeEncodes);
+                    return encode.call(this, blob => {
+                        const finish = () => { loadingWork.activeEncodes--; callback(blob); };
+                        if (window.pauseLoadingEncode) { window.pauseLoadingEncode = false; window.finishLoadingEncode = finish; }
+                        else finish();
+                    }, ...args);
+                };
+                const Native = Image;
+                window.Image = function (...args) {
+                    const image = new Native(...args);
+                    const decode = image.decode;
+                    image.decode = function () {
+                        if (this.getAttribute('src')?.startsWith('/loading.svg?')) loadingWork.warmups.push(performance.now());
+                        return decode.call(this);
+                    };
+                    return image;
+                };
+            }
+            window.loadingStartedAt = performance.now();
+            section.innerHTML = '<div id="loading-gallery" data-iig-lightbox-gallery style="display:grid;grid-template-columns:repeat(3,100px);gap:4px">' + sources.map((source, i) =>
+                `<div style="width:100px;height:100px"><img id="loading-preview-${i}" data-iig-library-src="${source}" data-iig-full-src="${source}" data-iig-lightbox loading="lazy" decoding="async" fetchpriority="low" style="width:100%;height:100%;object-fit:contain"></div>`).join('') + '</div>';
+            for (const image of section.querySelectorAll('#loading-gallery img')) image.addEventListener('load', () => image.dataset.readyAt = performance.now());
+            section.closest('details').open = true;
+            section.scrollIntoView({ block: 'start' });
+            module.observeLibraryImages();
+        }, { prefix, sources });
+    };
+    const loadingReady = page => page.waitForFunction(() => [...document.querySelectorAll('#loading-gallery img')].every(image => image.dataset.readyAt && image.naturalWidth > 0));
     try {
+        for (const width of [390, 1100]) await scenario(`preview loading overlaps downloads without concurrent encodes at ${width}px`, async () => {
+            const page = await open();
+            try {
+                await page.setViewportSize({ width, height: 950 });
+                await loadingPreviews(page, Array.from({ length: 12 }, (_, i) => `/loading.svg?id=batch-${i}&delay=200`));
+                await loadingReady(page);
+                const result = await page.evaluate(() => ({
+                    ...loadingWork, elapsedMs: Math.max(...[...document.querySelectorAll('#loading-gallery img')].map(image => Number(image.dataset.readyAt))) - loadingStartedAt,
+                }));
+                report.evidence['loadingBatch' + width] = result;
+                await page.screenshot({ path: path.join(artifacts, `loading-batch-${width}.png`) });
+                assert.ok(result.peak > 1 && result.peak <= 3, 'Visible downloads overlap within a three-job budget');
+                assert.equal(result.peakEncodes, 1, 'Only one preview encoder owns a decoded image at a time');
+                assert.equal(result.requests.length, 12);
+                assert.equal(result.encodes, 12);
+                assert.equal(result.warmups.length, 0, 'Speculative originals wait until visible previews finish');
+            } finally { await page.close(); }
+        });
+        await scenario('preview loading shows fast siblings before a slow download finishes', async () => {
+            const page = await open();
+            try {
+                await loadingPreviews(page, ['/loading.svg?id=slow-first&delay=1600', '/loading.svg?id=fast-second&delay=40', '/loading.svg?id=fast-third&delay=40']);
+                await loadingReady(page);
+                const result = await page.evaluate(() => ({
+                    slowFinished: loadingWork.requests.find(request => request.source.includes('slow-first')).finished - loadingStartedAt,
+                    fastReady: Number(document.getElementById('loading-preview-1').dataset.readyAt) - loadingStartedAt,
+                    warmups: loadingWork.warmups.length,
+                }));
+                report.evidence.loadingSlowSibling = result;
+                assert.ok(result.fastReady < result.slowFinished, 'A fast visible tile does not wait for an unrelated download');
+                assert.equal(result.warmups, 0);
+            } finally { await page.close(); }
+        });
+        await scenario('preview loading restores cached rows while a fresh download is pending', async () => {
+            const page = await open();
+            try {
+                const cached = '/loading.svg?id=cached&delay=40';
+                await loadingPreviews(page, [cached]);
+                await loadingReady(page);
+                const url = await page.locator('#loading-preview-0').getAttribute('src');
+                await loadingPreviews(page, ['/loading.svg?id=uncached&delay=1200', cached]);
+                await loadingReady(page);
+                const result = await page.evaluate(() => ({
+                    cachedReady: Number(document.getElementById('loading-preview-1').dataset.readyAt) - loadingStartedAt,
+                    downloadFinished: loadingWork.requests.find(request => request.source.includes('uncached')).finished - loadingStartedAt,
+                    cachedRequests: loadingWork.requests.filter(request => request.source.includes('id=cached')).length,
+                }));
+                report.evidence.loadingCachedRow = result;
+                assert.ok(result.cachedReady < result.downloadFinished);
+                assert.equal(result.cachedRequests, 1);
+                assert.equal(await page.locator('#loading-preview-1').getAttribute('src'), url);
+            } finally { await page.close(); }
+        });
+        await scenario('preview loading deduplicates owners and bounds downloaded work behind a paused encoder', async () => {
+            const page = await open();
+            try {
+                await page.evaluate(() => window.pauseLoadingEncode = true);
+                const shared = '/loading.svg?id=shared&delay=40';
+                await loadingPreviews(page, [shared, shared, shared, ...Array.from({ length: 7 }, (_, i) => `/loading.svg?id=distinct-${i}&delay=40`)]);
+                await page.waitForFunction(() => typeof finishLoadingEncode === 'function');
+                await page.waitForTimeout(200);
+                const pending = await page.evaluate(() => ({ requests: loadingWork.requests.length, peakEncodes: loadingWork.peakEncodes, encodes: loadingWork.encodes }));
+                await page.evaluate(() => finishLoadingEncode());
+                await loadingReady(page);
+                const result = await page.evaluate(pending => ({ pending, peak: loadingWork.peak, requests: loadingWork.requests.length, encodes: loadingWork.encodes,
+                    sharedUrls: new Set([0, 1, 2].map(i => document.getElementById('loading-preview-' + i).getAttribute('src'))).size,
+                }), pending);
+                report.evidence.loadingDeduplicated = result;
+                assert.ok(pending.requests <= 3 && pending.requests > 1);
+                assert.equal(pending.encodes, 1);
+                assert.equal(result.requests, 8);
+                assert.equal(result.encodes, 8);
+                assert.equal(result.sharedUrls, 1);
+            } finally { await page.close(); }
+        });
+        await scenario('preview loading parks completed downloads under the viewer and resumes after closing', async () => {
+            const page = await open();
+            try {
+                await loadingPreviews(page, Array.from({ length: 8 }, (_, i) => `/loading.svg?id=modal-${i}&delay=300`));
+                await page.waitForFunction(() => loadingWork.active > 0);
+                await page.locator('#loading-preview-0').evaluate(image => image.click());
+                const before = await page.evaluate(() => loadingWork.requests.length);
+                await page.waitForTimeout(400);
+                assert.equal(await page.evaluate(() => loadingWork.encodes), 0);
+                assert.equal(await page.evaluate(() => loadingWork.requests.length), before);
+                await page.evaluate(() => {
+                    document.getElementById('iig_lightbox').close();
+                    document.getElementById('loading-preview-0').click();
+                });
+                await page.waitForTimeout(200);
+                assert.equal(await page.evaluate(() => loadingWork.encodes), 0);
+                await page.locator('.iig-lightbox-close').evaluate(button => { window.loadingClosedAt = performance.now(); button.click(); });
+                await loadingReady(page);
+                const delay = await page.evaluate(() => Math.min(...[...document.querySelectorAll('#loading-gallery img')].map(image => Number(image.dataset.readyAt))) - loadingClosedAt);
+                report.evidence.loadingModalResume = { requestsBeforeOpen: before, delayMs: delay };
+                assert.ok(delay >= 140);
+            } finally { await page.close(); }
+        });
+        await scenario('preview loading cancels replaced owners and releases all download slots', async () => {
+            const page = await open();
+            try {
+                await loadingPreviews(page, Array.from({ length: 8 }, (_, i) => `/loading.svg?id=removed-${i}&delay=1400`));
+                await page.waitForFunction(() => loadingWork.active > 0);
+                await page.evaluate(() => window.removedLoadingImages = [...document.querySelectorAll('#loading-gallery img')]);
+                await loadingPreviews(page, ['/loading.svg?id=replacement&delay=40']);
+                await loadingReady(page);
+                await page.waitForFunction(() => loadingWork.active === 0);
+                const result = await page.evaluate(() => ({ requests: loadingWork.requests, staleSources: removedLoadingImages.filter(image => image.hasAttribute('src')).length,
+                    readyMs: Number(document.getElementById('loading-preview-0').dataset.readyAt) - loadingStartedAt,
+                }));
+                report.evidence.loadingReplacement = result;
+                assert.equal(result.staleSources, 0);
+                assert.ok(result.requests.filter(request => request.source.includes('removed')).every(request => request.status === 0));
+                assert.ok(result.readyMs < 1000);
+            } finally { await page.close(); }
+        });
         for (const width of [390, 1100]) await scenario(`scroll previews retain decoded rows on round trips at ${width}px`, async () => {
             const page = await open();
             try {
@@ -454,13 +630,14 @@ const server = createServer((req, res) => {
                         return pendingBitmap;
                     };
                     const section = document.getElementById('iig_characters_section');
-                    section.innerHTML = '<div data-iig-lightbox-gallery style="display:flex;height:140px"><div style="width:120px;height:120px"><img id="queued-viewer-image" data-iig-library-src="/pending.png" data-iig-full-src="/pending.png" data-iig-lightbox style="width:100%;height:100%"></div><div style="width:120px;height:120px"><img id="queued-preview" data-iig-library-src="/fast.svg" data-iig-full-src="/fast.svg" style="width:100%;height:100%"></div></div>';
+                    section.innerHTML = '<div data-iig-lightbox-gallery style="display:flex;height:140px"><div style="width:120px;height:120px"><img id="queued-viewer-image" data-iig-library-src="/pending.png" data-iig-full-src="/pending.png" data-iig-lightbox style="width:100%;height:100%"></div><div style="width:120px;height:120px;display:none"><img id="queued-preview" data-iig-library-src="/fast.svg" data-iig-full-src="/fast.svg" style="width:100%;height:100%"></div></div>';
                     section.scrollIntoView({ block: 'start' });
                     (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
                 }, prefix);
                 await page.waitForFunction(() => typeof finishPreviewDecode === 'function', null, { timeout: 3000 });
                 await page.evaluate(() => {
                     document.getElementById('queued-viewer-image').click();
+                    document.getElementById('queued-preview').parentElement.style.display = 'block';
                     document.getElementById('iig_lightbox').close();
                     document.getElementById('queued-viewer-image').click();
                     finishPreviewDecode();

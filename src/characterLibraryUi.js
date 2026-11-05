@@ -248,7 +248,7 @@ function buildGenerationsHtml(entry, key) {
                 const caption = prompt || t`Generated image`;
                 const imagePath = normalizeStoredImagePath(generation.imagePath);
                 return `<button type="button" class="iig-library-generation-item" data-generation-id="${sanitizeForHtml(generation.id)}" title="${sanitizeForHtml(caption)}" aria-label="${sanitizeForHtml(caption)}">
-                    <img data-iig-library-src="${sanitizeForHtml(imagePath)}" data-iig-full-src="${sanitizeForHtml(imagePath)}" alt="" data-iig-lightbox data-iig-lightbox-caption="${sanitizeForHtml(caption)}" data-iig-generation-key="${sanitizeForHtml(key)}" data-iig-generation-id="${sanitizeForHtml(generation.id)}" loading="lazy" decoding="async" fetchpriority="low">
+                    <img data-iig-library-src="${sanitizeForHtml(imagePath)}" data-iig-full-src="${sanitizeForHtml(imagePath)}" alt="" data-iig-lightbox data-iig-lightbox-caption="${sanitizeForHtml(caption)}" data-iig-generation-key="${sanitizeForHtml(key)}" data-iig-generation-id="${sanitizeForHtml(generation.id)}" decoding="async">
                     <span class="iig-library-generation-check" aria-hidden="true"></span>
                 </button>`;
             }).join('')}

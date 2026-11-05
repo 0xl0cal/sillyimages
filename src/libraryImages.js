@@ -11,7 +11,9 @@ let observer;
 let resizeObserver;
 let upgradeFrame = 0;
 let densityQuery;
-let running = false;
+const inFlight = new Map();
+const decoderWaiters = new Set();
+let decoding = false;
 let resumeTimer = 0;
 let active = true;
 let libraryOpen = false;
@@ -24,24 +26,30 @@ const idleWaiters = new Set();
 const MAX_PIXELS = 4 * 1024 * 1024;
 // Entry and pixel caps bound galleries with mixed preview sizes.
 const MAX_ENTRIES = 96;
+// Bound compressed downloads separately from the single decoded working image.
+const MAX_IN_FLIGHT = 3;
 const REQUEST_TIMEOUT_MS = 15000;
 
-async function waitForPreviewIdle(signal) {
-    if (signal.aborted) throw new DOMException('Preview released', 'AbortError');
-    if (!resumeTimer && !document.getElementById('iig_lightbox')?.open) return;
+function waitForTurn(signal, waiters) {
     return new Promise((resolve, reject) => {
         const finish = error => {
-            idleWaiters.delete(resume);
+            waiters.delete(resume);
             signal.removeEventListener('abort', abort);
             if (error) reject(error);
             else resolve();
         };
         const resume = () => finish();
         const abort = () => finish(new DOMException('Preview released', 'AbortError'));
-        idleWaiters.add(resume);
+        waiters.add(resume);
         signal.addEventListener('abort', abort, { once: true });
         if (signal.aborted) abort();
     });
+}
+
+async function waitForPreviewIdle(signal) {
+    if (signal.aborted) throw new DOMException('Preview released', 'AbortError');
+    if (!resumeTimer && !document.getElementById('iig_lightbox')?.open) return;
+    return waitForTurn(signal, idleWaiters);
 }
 
 function releaseLibraryOriginal() {
@@ -62,7 +70,7 @@ export function takeLibraryOriginal(source) {
 }
 
 function scheduleOriginalWarmup() {
-    if (warmupTimer || document.getElementById('iig_lightbox')?.open) return;
+    if (!libraryOpen || warmupTimer || inFlight.size || queue.length || document.getElementById('iig_lightbox')?.open) return;
     // One visible original prepares entry to the viewer without retaining a gallery of decodes.
     warmupTimer = setTimeout(() => {
         warmupTimer = 0;
@@ -143,9 +151,13 @@ async function thumbnail(source, width, signal) {
     });
     await waitForPreviewIdle(signal);
     assertCurrent();
+    if (decoding) await waitForTurn(signal, decoderWaiters);
+    else decoding = true;
     let bitmap, decoderUrl;
     const canvas = document.createElement('canvas');
     try {
+        await waitForPreviewIdle(signal);
+        assertCurrent();
         try {
             if (blob.type === 'image/svg+xml') throw new Error('SVG uses the image decoder');
             bitmap = await createImageBitmap(blob, { resizeWidth: width, resizeQuality: 'high' });
@@ -177,6 +189,9 @@ async function thumbnail(source, width, signal) {
         bitmap?.removeAttribute?.('src');
         if (decoderUrl) revoke(decoderUrl);
         canvas.width = canvas.height = 0;
+        const resume = decoderWaiters.values().next().value;
+        if (resume) resume();
+        else decoding = false;
     }
 }
 
@@ -203,32 +218,52 @@ function release(image, { retainCached = false } = {}) {
     inView.delete(image);
 }
 
-async function drain() {
-    if (running || resumeTimer) return;
-    running = true;
-    try {
-        while (queue.length && !resumeTimer && !document.getElementById('iig_lightbox')?.open) {
-            const job = queue.shift();
-            const { image, source, width } = job;
-            if (!active || !image.isConnected || image.ownerDocument !== document || states.get(image) !== job) continue;
-            let src;
-            try { src = await thumbnail(source, width, job.controller.signal); }
-            catch { src = source; }
-            try { await waitForPreviewIdle(job.controller.signal); }
-            catch { continue; }
-            // A scroll, editor change or collapse can invalidate an in-flight decode.
-            if (image.isConnected && states.get(image) === job) {
-                const previous = image.getAttribute('src');
-                if (src !== source && src.startsWith('blob:')) {
-                    if (!leases.has(src)) leases.set(src, new Set());
-                    leases.get(src).add(image);
-                }
-                image.src = src;
-                job.committed = true;
-                if (previous !== src) releaseLease(image, previous);
-            }
-        }
-    } finally { running = false; }
+function isCurrent(job) {
+    return active && job.image.isConnected && job.image.ownerDocument === document
+        && states.get(job.image) === job && !job.controller.signal.aborted;
+}
+
+function displayPreview(job, src) {
+    if (!isCurrent(job)) return;
+    const { image, source } = job;
+    const previous = image.getAttribute('src');
+    if (src !== source && src.startsWith('blob:')) {
+        if (!leases.has(src)) leases.set(src, new Set());
+        leases.get(src).add(image);
+    }
+    // Visibility is owned by the library observer, not a second native lazy gate.
+    image.loading = 'eager';
+    image.fetchPriority = 'auto';
+    image.src = src;
+    job.committed = true;
+    if (previous !== src) releaseLease(image, previous);
+}
+
+async function preparePreview(job) {
+    let src;
+    try { src = await thumbnail(job.source, job.width, job.controller.signal); }
+    catch { src = job.source; }
+    try { await waitForPreviewIdle(job.controller.signal); }
+    catch { return; }
+    displayPreview(job, src);
+}
+
+function drain() {
+    if (!active || resumeTimer || document.getElementById('iig_lightbox')?.open) return;
+    for (let i = 0; i < queue.length;) {
+        const job = queue[i];
+        if (!isCurrent(job)) { queue.splice(i, 1); continue; }
+        const cached = cachedThumbnail(job.source, job.width);
+        if (cached) { queue.splice(i, 1); displayPreview(job, cached.url); continue; }
+        const key = `${job.width}:${job.source}`;
+        // Duplicate owners reuse the completed cache entry without a second download.
+        if (inFlight.size >= MAX_IN_FLIGHT || inFlight.has(key)) { i++; continue; }
+        queue.splice(i, 1);
+        releaseLibraryOriginal();
+        inFlight.set(key, job);
+        preparePreview(job).finally(() => { inFlight.delete(key); drain(); });
+    }
+    scheduleOriginalWarmup();
 }
 
 function load(image) {
