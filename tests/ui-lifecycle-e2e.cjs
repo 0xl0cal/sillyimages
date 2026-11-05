@@ -1046,6 +1046,90 @@ const server = createServer((req, res) => {
                 await page.screenshot({ path: path.join(artifacts, 'stable-collapse-ownership.png') });
             } finally { await page.close(); }
         });
+        // Resume failures: canceled rows use stale visibility after hidden layout changes,
+        // or remain blank when collapse and reopening happen within the same frame.
+        for (const rapid of [true, false]) for (const moved of [true, false]) await scenario(`canceled previews recheck visibility: rapid=${rapid} moved=${moved}`, async () => {
+            const page = await open();
+            try {
+                await loadingPreviews(page, Array.from({ length: 6 }, (_, i) => `/loading.svg?id=resume-${i}&delay=600`));
+                await page.waitForFunction(() => loadingWork.requests.length === 6);
+                const before = await page.evaluate(() => loadingWork.requests.length);
+                await page.evaluate(async ({ prefix, rapid, moved }) => {
+                    const module = await import(prefix + 'src/libraryImages.js');
+                    const section = document.getElementById('iig_characters_section'), details = section.closest('details');
+                    details.open = false;
+                    module.observeLibraryImages({ visibilityOnly: true });
+                    if (moved) document.getElementById('loading-gallery').style.marginTop = '2500px';
+                    if (!rapid) await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                    details.open = true;
+                    details.scrollIntoView({ block: 'start' });
+                    module.observeLibraryImages({ visibilityOnly: true });
+                    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+                }, { prefix, rapid, moved });
+                await page.waitForTimeout(150);
+                const result = await page.evaluate(before => ({ newRequests: loadingWork.requests.length - before,
+                    assigned: [...document.querySelectorAll('#loading-gallery img')].filter(image => image.hasAttribute('src')).length,
+                    top: document.getElementById('loading-gallery').getBoundingClientRect().top, viewport: innerHeight }), before);
+                report.evidence[`resume-${rapid}-${moved}`] = result;
+                if (moved) {
+                    assert.ok(result.top > result.viewport + 160, 'Rows are outside the prefetch margin');
+                    assert.equal(result.newRequests, 0, 'Reopening must not resume canceled offscreen downloads');
+                    assert.equal(result.assigned, 0);
+                    await page.locator('#loading-gallery').evaluate(element => element.scrollIntoView({ block: 'start' }));
+                }
+                await loadingReady(page);
+                assert.ok(await page.evaluate(() => [...document.querySelectorAll('#loading-gallery img')].every(image => image.src.startsWith('blob:'))));
+                await page.screenshot({ path: path.join(artifacts, `resume-${rapid}-${moved}.png`) });
+            } finally { await page.close(); }
+        });
+        for (const moved of [true, false]) await scenario(`cached preview resume uses current viewport: moved=${moved}`, async () => {
+            const page = await open();
+            try {
+                await loadingPreviews(page, Array.from({ length: 6 }, (_, i) => `/loading.svg?id=cached-resume-${i}`));
+                await loadingReady(page);
+                const result = await page.evaluate(async ({ prefix, moved }) => {
+                    const module = await import(prefix + 'src/libraryImages.js');
+                    const section = document.getElementById('iig_characters_section'), details = section.closest('details');
+                    const gallery = document.getElementById('loading-gallery'), replacement = gallery.cloneNode(true);
+                    for (const image of replacement.querySelectorAll('img')) { image.removeAttribute('src'); delete image.dataset.readyAt; }
+                    const viewer = document.getElementById('iig_lightbox');
+                    viewer.showModal();
+                    await new Promise(resolve => { viewer.addEventListener('close', resolve, { once: true }); viewer.close(); });
+                    // The viewer close grace period holds cached jobs while new rows enter view.
+                    let observed = 0;
+                    const observe = ResizeObserver.prototype.observe;
+                    ResizeObserver.prototype.observe = function (element, ...args) {
+                        if (replacement.contains(element)) observed++;
+                        return observe.call(this, element, ...args);
+                    };
+                    gallery.replaceWith(replacement);
+                    module.observeLibraryImages();
+                    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                    ResizeObserver.prototype.observe = observe;
+                    const pending = [...replacement.querySelectorAll('img')].every(image => !image.hasAttribute('src'));
+                    details.open = false;
+                    module.observeLibraryImages({ visibilityOnly: true });
+                    if (moved) replacement.style.marginTop = '2500px';
+                    let writes = 0;
+                    const mutations = new MutationObserver(records => writes += records.filter(record => record.target.getAttribute('src')?.startsWith('blob:')).length);
+                    mutations.observe(replacement, { subtree: true, attributes: true, attributeFilter: ['src'] });
+                    details.open = true;
+                    details.scrollIntoView({ block: 'start' });
+                    module.observeLibraryImages({ visibilityOnly: true });
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                    mutations.disconnect();
+                    return { observed, pending, writes, requests: loadingWork.requests.length };
+                }, { prefix, moved });
+                report.evidence[`cached-resume-${moved}`] = result;
+                assert.equal(result.observed, 6, 'New owners enter the visibility set before collapse');
+                assert.ok(result.pending, 'Cached assignments wait for the viewer close grace period');
+                assert.equal(result.writes, moved ? 0 : 6, 'Resume only cached rows in the current viewport');
+                assert.equal(result.requests, 6, 'Cached rows need no new original download');
+                if (moved) await page.locator('#loading-gallery').evaluate(element => element.scrollIntoView({ block: 'start' }));
+                await page.waitForFunction(() => [...document.querySelectorAll('#loading-gallery img')].every(image => image.src.startsWith('blob:') && image.complete && image.naturalWidth > 0));
+                await page.screenshot({ path: path.join(artifacts, `cached-resume-${moved}.png`) });
+            } finally { await page.close(); }
+        });
         await scenario('a released preview closes its pending bitmap without rasterizing or encoding', async () => {
             const page = await open();
             try {

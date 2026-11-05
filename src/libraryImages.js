@@ -515,7 +515,15 @@ export function observeLibraryImages({ visibilityOnly = false } = {}) {
         observer ||= new IntersectionObserver(updateVisibility, { rootMargin: '160px 0px' });
         added.forEach(image => observer.observe(image.parentElement));
     }
-    if (opening) loadImages([...inView].filter(image => tracked.has(image) && !states.get(image)?.committed));
+    if (opening) for (const image of inView) {
+        if (!tracked.has(image) || states.get(image)?.committed) continue;
+        // Canceled work needs a fresh intersection; the viewport can move while collapsed.
+        const parent = observedParents.get(image);
+        inView.delete(image);
+        resizeObserver?.unobserve(parent);
+        observer.unobserve(parent);
+        observer.observe(parent);
+    }
     if (pendingUpgrade || typeof ResizeObserver !== 'function') scheduleUpgrade();
     scheduleOriginalWarmup();
 }
