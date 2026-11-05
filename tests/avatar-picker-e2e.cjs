@@ -5,7 +5,7 @@ const path = require('node:path');
 const { chromium, webkit } = require('playwright');
 
 // Guard stable picker rows, synchronized selection, repeated clicks, escaped names,
-// catalog reorder, concurrent refreshes, fresh subsequent requests and failure retry.
+// catalog reorder, concurrent refreshes, header/body stalls, retained cache and retry.
 const root = path.resolve(__dirname, '..');
 const prefix = '/scripts/extensions/third-party/sillyimages/';
 const host = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="${prefix}style.css"><div id="extensions_settings"></div><script type="module">
@@ -92,6 +92,30 @@ const server=createServer((req,res)=>{
             });
             assert.deepEqual(recovery,{failed:[],retained:1001,first:'<b>& café #%.png'});
             checks.push(mode+': failed refresh retains cache; retry fetches fresh catalog order');
+            for(const phase of ['headers','body']){
+                const stalled=await page.evaluate(async phase=>{
+                    const originalFetch=fetch,timeout=setTimeout;
+                    const list=document.getElementById('iig_user_avatar_dropdown_list'),first=list.firstElementChild;
+                    let signal,release,calls=0;
+                    window.setTimeout=(fn,ms,...args)=>timeout(fn,ms===15000?25:ms,...args);
+                    window.fetch=(url,init)=>{
+                        if(String(url)!=='/api/avatars/get')return originalFetch(url,init);
+                        calls++;signal=init?.signal;
+                        if(phase==='headers')return new Promise(resolve=>{release=()=>resolve(Response.json(files));});
+                        return Promise.resolve(new Response(new ReadableStream({start(controller){release=()=>{
+                            controller.enqueue(new TextEncoder().encode(JSON.stringify(files)));controller.close();
+                        };}})));
+                    };
+                    const pending=Promise.all([app.references.fetchUserAvatars(),app.references.refreshUserAvatarSelects()]);
+                    const outcome=await Promise.race([pending.then(()=> 'settled'),new Promise(resolve=>timeout(()=>resolve('pending'),200))]);
+                    const state={outcome,calls,aborted:Boolean(signal?.aborted),retained:app.references.getCachedUserAvatars().length,sameRows:first===list.firstElementChild};
+                    window.fetch=originalFetch;window.setTimeout=timeout;release();await pending;
+                    const before=avatarRequests;await app.references.refreshUserAvatarSelects();
+                    return {...state,retryRequests:avatarRequests-before};
+                },phase);
+                assert.deepEqual(stalled,{outcome:'settled',calls:1,aborted:true,retained:1001,sameRows:true,retryRequests:1});
+                checks.push(mode+': '+phase+' timeout releases shared catalog request, retains rows and allows retry');
+            }
             const empty=await page.evaluate(async()=>{format='invalid';await app.references.refreshUserAvatarSelects();return document.getElementById('iig_user_avatar_dropdown_list').children.length;});
             assert.equal(empty,0);checks.push(mode+': invalid catalog renders an empty list');
             const personaMode=await page.evaluate(()=>{

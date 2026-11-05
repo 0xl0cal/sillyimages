@@ -1,6 +1,6 @@
 /** Avatar catalog requests and synchronized provider picker controls. */
 import { getSettings, saveSettings } from './settings.js';
-import { sanitizeForHtml } from './utils.js';
+import { fetchWithTimeout, sanitizeForHtml } from './utils.js';
 
 let cachedUserAvatars = [];
 let userAvatarsRequest = null;
@@ -17,16 +17,13 @@ export function fetchUserAvatars() {
 async function requestUserAvatars() {
     try {
         const context = SillyTavern.getContext();
-        const response = await fetch('/api/avatars/get', {
+        const payload = await fetchWithTimeout('/api/avatars/get', {
             method: 'POST',
             headers: context.getRequestHeaders(),
+        }, 15000, null, response => {
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response.json();
         });
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-        }
-
-        const payload = await response.json();
         const avatars = Array.isArray(payload)
             ? payload
             : Array.isArray(payload?.avatars)
