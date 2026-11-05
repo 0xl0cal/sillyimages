@@ -236,9 +236,15 @@ export function observeLibraryImages() {
     libraryOpen = visible;
     const next = new Set(section?.querySelectorAll('img[data-iig-library-src]') || []);
     const retainedUrls = closing ? new Set([...cache.values()].map(item => item.url)) : null;
+    const resetObservers = closing || tracked.size > 0 && ![...tracked].some(image => next.has(image));
+    if (resetObservers) {
+        observer?.disconnect();
+        resizeObserver?.disconnect();
+        pendingVisibility.clear();
+    }
     for (const image of tracked) if (!next.has(image) || closing) {
         const parent = observedParents.get(image);
-        if (parent) {
+        if (parent && !resetObservers) {
             observer?.unobserve(parent);
             if (image.hasAttribute('data-iig-full-src')) resizeObserver?.unobserve(parent);
             pendingVisibility.delete(parent);
@@ -251,7 +257,9 @@ export function observeLibraryImages() {
             inView.delete(image);
         } else release(image);
     }
-    const added = visible ? [...next].filter(image => !observedParents.has(image)) : [];
+    // Loaded server thumbnails belong to their DOM rows; only custom previews need exit tracking.
+    const added = visible ? [...next].filter(image => !observedParents.has(image)
+        && (image.hasAttribute('data-iig-full-src') || image.getAttribute('src') !== image.getAttribute('data-iig-library-src'))) : [];
     added.forEach(image => observedParents.set(image, image.parentElement));
     tracked = next;
     // Drop detached queued nodes immediately, rather than retaining old editors.
@@ -263,17 +271,23 @@ export function observeLibraryImages() {
         generation++;
         return;
     }
-    const resizable = added.filter(image => image.hasAttribute('data-iig-full-src'));
-    if (resizable.length && typeof ResizeObserver === 'function') {
-        resizeObserver ||= new ResizeObserver(scheduleUpgrade);
-        resizable.forEach(image => resizeObserver.observe(image.parentElement));
+    if (typeof IntersectionObserver !== 'function') {
+        next.forEach(image => { watchSize(image); load(image); });
+        return;
     }
-    if (typeof IntersectionObserver !== 'function') { next.forEach(image => { inView.add(image); load(image); }); return; }
     if (added.length) {
         observer ||= new IntersectionObserver(updateVisibility, { rootMargin: '160px 0px' });
         added.forEach(image => observer.observe(image.parentElement));
     }
     scheduleOriginalWarmup();
+}
+
+function watchSize(image) {
+    if (!image.hasAttribute('data-iig-full-src') || inView.has(image)) return;
+    inView.add(image);
+    if (typeof ResizeObserver !== 'function') return;
+    resizeObserver ||= new ResizeObserver(scheduleUpgrade);
+    resizeObserver.observe(image.parentElement);
 }
 
 function updateVisibility(entries) {
@@ -285,9 +299,18 @@ function updateVisibility(entries) {
     }
     for (const entry of entries) {
         const image = entry.target.querySelector('img[data-iig-library-src]');
-        if (!tracked.has(image)) continue;
-        if (entry.isIntersecting) { inView.add(image); load(image); }
-        else release(image);
+        if (!tracked.has(image) || observedParents.get(image) !== entry.target) continue;
+        if (entry.isIntersecting) {
+            watchSize(image);
+            load(image);
+            if (!image.hasAttribute('data-iig-full-src')) {
+                observer.unobserve(entry.target);
+                observedParents.delete(image);
+            }
+        } else {
+            if (inView.has(image)) resizeObserver?.unobserve(entry.target);
+            release(image);
+        }
     }
     scheduleOriginalWarmup();
 }

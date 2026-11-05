@@ -19,7 +19,7 @@ The extension runs as browser ES modules inside SillyTavern. There is no build s
 - `ui.js` composes settings sections and reference controls. `apiSettingsUi.js` owns API controls, provider visibility, model catalogs and connection-profile actions. `settingsControls.js` provides section markup and synchronized select/range controls.
 - `promptLibraryUi.js` owns Styles and Negatives selection, filtering and editing.
 - `characterLibraryUi.js` owns character library navigation and generation management. `generationImages.js` validates deletion paths and protects reference files.
-- `libraryImages.js` owns viewport-scoped previews, a sequential decode queue and a 96-entry/4-megapixel thumbnail cache. Gallery original URLs remain separate from display URLs. Collapse releases previews; stale decodes cannot update removed editors. Preview failure displays the original.
+- `libraryImages.js` owns viewport-scoped previews, a sequential decode queue and a 96-entry/4-megapixel thumbnail cache. Gallery original URLs remain separate from display URLs. Collapse retains ready previews within that cache; stale decodes cannot update removed editors. Preview failure displays the original.
 - `lightbox.js` owns the modal viewer and gesture lifecycle. `imageActions.js` owns inline controls and message image hydration.
 
 ## Data And Runtime Contracts
@@ -42,7 +42,7 @@ Viewer geometry is sampled at gesture start, image load and viewport resize. Poi
 
 The library prepares the first visible gallery original after 500 ms without input. A matching loaded original passes directly to the viewer cache. Unused preparations are released during editing, when the candidate leaves view, the section collapses or the page leaves. The viewer retains at most four original resources and 32 megapixels to reuse decodes during navigation, and releases them on library collapse or pagehide. Library previews retain their viewport resources under the modal and reconcile deferred visibility entries after it closes. Stable previews keep their observer subscriptions during list edits.
 
-Avatar sources are assigned when their cards enter the viewport margin. Server thumbnails use the browser decoder without canvas processing or resize subscriptions; full-size previews also track card size. Collapsed rows retain their loaded server thumbnails and committed preview sources whose URLs remain in the LRU cache. The cache retains at most 96 entries and four megapixels. Unfinished upgrades are canceled, and removed rows release their ownership even while collapsed.
+Avatar sources are assigned when their cards enter the viewport margin. Loaded server thumbnails leave visibility tracking and use the browser decoder without canvas processing or resize subscriptions. Custom previews track card size only within that margin. Full tab replacements and collapse disconnect observers in one batch. Collapsed rows retain their loaded server thumbnails and committed preview sources whose URLs remain in the LRU cache. The cache retains at most 96 entries and four megapixels. Unfinished upgrades are canceled, and removed rows release their ownership even while collapsed.
 
 Page departure releases all library sources and cached preview URLs, including retained collapsed rows. Full-size original resources are released on the transition to a collapsed library, not on subsequent reconciliation of an already closed section.
 

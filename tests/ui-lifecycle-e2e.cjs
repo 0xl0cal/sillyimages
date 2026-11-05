@@ -367,6 +367,49 @@ const server = createServer((req, res) => {
                 assert.equal(await page.evaluate(() => [...document.querySelectorAll('#avatar-scroll img')].every(image => !image.hasAttribute('src'))), true);
             } finally { await page.close(); }
         });
+        await scenario('image observers batch replacements and watch sizes only in view', async () => {
+            const page = await open();
+            try {
+                await page.evaluate(async prefix => {
+                    const section = document.getElementById('iig_characters_section');
+                    section.innerHTML = '<div id="observer-scroll" style="height:140px;overflow:auto"><div style="width:64px;height:64px"><img id="loaded-avatar" data-iig-library-src="/thumbnail?file=loaded.png" style="width:100%;height:100%"></div><div style="height:2500px"></div><div style="width:120px;height:120px"><img id="distant-preview" data-iig-library-src="/fast.svg" data-iig-full-src="/fast.svg" style="width:100%;height:100%"></div></div>';
+                    window.imageObserverWork = { resize: 0, avatarObserve: 0, unobserve: 0, disconnect: 0 };
+                    for (const Type of [IntersectionObserver, ResizeObserver]) for (const name of ['observe', 'unobserve', 'disconnect']) {
+                        const original = Type.prototype[name];
+                        Type.prototype[name] = function (target, ...args) {
+                            if (name === 'observe' && Type === ResizeObserver && target.closest('#observer-scroll')) imageObserverWork.resize++;
+                            if (name === 'observe' && Type === IntersectionObserver && target.querySelector('#loaded-avatar')) imageObserverWork.avatarObserve++;
+                            if (name !== 'observe') imageObserverWork[name]++;
+                            return original.call(this, target, ...args);
+                        };
+                    }
+                    section.scrollIntoView({ block: 'start' });
+                    (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                }, prefix);
+                await page.waitForFunction(() => document.getElementById('loaded-avatar').naturalWidth > 0);
+                const hidden = await page.evaluate(() => imageObserverWork.resize);
+                assert.equal(hidden, 0, 'Offscreen previews need no resize subscription');
+                await page.evaluate(async prefix => {
+                    (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                    (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                }, prefix);
+                assert.equal(await page.evaluate(() => imageObserverWork.avatarObserve), 1, 'Loaded native thumbnails need no renewed visibility subscription');
+                await page.locator('#observer-scroll').evaluate(element => element.scrollTop = element.scrollHeight);
+                await page.waitForFunction(() => document.getElementById('distant-preview').getAttribute('src')?.startsWith('blob:'));
+                assert.equal(await page.evaluate(() => imageObserverWork.resize), 1);
+                const replacement = await page.evaluate(async prefix => {
+                    const module = await import(prefix + 'src/libraryImages.js');
+                    imageObserverWork.unobserve = imageObserverWork.disconnect = 0;
+                    document.getElementById('iig_characters_section').innerHTML = '<div style="width:64px;height:64px"><img data-iig-library-src="/thumbnail?file=replacement.png"></div>';
+                    module.observeLibraryImages();
+                    return { unobserve: imageObserverWork.unobserve, disconnect: imageObserverWork.disconnect };
+                }, prefix);
+                report.evidence.imageObserverReplacement = replacement;
+                assert.equal(replacement.unobserve, 0, 'A complete replacement disconnects observers once, not once per old image');
+                assert.ok(replacement.disconnect > 0);
+                await page.screenshot({ path: path.join(artifacts, 'image-observer-replacement.png') });
+            } finally { await page.close(); }
+        });
         await scenario('a released preview closes its pending bitmap without rasterizing or encoding', async () => {
             const page = await open();
             try {
