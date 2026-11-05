@@ -19,7 +19,7 @@ The extension runs as browser ES modules inside SillyTavern. There is no build s
 - `ui.js` composes settings sections and reference controls. `apiSettingsUi.js` owns API controls, provider visibility, model catalogs and connection-profile actions. `settingsControls.js` provides section markup and synchronized select/range controls.
 - `promptLibraryUi.js` owns Styles and Negatives selection, filtering and editing.
 - `characterLibraryUi.js` owns character library navigation and generation management. `generationImages.js` validates deletion paths and protects reference files.
-- `libraryImages.js` owns viewport-scoped previews, a sequential decode queue and a 96-entry/4-megapixel thumbnail cache. Gallery original URLs remain separate from display URLs. Collapse retains ready previews within that cache; stale decodes cannot update removed editors. Preview failure displays the original.
+- `libraryImages.js` owns viewport-scoped loading and a 96-entry/4-megapixel thumbnail cache. `previewWorker.js` resizes and losslessly encodes raster previews outside the document thread. Gallery original URLs remain separate from display URLs. Collapse retains ready previews within that cache; stale decodes cannot update removed editors. Preview failure displays the original.
 - `lightbox.js` owns the modal viewer and gesture lifecycle. `imageActions.js` owns inline controls and message image hydration.
 
 ## Stored Data
@@ -64,19 +64,25 @@ Outside clicks close only open avatar menus inside the settings root. Preserve c
 
 ## Image Ownership
 
-Original files and viewer sources retain their resolution and encoding. The preview cache owns at most 96 entries and four megapixels; the viewer owns at most four decoded originals and 32 megapixels. The first visible gallery original is prepared after visible previews finish and 500 ms without input, then transfers directly to the viewer cache on a matching load. Release unused preparation during editing, new preview downloads, collapse and page departure.
+Original files and viewer sources retain their resolution and encoding. The preview cache owns at most 96 entries and four megapixels; the viewer retains at most four originals and 32 megapixels. Stable source owners allow repeated viewing without recreating image identities. Retaining a source leaves decode sizing to the browser, without forcing another full-resolution decode. Larger originals display at full resolution without entering the retained cache. The first visible gallery original is prepared after visible previews finish and 500 ms without input, then transfers directly to the viewer cache on a matching load. Release unused preparation during editing, new preview downloads, collapse and page departure.
+
+Browser-managed image and HTTP caches are separate from these budgets. Measure transient memory and settled memory independently; the preview pixel cap does not describe the whole browser's RAM usage.
 
 Assign avatar sources within the viewport margin. Loaded server thumbnails use the native decoder and leave visibility tracking. Custom previews track card size only within that margin; upgrade size buckets for larger cards or higher pixel density, retaining the displayed preview until replacement. Shrinking cards keeps their current bucket.
 
+Measure all entering preview rows before assigning image sources. Keep layout reads separate from writes when loading cached rows, resuming canceled loads and applying size upgrades.
+
 Offscreen rows retain decoded previews while their URLs belong to the bounded cache. Returning to a row renews its cache priority without rewriting its source. Eviction releases offscreen owners; visible owners keep an evicted URL until exit or replacement. Leaving the viewport cancels unfinished upgrades while preserving any cached preview. Fallback originals remain viewport-owned, and their URLs belong to the original source owner.
 
-Stable rows retain observer subscriptions. Full tab replacements and collapse disconnect observers in one batch. Collapse retains loaded server thumbnails and committed previews in the bounded cache, cancels unfinished upgrades and releases viewer originals. Removed rows release sources even while collapsed. Page departure releases all sources and cache URLs; a canceled departure restores observation. Visibility-only toggles reuse membership for the same section; mutations and replacements reconcile it fully.
+Stable rows retain observer subscriptions across collapse. Unchanged reopening skips size scans. Resize and density events schedule upgrades, including changes received while hidden. Collapse retains loaded server thumbnails, committed previews and the bounded viewer source cache, cancels unfinished upgrades and releases unused original preparation. Full tab replacements disconnect observers in one batch. Removed rows release sources even while collapsed. Page departure releases all sources and cache URLs; a canceled departure restores observation. Visibility-only toggles reuse membership for the same section; mutations and replacements reconcile it fully.
 
-At most three preview jobs download or wait for the single decoder. Process downloads in completion order; duplicate source/size requests share the resulting cache entry. Cached rows bypass pending downloads and decoding. The library observer owns deferred loading; assigned previews load eagerly at normal priority and decode asynchronously.
+Uncached visible images display their original source while previews prepare in the background. Leave native display decoding to the browser; calling `decode()` on every foreground original retains full-resolution buffers. The prefetch margin prepares bounded previews without assigning originals. Foreground priority lasts up to one second for stalled loads; successful loads receive a 100 ms quiet period before background work starts.
+
+At most 12 preview jobs download or wait for encoding, with six background requests and two workers. Duplicate source/size requests share the resulting cache entry. Cached rows bypass pending downloads and decoding. SVG and unavailable workers use the sequential document decoder. Workers release their native caches after 500 ms without pending work; canceling an active worker job terminates its worker and frees its slot. The library observer owns deferred loading; assigned previews load eagerly at normal priority and decode asynchronously.
 
 Preview jobs wait at decode, raster and display boundaries while the viewer is open; queued downloads stay parked. Retain visible previews beneath the modal and reconcile deferred visibility on close. Resume work after 150 ms without another close; queued close events cannot resume it under a reopened viewer. Collapse and page departure cancel that timer. Cancellation releases parked bitmaps and waiters; completed jobs release sources without aborting finished controllers.
 
-Preview encoding uses temporary readback-oriented canvases. Fallback decoders own binary Blob URLs until decoding exits; clear sources and revoke URLs on success, failure and cancellation. Preview requests time out after 15 seconds.
+Preview encoding uses temporary readback-oriented canvases and PNG output, preserving transparency. Fallback decoders own binary Blob URLs until decoding exits; clear sources and revoke URLs on success, failure and cancellation. Preview requests time out after 15 seconds. Collapse and page departure terminate workers and cancel foreground priority timers.
 
 ## Viewer Interaction
 

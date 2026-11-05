@@ -108,7 +108,6 @@ export function initLightbox() {
         if (!prepared) {
             image.decoding = 'async';
             image.src = source;
-            image.decode().catch(() => {});
         }
         decodedImages.set(source, { image, pixels });
         // Reserve the display image's known pixels before a retained image finishes loading.
@@ -121,7 +120,6 @@ export function initLightbox() {
         }
     };
     window.addEventListener('pagehide', releaseOriginals);
-    document.addEventListener('iig-library-images-released', releaseOriginals);
     const geometry = {
         baseWidth: 0,
         baseHeight: 0,

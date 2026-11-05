@@ -54,7 +54,7 @@ window.ready=true;
 const server = createServer((req, res) => {
     let body, type = 'application/javascript';
     if (req.url === '/') { body = host; type = 'text/html'; }
-    else if (req.url === '/image.svg' || req.url === '/user/images/char/image.svg') { body = picture; type = 'image/svg+xml'; }
+    else if (req.url.split('?')[0] === '/image.svg' || req.url === '/user/images/char/image.svg') { body = picture; type = 'image/svg+xml'; }
     else if (req.url === '/scripts/i18n.js') body = 'export const t=(s,...v)=>String.raw({raw:s},...v);export const translate=s=>s;';
     else if (req.url === '/scripts/popup.js') body = 'export class Popup {static show={confirm:()=>window.confirmDeletion()};}';
     else if (req.url === '/api/images/delete') { body = '{}'; type = 'application/json'; }
@@ -96,7 +96,7 @@ const server = createServer((req, res) => {
                         timers:viewerTimers.size,frames:viewerFrames.size,captures:[...pointerIds].filter(id=>img.hasPointerCapture(id)),
                         displayed:getComputedStyle(e).display,source:img.getAttribute('src'),modal:e.matches(':modal'),retained:viewerImages.filter(image=>image.hasAttribute('src')).length};
                 });
-                assert.ok(state.retained <= 4, 'Decoded originals must have a bounded owner');
+                assert.ok(state.retained <= 4, 'Original resources have a bounded owner');
                 delete state.retained;
                 assert.deepEqual(state,{overflow:'auto',priority:'important',timers:0,frames:0,captures:[],displayed:'none',source:null,modal:false});
                 if(mode==='mobile')await page.locator('#app-button').tap();else await page.locator('#app-button').click();
@@ -148,6 +148,36 @@ const server = createServer((req, res) => {
             const budgetScans=await page.evaluate(()=>{Array.prototype.reduce=originalReduce;return originalBudgetScans;});
             assert.equal(budgetScans,0,'Reopening a retained original must not rescan its unchanged pixel budget');
             checks.push(mode+': warm original reuse skips budget scans and retains bounded ownership');
+
+            // Keeping a source warm must not force a second full-resolution raster decode.
+            await page.evaluate(() => {
+                window.retainedDecodeCalls = 0;
+                const decode = HTMLImageElement.prototype.decode;
+                window.restoreImageDecode = () => HTMLImageElement.prototype.decode = decode;
+                HTMLImageElement.prototype.decode = function (...args) {
+                    if (viewerImages.includes(this)) retainedDecodeCalls++;
+                    return decode.apply(this, args);
+                };
+            });
+            // Distinct original URLs exercise cache eviction without changing source resolution.
+            for (let i = 0; i < 4; i++) {
+                await page.locator('#chat-image').evaluate((image, index) => image.src = '/image.svg?original=' + index, i);
+                await open();
+                assert.deepEqual(await full.evaluate(image => [image.naturalWidth, image.naturalHeight]), [1200, 1600]);
+                await page.locator('.iig-lightbox-close').click(); await released();
+            }
+            assert.equal(await page.evaluate(() => viewerImages.filter(image => image.hasAttribute('src')).length), 4);
+            const originalOwners = await page.evaluate(() => viewerImages.length);
+            await page.evaluate(() => document.dispatchEvent(new Event('iig-library-images-released')));
+            assert.equal(await page.evaluate(() => viewerImages.filter(image => image.hasAttribute('src')).length), 4, 'Library collapse retains the bounded viewer source cache');
+            for (let i = 0; i < 8; i++) {
+                await page.locator('#chat-image').evaluate((image, index) => image.src = '/image.svg?original=' + index % 4, i);
+                await open(); await page.locator('.iig-lightbox-close').click(); await released();
+            }
+            assert.equal(await page.evaluate(() => viewerImages.length), originalOwners, 'Revisiting the working set reuses source owners rather than churning image identities');
+            assert.equal(await page.evaluate(() => { restoreImageDecode(); return retainedDecodeCalls; }), 0);
+            await page.locator('#chat-image').evaluate(image => image.src = '/image.svg');
+            checks.push(mode+': revisiting full-quality originals reuses bounded sources without duplicate raster decoding');
 
             await open();
             await page.locator('.iig-lightbox-zoom-in').evaluate(button=>{button.click();button.click();});
@@ -263,6 +293,9 @@ const server = createServer((req, res) => {
             await open();await page.screenshot({path:path.join(artifacts,mode+'-open.png')});
             await page.locator('.iig-lightbox-close').click();await released();
             await page.screenshot({path:path.join(artifacts,mode+'-closed.png')});
+            await page.evaluate(()=>window.dispatchEvent(new Event('pagehide')));
+            assert.equal(await page.evaluate(()=>viewerImages.filter(image=>image.hasAttribute('src')).length),0);
+            checks.push(mode+': page departure releases retained original sources');
             await context.close();
         }
         assert.deepEqual(errors,[]);

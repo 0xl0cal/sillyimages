@@ -47,6 +47,16 @@ const server = createServer((req, res) => {
     const report = { engine, scenarioFilter: process.env.IIG_UI_SCENARIO_FILTER || null, checks: [], failures: [], evidence: {} };
     const open = async (url = '/') => {
         const page = await browser.newPage({ viewport: { width: 1100, height: 950 } });
+        await page.addInitScript(() => {
+            // Observe the document fallback without changing its encoded pixels.
+            window.wrapPreviewEncoder = wrap => {
+                const encode = HTMLCanvasElement.prototype.toBlob;
+                HTMLCanvasElement.prototype.toBlob = function (callback, ...args) {
+                    Promise.resolve(wrap.call(this, () => new Promise(resolve => encode.call(this, resolve, ...args))))
+                        .then(callback, () => callback(null));
+                };
+            };
+        });
         await page.goto('http://127.0.0.1:' + server.address().port + url);
         await page.waitForFunction(() => window.ready);
         return page;
@@ -65,21 +75,22 @@ const server = createServer((req, res) => {
             section.closest('details').open = false;
             images.observeLibraryImages();
             window.scrollWork = { requests: 0, encodes: 0, mutations: 0, exits: [], revoked: [] };
-            const open = XMLHttpRequest.prototype.open, encode = HTMLCanvasElement.prototype.toBlob;
+            const open = XMLHttpRequest.prototype.open;
             const unobserve = ResizeObserver.prototype.unobserve, revoke = URL.revokeObjectURL;
             XMLHttpRequest.prototype.open = function (method, url, ...args) {
                 if (String(url).includes('scroll-preview')) scrollWork.requests++;
                 return open.call(this, method, url, ...args);
             };
-            HTMLCanvasElement.prototype.toBlob = function (callback, ...args) {
+            wrapPreviewEncoder(async function (encode) {
                 scrollWork.encodes++;
-                if (fallback) { callback(null); return; }
+                if (fallback) return null;
                 if (window.pausePreviewEncode) {
                     window.pausePreviewEncode = false;
-                    return encode.call(this, blob => window.finishPreviewEncode = () => callback(blob), ...args);
+                    const blob = await encode();
+                    return new Promise(resolve => window.finishPreviewEncode = () => resolve(blob));
                 }
-                return encode.call(this, callback, ...args);
-            };
+                return encode();
+            });
             ResizeObserver.prototype.unobserve = function (target, ...args) {
                 const id = target.querySelector('img')?.id;
                 if (id?.startsWith('scroll-preview')) scrollWork.exits.push(id);
@@ -132,17 +143,17 @@ const server = createServer((req, res) => {
                     }
                     return send.apply(this, args);
                 };
-                const encode = HTMLCanvasElement.prototype.toBlob;
-                HTMLCanvasElement.prototype.toBlob = function (callback, ...args) {
-                    if (!new Error().stack.includes('/src/libraryImages.js')) return encode.call(this, callback, ...args);
+                wrapPreviewEncoder(async function (encode) {
+                    if (!new Error().stack.includes('/src/libraryImages.js')) return encode();
                     loadingWork.encodes++;
                     loadingWork.peakEncodes = Math.max(loadingWork.peakEncodes, ++loadingWork.activeEncodes);
-                    return encode.call(this, blob => {
-                        const finish = () => { loadingWork.activeEncodes--; callback(blob); };
+                    const blob = await encode();
+                    return new Promise(resolve => {
+                        const finish = () => { loadingWork.activeEncodes--; resolve(blob); };
                         if (window.pauseLoadingEncode) { window.pauseLoadingEncode = false; window.finishLoadingEncode = finish; }
                         else finish();
-                    }, ...args);
-                };
+                    });
+                });
                 const Native = Image;
                 window.Image = function (...args) {
                     const image = new Native(...args);
@@ -165,6 +176,114 @@ const server = createServer((req, res) => {
     };
     const loadingReady = page => page.waitForFunction(() => [...document.querySelectorAll('#loading-gallery img')].every(image => image.dataset.readyAt && image.naturalWidth > 0));
     try {
+        // Worker failures: unavailable/crashed workers, retained native resources,
+        // altered alpha/pixels, and late replies updating canceled gallery owners.
+        for (const mode of ['native', 'unavailable', 'crash', 'cancel', 'scroll-cancel', 'progressive', 'prefetch']) await scenario(`raster preview ownership: ${mode}`, async () => {
+            const page = await open();
+            try {
+                await page.evaluate(async ({ prefix, mode }) => {
+                    const supported = typeof Worker === 'function' && typeof OffscreenCanvas === 'function';
+                    window.rasterWorkers = { supported, created: 0, terminated: 0, foregroundFullDecodes: 0, earlyStarts: 0 };
+                    window.foregroundFrames = 0;
+                    if (!supported && ['unavailable', 'crash'].includes(mode)) window.OffscreenCanvas = function () {};
+                    wrapPreviewEncoder(async function (encode) {
+                        if (mode === 'native' && foregroundFrames < 2) rasterWorkers.earlyStarts++;
+                        const blob = await encode();
+                        if (!supported && !window.allowWorkerReplies && ['cancel', 'scroll-cancel', 'progressive', 'prefetch'].includes(mode)) {
+                            return new Promise(resolve => window.finishWorkerReply = () => resolve(blob));
+                        }
+                        return blob;
+                    });
+                    const decode = HTMLImageElement.prototype.decode;
+                    HTMLImageElement.prototype.decode = function () {
+                        if (this.hasAttribute('data-iig-full-src')) rasterWorkers.foregroundFullDecodes++;
+                        return decode.call(this);
+                    };
+                    const Native = Worker;
+                    window.Worker = function (...args) {
+                        if (mode === 'unavailable') throw new Error('Worker unavailable');
+                        const worker = new Native(...args), terminate = worker.terminate.bind(worker);
+                        if (mode === 'native' && foregroundFrames < 2) rasterWorkers.earlyStarts++;
+                        rasterWorkers.created++;
+                        worker.terminate = () => { rasterWorkers.terminated++; terminate(); };
+                        if (mode === 'crash') worker.postMessage = () => queueMicrotask(() => worker.dispatchEvent(new Event('error')));
+                        if (['cancel', 'scroll-cancel', 'progressive', 'prefetch'].includes(mode)) worker.addEventListener('message', event => {
+                            if (window.allowWorkerReplies) return;
+                            event.stopImmediatePropagation();
+                            window.finishWorkerReply = () => worker.onmessage?.(event);
+                        });
+                        return worker;
+                    };
+                    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 256;
+                    const ctx = canvas.getContext('2d'); ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 256, 128);
+                    const original = canvas.toDataURL('image/png');
+                    const section = document.getElementById('iig_characters_section');
+                    section.innerHTML = `<div style="width:128px;height:128px"><img id="raster-worker-preview" data-iig-library-src="${original}" data-iig-full-src="${original}" style="width:100%;height:100%"></div>`;
+                    section.querySelector('img').addEventListener('load', () => requestAnimationFrame(() => {
+                        foregroundFrames++; requestAnimationFrame(() => foregroundFrames++);
+                    }), { once: true });
+                    section.scrollIntoView({ block: 'start' });
+                    if (mode === 'prefetch') Object.assign(section.firstElementChild.style, { position: 'fixed', top: (innerHeight + 40) + 'px', left: '20px' });
+                    (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                }, { prefix, mode });
+                if (mode === 'progressive') {
+                    await page.waitForFunction(() => typeof finishWorkerReply === 'function');
+                    await page.waitForFunction(() => { const image = document.getElementById('raster-worker-preview'); return image.complete && image.naturalWidth === 256; });
+                    await page.evaluate(() => finishWorkerReply());
+                }
+                if (mode === 'prefetch') {
+                    await page.waitForFunction(() => typeof finishWorkerReply === 'function');
+                    assert.equal(await page.locator('#raster-worker-preview').getAttribute('src'), null, 'Offscreen preparation does not display a full original');
+                    await page.evaluate(() => { document.getElementById('raster-worker-preview').parentElement.style.top = '60px'; finishWorkerReply(); });
+                }
+                if (mode === 'cancel' || mode === 'scroll-cancel') {
+                    await page.waitForFunction(() => typeof finishWorkerReply === 'function');
+                    if (mode === 'scroll-cancel') {
+                        await page.locator('#raster-worker-preview').evaluate(image => image.parentElement.style.transform = 'translateY(4000px)');
+                        await page.waitForFunction(() => !document.getElementById('raster-worker-preview').getAttribute('src'));
+                        await page.waitForFunction(() => rasterWorkers.terminated === rasterWorkers.created, null, { timeout: 2000 });
+                    }
+                    await page.evaluate(async ({ prefix, mode }) => {
+                        const section = document.getElementById('iig_characters_section');
+                        if (mode === 'cancel') {
+                            section.closest('details').open = false;
+                            (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                        }
+                        finishWorkerReply();
+                    }, { prefix, mode });
+                    assert.equal(await page.locator('#raster-worker-preview').getAttribute('src'), null);
+                    if (mode === 'cancel') {
+                        await page.evaluate(async prefix => {
+                            window.allowWorkerReplies = true;
+                            const section = document.getElementById('iig_characters_section');
+                            section.closest('details').open = true;
+                            (await import(prefix + 'src/libraryImages.js')).observeLibraryImages({ visibilityOnly: true });
+                        }, prefix);
+                        await page.waitForFunction(() => {
+                            const image = document.getElementById('raster-worker-preview');
+                            return image.src.startsWith('blob:') && image.complete && image.naturalWidth === 128;
+                        }, null, { timeout: 3000 });
+                    }
+                } else {
+                    await page.waitForFunction(() => { const image = document.getElementById('raster-worker-preview'); return image.src.startsWith('blob:') && image.complete && image.naturalWidth === 128; });
+                    const pixels = await page.evaluate(() => {
+                        const canvas = document.createElement('canvas'); canvas.width = canvas.height = 128;
+                        const ctx = canvas.getContext('2d'); ctx.drawImage(document.getElementById('raster-worker-preview'), 0, 0);
+                        return [...ctx.getImageData(32, 32, 1, 1).data, ...ctx.getImageData(32, 96, 1, 1).data];
+                    });
+                    assert.deepEqual(pixels, [255, 0, 0, 255, 0, 0, 0, 0]);
+                    await page.waitForFunction(() => rasterWorkers.terminated === rasterWorkers.created, null, { timeout: 2500 });
+                    await page.screenshot({ path: path.join(artifacts, `raster-worker-${mode}.png`) });
+                }
+                await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+                const resources = await page.evaluate(() => rasterWorkers);
+                assert.equal(resources.created, mode === 'unavailable' ? 0 : Number(resources.supported || mode === 'crash') * (mode === 'cancel' ? 2 : 1));
+                assert.equal(resources.terminated, resources.created);
+                assert.equal(resources.foregroundFullDecodes, 0, 'Foreground display leaves decode sizing to the browser');
+                assert.equal(resources.earlyStarts, 0, 'Native display gets two frames before background encoding');
+                report.evidence['rasterWorker-' + mode] = resources;
+            } finally { await page.close(); }
+        });
         for (const width of [390, 1100]) await scenario(`preview loading overlaps downloads without concurrent encodes at ${width}px`, async () => {
             const page = await open();
             try {
@@ -176,7 +295,7 @@ const server = createServer((req, res) => {
                 }));
                 report.evidence['loadingBatch' + width] = result;
                 await page.screenshot({ path: path.join(artifacts, `loading-batch-${width}.png`) });
-                assert.ok(result.peak > 1 && result.peak <= 3, 'Visible downloads overlap within a three-job budget');
+                assert.ok(result.peak > 1 && result.peak <= 7, 'Six downloads plus a completed response awaiting loadend');
                 assert.equal(result.peakEncodes, 1, 'Only one preview encoder owns a decoded image at a time');
                 assert.equal(result.requests.length, 12);
                 assert.equal(result.encodes, 12);
@@ -233,7 +352,7 @@ const server = createServer((req, res) => {
                     sharedUrls: new Set([0, 1, 2].map(i => document.getElementById('loading-preview-' + i).getAttribute('src'))).size,
                 }), pending);
                 report.evidence.loadingDeduplicated = result;
-                assert.ok(pending.requests <= 3 && pending.requests > 1);
+                assert.ok(pending.requests <= 12 && pending.requests > 1);
                 assert.equal(pending.encodes, 1);
                 assert.equal(result.requests, 8);
                 assert.equal(result.encodes, 8);
@@ -535,8 +654,7 @@ const server = createServer((req, res) => {
                     URL.revokeObjectURL = function (url) { previewLifecycle.revoked.push(url); return revoke.call(this, url); };
                     const read = FileReader.prototype.readAsDataURL;
                     FileReader.prototype.readAsDataURL = function (...args) { previewLifecycle.reads++; return read.apply(this, args); };
-                    const encode = HTMLCanvasElement.prototype.toBlob;
-                    HTMLCanvasElement.prototype.toBlob = function (...args) { previewLifecycle.encodes++; return encode.apply(this, args); };
+                    wrapPreviewEncoder(function (encode) { previewLifecycle.encodes++; return encode(); });
                     const decode = HTMLImageElement.prototype.decode;
                     HTMLImageElement.prototype.decode = async function () {
                         if (this.isConnected) return decode.call(this);
@@ -614,12 +732,12 @@ const server = createServer((req, res) => {
             const page = await open();
             try {
                 await page.evaluate(async prefix => {
+                    window.Worker = undefined;
                     const create = createImageBitmap;
                     const openRequest = XMLHttpRequest.prototype.open;
                     window.secondPreviewRequests = 0;
                     window.queuedPreviewEncodes = 0;
-                    const encode = HTMLCanvasElement.prototype.toBlob;
-                    HTMLCanvasElement.prototype.toBlob = function (...args) { if (this.width === 41) queuedPreviewEncodes++; return encode.apply(this, args); };
+                    wrapPreviewEncoder(function (encode) { if (this.width === 41) queuedPreviewEncodes++; return encode(); });
                     XMLHttpRequest.prototype.open = function (method, url, ...args) { if (url === '/fast.svg') { secondPreviewRequests++; window.secondPreviewStartedAt = performance.now(); } return openRequest.call(this, method, url, ...args); };
                     window.createImageBitmap = async (...args) => {
                         if (window.finishPreviewDecode) return create(...args);
@@ -687,10 +805,10 @@ const server = createServer((req, res) => {
                     const images = await import(prefix + 'src/libraryImages.js');
                     section.closest('details').open = false;
                     images.observeLibraryImages();
-                    const open = XMLHttpRequest.prototype.open, encode = HTMLCanvasElement.prototype.toBlob, revoke = URL.revokeObjectURL;
+                    const open = XMLHttpRequest.prototype.open, revoke = URL.revokeObjectURL;
                     window.reopenWork = { requests: 0, encodes: 0, revoked: [], avatarWrites: 0 };
                     XMLHttpRequest.prototype.open = function (method, url, ...args) { if (url === '/fast.svg') reopenWork.requests++; return open.call(this, method, url, ...args); };
-                    HTMLCanvasElement.prototype.toBlob = function (...args) { reopenWork.encodes++; return encode.apply(this, args); };
+                    wrapPreviewEncoder(function (encode) { reopenWork.encodes++; return encode(); });
                     URL.revokeObjectURL = function (url) { reopenWork.revoked.push(url); return revoke.call(this, url); };
                     section.innerHTML = '<div style="display:flex;height:130px"><div style="width:120px;height:120px"><img id="reuse-preview" data-iig-library-src="/fast.svg" data-iig-full-src="/fast.svg" style="width:100%;height:100%"></div><div style="width:64px;height:64px"><img id="reuse-avatar" data-iig-library-src="/thumbnail?type=avatar&file=reuse.png" style="width:100%;height:100%"></div></div>';
                     section.closest('details').open = true;
@@ -853,32 +971,78 @@ const server = createServer((req, res) => {
             try {
                 await page.evaluate(async prefix => {
                     const section = document.getElementById('iig_characters_section');
-                    section.innerHTML = '<div style="width:120px;height:120px"><img id="stable-preview" data-iig-library-src="/fast.svg" data-iig-full-src="/fast.svg" style="width:100%;height:100%"></div>';
+                    section.innerHTML = '<div style="width:120px;height:120px"><img id="stable-preview" data-iig-library-src="/large.svg" data-iig-full-src="/large.svg" style="width:100%;height:100%"></div>';
                     section.scrollIntoView({ block: 'start' });
                     (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
                 }, prefix);
                 await page.waitForFunction(() => document.getElementById('stable-preview').getAttribute('src')?.startsWith('blob:') && document.getElementById('stable-preview').naturalWidth > 0);
+                await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
                 const work = await page.evaluate(async prefix => {
                     const module = await import(prefix + 'src/libraryImages.js');
                     const section = document.getElementById('iig_characters_section'), details = section.closest('details');
-                    let imageScans = 0, completedAborts = 0;
+                    let imageScans = 0, completedAborts = 0, observerChanges = 0, rapidWidthReads = 0, normalWidthReads = 0, countWidthReads = false, rapidReopen = false;
+                    const clientWidth = Object.getOwnPropertyDescriptor(Element.prototype, 'clientWidth');
+                    Object.defineProperty(Element.prototype, 'clientWidth', { ...clientWidth, get() {
+                        if (countWidthReads && this.id === 'stable-preview') {
+                            if (rapidReopen) rapidWidthReads++;
+                            else normalWidthReads++;
+                        }
+                        return clientWidth.get.call(this);
+                    } });
+                    const restoreObservers = [];
+                    for (const Type of [IntersectionObserver, ResizeObserver]) for (const name of ['observe', 'unobserve', 'disconnect']) {
+                        const original = Type.prototype[name];
+                        Type.prototype[name] = function (...args) { observerChanges++; return original.apply(this, args); };
+                        restoreObservers.push(() => Type.prototype[name] = original);
+                    }
                     const query = section.querySelectorAll;
                     section.querySelectorAll = function (selector, ...args) { if (selector === 'img[data-iig-library-src]') imageScans++; return query.call(this, selector, ...args); };
                     const abort = AbortController.prototype.abort;
                     AbortController.prototype.abort = function (...args) { if (new Error().stack.includes('/src/libraryImages.js')) completedAborts++; return abort.apply(this, args); };
                     for (const rapid of [true, false]) {
+                        countWidthReads = true;
+                        rapidReopen = rapid;
                         details.open = false; module.observeLibraryImages({ visibilityOnly: true });
                         if (!rapid) await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
                         details.open = true; module.observeLibraryImages({ visibilityOnly: true });
-                        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+                        countWidthReads = false;
                     }
+                    Object.defineProperty(Element.prototype, 'clientWidth', clientWidth);
                     const visibilityScans = imageScans;
+                    restoreObservers.forEach(restore => restore());
+                    details.open = false; module.observeLibraryImages({ visibilityOnly: true });
+                    const image = document.getElementById('stable-preview'), previousSource = image.src;
+                    image.parentElement.style.width = '180px';
+                    window.dispatchEvent(new Event('resize'));
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    const hiddenSourceUnchanged = image.src === previousSource;
+                    details.open = true; module.observeLibraryImages({ visibilityOnly: true });
+                    await new Promise((resolve, reject) => {
+                        const deadline = performance.now() + 3000;
+                        const check = () => image.complete && image.naturalWidth >= 256 ? resolve()
+                            : performance.now() > deadline ? reject(new Error('Reopened preview did not upgrade after hidden resize')) : setTimeout(check, 20);
+                        check();
+                    });
+                    details.open = false; module.observeLibraryImages({ visibilityOnly: true });
+                    const density = Object.getOwnPropertyDescriptor(window, 'devicePixelRatio');
+                    Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 2.5 });
+                    window.dispatchEvent(new Event('resize'));
+                    details.open = true; module.observeLibraryImages({ visibilityOnly: true });
+                    await new Promise((resolve, reject) => {
+                        const deadline = performance.now() + 3000;
+                        const check = () => image.complete && image.naturalWidth === 512 ? resolve()
+                            : performance.now() > deadline ? reject(new Error('Hidden density change did not upgrade the reopened preview')) : setTimeout(check, 20);
+                        check();
+                    });
+                    if (density) Object.defineProperty(window, 'devicePixelRatio', density);
+                    else delete window.devicePixelRatio;
                     section.innerHTML = '';
                     module.observeLibraryImages();
-                    return { visibilityScans, completedAborts };
+                    return { visibilityScans, completedAborts, observerChanges, hiddenSourceUnchanged, rapidWidthReads, normalWidthReads };
                 }, prefix);
                 report.evidence.stableCollapseWork = work;
-                assert.deepEqual(work, { visibilityScans: 0, completedAborts: 0 });
+                assert.deepEqual(work, { visibilityScans: 0, completedAborts: 0, observerChanges: 0, hiddenSourceUnchanged: true, rapidWidthReads: 0, normalWidthReads: 0 });
                 await page.screenshot({ path: path.join(artifacts, 'stable-collapse-ownership.png') });
             } finally { await page.close(); }
         });
@@ -886,10 +1050,10 @@ const server = createServer((req, res) => {
             const page = await open();
             try {
                 await page.evaluate(async prefix => {
+                    window.Worker = undefined;
                     const create = createImageBitmap;
-                    const encode = HTMLCanvasElement.prototype.toBlob;
                     window.previewEncodes = 0;
-                    HTMLCanvasElement.prototype.toBlob = function (...args) { if (this.width === 41) previewEncodes++; return encode.apply(this, args); };
+                    wrapPreviewEncoder(function (encode) { if (this.width === 41) previewEncodes++; return encode(); });
                     window.createImageBitmap = async () => {
                         const canvas = document.createElement('canvas'); canvas.width = canvas.height = 41;
                         window.pendingBitmap = await create(canvas);
@@ -936,7 +1100,44 @@ const server = createServer((req, res) => {
                 await page.screenshot({ path: path.join(artifacts, 'original-input-idle.png') });
             } finally { await page.close(); }
         });
-        await scenario('stable previews keep observer ownership and release original warmup on collapse', async () => {
+        await scenario('cached gallery rows measure sizes before assigning sources', async () => {
+            const page = await open();
+            try {
+                await page.evaluate(async prefix => {
+                    window.batchMarkup = '<div style="display:grid;grid-template-columns:repeat(4,90px)">' + Array.from({ length: 12 }, (_, i) =>
+                        `<div style="width:90px;height:90px"><img class="batch-preview" data-iig-library-src="/fast.svg?batch=${i}" data-iig-full-src="/fast.svg?batch=${i}" style="width:100%;height:100%"></div>`).join('') + '</div>';
+                    const section = document.getElementById('iig_characters_section');
+                    section.innerHTML = batchMarkup;
+                    section.scrollIntoView({ block: 'start' });
+                    (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                }, prefix);
+                await page.waitForFunction(() => [...document.querySelectorAll('.batch-preview')].every(image => image.src.startsWith('blob:') && image.complete));
+                await page.evaluate(async prefix => {
+                    window.previewBatches = [];
+                    let batch;
+                    const record = (image, kind) => {
+                        if (!image.classList?.contains('batch-preview')) return;
+                        if (!batch) { batch = []; previewBatches.push(batch); queueMicrotask(() => batch = null); }
+                        batch.push(kind);
+                    };
+                    const width = Object.getOwnPropertyDescriptor(Element.prototype, 'clientWidth');
+                    Object.defineProperty(Element.prototype, 'clientWidth', { ...width, get() { record(this, 'read'); return width.get.call(this); } });
+                    const src = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+                    Object.defineProperty(HTMLImageElement.prototype, 'src', { ...src, set(value) { record(this, 'write'); return src.set.call(this, value); } });
+                    document.getElementById('iig_characters_section').innerHTML = batchMarkup;
+                    (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                }, prefix);
+                await page.waitForFunction(() => [...document.querySelectorAll('.batch-preview')].every(image => image.src.startsWith('blob:') && image.complete));
+                const batches = await page.evaluate(() => previewBatches);
+                report.evidence.previewBatchOrder = batches;
+                assert.ok(batches.some(batch => batch.filter(op => op === 'read').length > 1));
+                for (const batch of batches) {
+                    const firstWrite = batch.indexOf('write');
+                    assert.ok(firstWrite < 0 || !batch.slice(firstWrite).includes('read'), 'Read all row sizes before source writes can invalidate layout');
+                }
+            } finally { await page.close(); }
+        });
+        await scenario('stable previews reuse observers and transfer prepared originals to the viewer', async () => {
             const page = await open();
             try {
                 await page.locator('.iig-library-generation-item').first().evaluate(e => e.scrollIntoView({ block: 'center' }));
@@ -971,6 +1172,8 @@ const server = createServer((req, res) => {
                 assert.equal(await page.evaluate(() => preparedOriginal.getAttribute('src')), '/fast.svg', 'The viewer must reuse the prepared resource instead of dropping and decoding it again');
                 await page.locator('.iig-lightbox-close').evaluate(button => button.click());
                 await page.locator('#iig_characters_section').evaluate(section => section.closest('details').open = false);
+                assert.equal(await page.evaluate(() => warmed.filter(image => image.hasAttribute('src')).length), 1, 'Only the transferred viewer source remains retained');
+                await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
                 await page.waitForFunction(() => warmed.every(image => !image.hasAttribute('src')));
                 report.evidence.stableObserverChanges = work;
             } finally { await page.close(); }
