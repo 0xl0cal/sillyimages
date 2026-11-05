@@ -397,7 +397,12 @@ const server = createServer((req, res) => {
                 await page.evaluate(async prefix => {
                     const section = document.getElementById('iig_characters_section');
                     section.innerHTML = '<div id="observer-scroll" style="height:140px;overflow:auto"><div style="width:64px;height:64px"><img id="loaded-avatar" data-iig-library-src="/thumbnail?file=loaded.png" style="width:100%;height:100%"></div><div style="height:2500px"></div><div style="width:120px;height:120px"><img id="distant-preview" data-iig-library-src="/fast.svg" data-iig-full-src="/fast.svg" style="width:100%;height:100%"></div></div>';
-                    window.imageObserverWork = { resize: 0, avatarObserve: 0, unobserve: 0, disconnect: 0 };
+                    window.imageObserverWork = { resize: 0, avatarObserve: 0, unobserve: 0, disconnect: 0, coldReleases: 0 };
+                    const remove = HTMLImageElement.prototype.removeAttribute;
+                    HTMLImageElement.prototype.removeAttribute = function (name) {
+                        if (name === 'src' && !this.hasAttribute('src') && this.closest('#observer-scroll')) imageObserverWork.coldReleases++;
+                        return remove.call(this, name);
+                    };
                     for (const Type of [IntersectionObserver, ResizeObserver]) for (const name of ['observe', 'unobserve', 'disconnect']) {
                         const original = Type.prototype[name];
                         Type.prototype[name] = function (target, ...args) {
@@ -413,6 +418,7 @@ const server = createServer((req, res) => {
                 await page.waitForFunction(() => document.getElementById('loaded-avatar').naturalWidth > 0);
                 const hidden = await page.evaluate(() => imageObserverWork.resize);
                 assert.equal(hidden, 0, 'Offscreen previews need no resize subscription');
+                assert.equal(await page.evaluate(() => imageObserverWork.coldReleases), 0, 'Initial offscreen entries have no loaded resource to release');
                 await page.evaluate(async prefix => {
                     (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
                     (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();

@@ -157,11 +157,14 @@ function releaseLease(image, url) {
 }
 
 function release(image) {
-    states.get(image)?.controller?.abort();
+    const job = states.get(image);
+    job?.controller?.abort();
     const url = image.getAttribute('src');
-    image.removeAttribute('src');
-    releaseLease(image, url);
-    states.delete(image);
+    if (url !== null) {
+        image.removeAttribute('src');
+        releaseLease(image, url);
+    }
+    if (job) states.delete(image);
     inView.delete(image);
 }
 
@@ -308,7 +311,7 @@ function updateVisibility(entries) {
                 observer.unobserve(entry.target);
                 observedParents.delete(image);
             }
-        } else {
+        } else if (inView.has(image) || states.has(image)) {
             if (inView.has(image)) resizeObserver?.unobserve(entry.target);
             release(image);
         }
