@@ -40,7 +40,7 @@ export function initLightbox() {
             <button class="iig-lightbox-btn iig-lightbox-zoom-reset" type="button" title="${t`Reset zoom`}" aria-label="${t`Reset zoom`}"><i class="fa-solid fa-compress"></i></button>
             <button class="iig-lightbox-btn iig-lightbox-zoom-in" type="button" title="${t`Zoom in`}" aria-label="${t`Zoom in`}"><i class="fa-solid fa-magnifying-glass-plus"></i></button>
             <button class="iig-lightbox-btn iig-lightbox-delete" type="button" title="${t`Delete generation`}" aria-label="${t`Delete generation`}" hidden><i class="fa-solid fa-trash"></i></button>
-            <button class="iig-lightbox-btn iig-lightbox-close" type="button" title="${t`Close`}" aria-label="${t`Close`}"><i class="fa-solid fa-xmark"></i></button>
+            <button class="iig-lightbox-btn iig-lightbox-close" type="button" autofocus title="${t`Close`}" aria-label="${t`Close`}"><i class="fa-solid fa-xmark"></i></button>
         </div>
         <button class="iig-lightbox-nav iig-lightbox-prev" type="button" title="${t`Previous`}" aria-label="${t`Previous`}"><i class="fa-solid fa-chevron-left"></i></button>
         <button class="iig-lightbox-nav iig-lightbox-next" type="button" title="${t`Next`}" aria-label="${t`Next`}"><i class="fa-solid fa-chevron-right"></i></button>
@@ -334,9 +334,11 @@ export function initLightbox() {
         deleteBtn.hidden = !src.getAttribute('data-iig-generation-id');
         geometry.baseWidth = 0;
         geometry.baseHeight = 0;
-        imgEl.src = getImageSource(src);
         imgEl.alt = caption;
         captionEl.textContent = caption;
+        // Commit controls and caption in the native modal's initial layout, then decode visibly.
+        if (opening) overlay.showModal();
+        imgEl.src = getImageSource(src);
         // A closed viewer owns an identity transform; navigation must also cancel rendered transitions.
         resetZoom(opening);
     };
@@ -362,16 +364,13 @@ export function initLightbox() {
             }));
             overlay.hidden = false;
             overlay.inert = false;
-            // Native top-layer ownership also works when the thumbnail is inside a Tavern modal.
-            overlay.showModal();
             document.body.style.overflow = 'hidden';
         }
-        // Start the display decode in the visible modal, without a redundant unit-scale reset layout.
         updateNavVisibility();
-        showImage(currentIndex, opening);
         overlay.classList.add('open');
         overlay.setAttribute('aria-hidden', 'false');
-        overlay.querySelector('.iig-lightbox-close')?.focus({ preventScroll: true });
+        showImage(currentIndex, opening);
+        if (!opening) overlay.querySelector('.iig-lightbox-close')?.focus({ preventScroll: true });
     };
 
     const close = (e) => {

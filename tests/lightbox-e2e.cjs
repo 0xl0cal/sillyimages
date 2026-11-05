@@ -107,7 +107,13 @@ const server = createServer((req, res) => {
                 await page.waitForFunction(()=>document.querySelector('#chat').scrollTop>0);
             };
             assert.equal(await overlay.count(),1);
+            await page.evaluate(()=>{
+                window.openingFocus=[];
+                document.getElementById('iig_lightbox').addEventListener('focusin',e=>openingFocus.push(e.target.className));
+            });
             await open();assert.equal(await page.locator('.iig-lightbox-delete').isVisible(),false);
+            assert.deepEqual(await page.evaluate(()=>openingFocus),['iig-lightbox-btn iig-lightbox-close'],'Opening focuses Close directly, without a second focus/layout pass');
+            checks.push(mode+': native opening focuses Close directly');
             assert.equal(await full.evaluate(e=>getComputedStyle(e).willChange),'transform','An open viewer prepares its transform layer before a gesture');
             assert.ok((await overlay.evaluate(e=>getComputedStyle(e).contain)).includes('layout'));
             assert.equal(await page.evaluate(()=>genericImageClicks),0);
