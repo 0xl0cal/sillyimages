@@ -184,6 +184,7 @@ async function drain() {
                     leases.get(src).add(image);
                 }
                 image.src = src;
+                job.committed = true;
                 if (previous !== src) releaseLease(image, previous);
             }
         }
@@ -233,8 +234,9 @@ export function observeLibraryImages() {
     const visible = Boolean(section?.closest('details')?.open);
     const closing = libraryOpen && !visible;
     libraryOpen = visible;
-    const next = new Set(visible ? section.querySelectorAll('img[data-iig-library-src]') : []);
-    for (const image of tracked) if (!next.has(image)) {
+    const next = new Set(section?.querySelectorAll('img[data-iig-library-src]') || []);
+    const retainedUrls = closing ? new Set([...cache.values()].map(item => item.url)) : null;
+    for (const image of tracked) if (!next.has(image) || closing) {
         const parent = observedParents.get(image);
         if (parent) {
             observer?.unobserve(parent);
@@ -242,15 +244,18 @@ export function observeLibraryImages() {
             pendingVisibility.delete(parent);
         }
         observedParents.delete(image);
-        // Retained rows own their small server thumbnails while the section is closed.
-        if (!visible && image.isConnected && !image.hasAttribute('data-iig-full-src')) inView.delete(image);
-        else release(image);
+        // Closed DOM owners retain only server thumbnails and previews in the bounded cache.
+        if (closing && next.has(image) && (!image.hasAttribute('data-iig-full-src') || retainedUrls.has(image.getAttribute('src')))) {
+            const job = states.get(image);
+            if (job && !job.committed) { job.controller.abort(); states.delete(image); }
+            inView.delete(image);
+        } else release(image);
     }
-    const added = [...next].filter(image => !tracked.has(image));
+    const added = visible ? [...next].filter(image => !observedParents.has(image)) : [];
     added.forEach(image => observedParents.set(image, image.parentElement));
     tracked = next;
     // Drop detached queued nodes immediately, rather than retaining old editors.
-    for (let i = queue.length - 1; i >= 0; i--) if (!next.has(queue[i].image)) queue.splice(i, 1);
+    for (let i = queue.length - 1; i >= 0; i--) if (!visible || !next.has(queue[i].image)) queue.splice(i, 1);
     if (!visible) {
         if (closing) document.dispatchEvent(new Event('iig-library-images-released'));
         releaseLibraryOriginal();
@@ -272,6 +277,7 @@ export function observeLibraryImages() {
 }
 
 function updateVisibility(entries) {
+    if (!libraryOpen) return;
     // Preserve visible previews under the modal and reconcile deferred entries on close.
     if (document.getElementById('iig_lightbox')?.open) {
         for (const entry of entries) pendingVisibility.set(entry.target, entry);
@@ -305,7 +311,7 @@ function dispose() {
     if (upgradeFrame) cancelAnimationFrame(upgradeFrame);
     upgradeFrame = 0;
     const ownedImages = new Set([...tracked, ...document.querySelectorAll('#iig_characters_section img[data-iig-library-src]')]);
-    for (const image of ownedImages) release(image);
+    for (const image of ownedImages) { release(image); observedParents.delete(image); }
     tracked.clear();
     queue.length = 0;
     for (const item of cache.values()) retire(item.url);

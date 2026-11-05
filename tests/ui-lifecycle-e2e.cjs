@@ -277,7 +277,7 @@ const server = createServer((req, res) => {
                         document.getElementById('iig_characters_section').closest('details').open = false;
                         (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
                     }, prefix);
-                    assert.equal(await page.locator('#reuse-preview').getAttribute('src'), null);
+                    assert.equal(await page.locator('#reuse-preview').getAttribute('src'), first, 'Keep an already decoded preview while its cache entry owns the URL');
                     await page.evaluate(async prefix => {
                         document.getElementById('iig_characters_section').closest('details').open = true;
                         (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
@@ -332,7 +332,11 @@ const server = createServer((req, res) => {
                 const result = await page.evaluate(() => { const live = budgetPreviews.filter(item => !budgetRevoked.includes(item.url)); return { entries: live.length, pixels: live.reduce((sum, item) => sum + item.pixels, 0) }; });
                 report.evidence.collapsedPreviewBudget = result;
                 assert.deepEqual(result, { entries: 8, pixels: 4 * 1024 * 1024 });
-                await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+                await page.evaluate(async prefix => {
+                    document.getElementById('iig_characters_section').innerHTML = '';
+                    (await import(prefix + 'src/libraryImages.js')).observeLibraryImages();
+                    window.dispatchEvent(new Event('pagehide'));
+                }, prefix);
                 await page.waitForFunction(() => budgetPreviews.every(item => budgetRevoked.includes(item.url)));
             } finally { await page.close(); }
         });
