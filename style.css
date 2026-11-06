@@ -1,6 +1,11 @@
 /* Inline Image Generation Extension Styles */
 
 /* Settings Panel */
+#iig_settings_root > .inline-drawer-content {
+    /* Library content owns the height, including during host drawer animations. */
+    height: auto !important;
+}
+
 .iig-settings {
     display: flex;
     flex-direction: column;

@@ -50,6 +50,8 @@ Message hydration caches parsed instructions by source and external-block mode; 
 
 ## Library Updates
 
+The settings drawer's height follows its content even while Tavern animates its inline styles. Libraries remain in the outer panel's scroll range, and following extensions stay below them.
+
 Character/persona catalogs reuse sorted entities while names, avatars, configured titles and active keys match their metadata signature. Persona catalogs read the name map once after avatar/context reads and use those labels for signatures and row data. Searches read display metadata only. Toggling active-persona mode leaves a collapsed library unloaded.
 
 Reconcile rows by kind and reference key, retaining matching rows and avatars. Parse new rows in the live document without root-level whitespace nodes. Replace a complete tab and its search note in one HTML assignment; partial searches insert missing rows and remove unmatched ones. Reconcile image ownership once after a complete list/editor render.
@@ -102,6 +104,8 @@ git diff --check
 ```
 
 The runner writes suite results, logs, source hashes and Git state to `tests/artifacts/suite-<engine>/`. Individual suites write synthetic request details and desktop/mobile screenshots to their own artifact directories. A failing suite stops the run. Provider HTTP responses and Tavern storage are simulated; no account credits or real images are consumed or deleted.
+
+`node tests/settings-scroll-e2e.cjs` checks the outer settings panel at desktop and mobile widths, with 44 generations, nested reference lists, character switches and viewer reopening. It also injects the fixed inline height and clipping used by host drawer animations. Assertions cover scroll reachability, pointer hit testing and separation from following extensions. Reports and screenshots are written to `tests/artifacts/settings-scroll-<engine>/`.
 
 Before changing complex behavior, extend the browser scenarios and run them against the current implementation. Exercise supported input formats, partial failures, cancellation, repeated actions, disabled controls, and narrow viewports. Keep assertions independent of implementation details. Use synthetic prompts and credentials in fixtures and artifacts.
 
