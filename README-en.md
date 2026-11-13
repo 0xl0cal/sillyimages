@@ -160,6 +160,17 @@ Format is JSON:
 
 Images are **not** included in the export. To let someone reuse your lorebook, fill the `imageUrl` field of each ref with a direct link — images will be downloaded automatically on import.
 
+### Character description macros
+
+Use these macros in character cards, presets or lorebook entries:
+
+- `{{iig_char_description}}` returns the current chat character's descriptions from **Character library**.
+- `{{iig_user_description}}` returns the active persona's descriptions when **Use avatar from active {{user}} persona** is enabled, or the selected user avatar's descriptions otherwise. If no persona is active, it uses the selected avatar.
+
+Each macro includes the enabled **Main reference** description and enabled **Appearance details**, including descriptions attached to images. Nonempty descriptions appear in library order, separated by newlines. A temporary main reference contributes once. Missing or disabled descriptions produce no text.
+
+Macros read the current library when Tavern expands them, without downloading images. They work independently of the provider, avatar sending and **Send character descriptions**. If the image prompt already includes these descriptions, disable automatic description sending to avoid repeating the same text.
+
 ### `{{iig-book}}` macro
 
 Paste it into a character card or preset. It expands into a list of all enabled lorebooks with groups, so the LLM can see which triggers are available:

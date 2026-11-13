@@ -16,8 +16,8 @@ const host = `<!doctype html><html><head><meta name="viewport" content="width=de
 </style></head><body><div id="extensions_settings"></div><div id="chat"></div><pre id="notes"></pre><script type="module">
 window.notes=[];window.toastr=Object.fromEntries(['success','error','warning','info'].map(kind=>[kind,(message,title)=>{notes.push({kind,message,title});document.querySelector('#notes').textContent=notes.map(n=>n.kind+': '+n.message).join('\\n');}]));
 const handlers=new Map();window.bus={on(name,fn){const list=handlers.get(name)||[];list.push(fn);handlers.set(name,list);},makeLast(name,fn){this.on(name,fn);},async emit(name,...args){for(const fn of handlers.get(name)||[])await fn(...args);}};
-window.stripAttributes=true;window.failNext=false;window.delay=0;window.requests=[];window.uploads=0;window.saves=0;
-window.context={extensionSettings:{},characters:[],characterId:-1,chat:[],powerUserSettings:{personas:{}},eventSource:bus,event_types:{APP_READY:'ready',CHAT_CHANGED:'chat',CHARACTER_MESSAGE_RENDERED:'rendered',USER_MESSAGE_RENDERED:'user'},getRequestHeaders:()=>({'Content-Type':'application/json'}),saveSettingsDebounced(){},async saveChat(){saves++;},messageFormatting(text){const template=document.createElement('template');template.innerHTML=text;if(stripAttributes)template.content.querySelectorAll('[data-iig-instruction]').forEach(e=>e.removeAttribute('data-iig-instruction'));return template.innerHTML;}};window.SillyTavern={getContext:()=>context};
+window.stripAttributes=true;window.failNext=false;window.delay=0;window.requests=[];window.uploads=0;window.saves=0;window.macros=new Map();
+window.context={extensionSettings:{},characters:[],characterId:-1,chat:[],powerUserSettings:{personas:{}},registerMacro(name,handler){macros.set(name,handler);},eventSource:bus,event_types:{APP_READY:'ready',CHAT_CHANGED:'chat',CHARACTER_MESSAGE_RENDERED:'rendered',USER_MESSAGE_RENDERED:'user'},getRequestHeaders:()=>({'Content-Type':'application/json'}),saveSettingsDebounced(){},async saveChat(){saves++;},messageFormatting(text){const template=document.createElement('template');template.innerHTML=text;if(stripAttributes)template.content.querySelectorAll('[data-iig-instruction]').forEach(e=>e.removeAttribute('data-iig-instruction'));return template.innerHTML;}};window.SillyTavern={getContext:()=>context};
 window.setSource=text=>{context.chat=[{mes:text,is_user:false,name:'Fixture'}];document.querySelector('#chat').innerHTML='<div class="mes" mesid="0"><div class="extraMesButtons"></div><div class="mes_text">'+context.messageFormatting(text)+'</div></div>';};
 setSource(${JSON.stringify(tag(prefix + 'error.svg'))});
 const realFetch=fetch.bind(window);window.fetch=async(url,init={})=>{
@@ -40,6 +40,7 @@ const server = createServer((req,res)=>{
     if(req.url==='/'){body=host;type='text/html';}
     else if(req.url.startsWith('/user/images/')||req.url==='/decoration.png'){body=Buffer.from(png,'base64');type='image/png';}
     else if(req.url==='/scripts/i18n.js')body='export const t=(s,...v)=>String.raw({raw:s},...v);export const translate=s=>s;';
+    else if(req.url==='/scripts/personas.js')body='export const user_avatar="";';
     else if(req.url==='/scripts/popup.js')body='export class Popup {static show={confirm:async()=>{await window.confirmHook?.();return window.confirmResult??true;},input:async()=>null};}';
     else if(req.url.startsWith(prefix)){
         const file=path.resolve(root,decodeURIComponent(req.url.split('?')[0].slice(prefix.length)));

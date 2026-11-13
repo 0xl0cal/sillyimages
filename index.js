@@ -15,6 +15,7 @@ import {
 import { createSettingsUI } from './src/ui.js';
 import { addButtonsToExistingMessages, subscribeEvents } from './src/events.js';
 import { registerIigBookMacro } from './src/references.js';
+import { registerIigDescriptionMacros } from './src/descriptionMacros.js';
 import { resolveActiveProvider } from './src/providers.js';
 import { initLightbox } from './src/lightbox.js';
 import { initImageActions } from './src/imageActions.js';
@@ -31,6 +32,7 @@ import { initImageActions } from './src/imageActions.js';
     // Register {{iig-book}} macro — делает refs-список доступным для вставки
     // в карточки / пресеты, чтобы LLM видела какие триггеры можно ставить.
     registerIigBookMacro(() => resolveActiveProvider()?.supportsReferences(getSettings()) === true);
+    registerIigDescriptionMacros();
 
     // Create settings UI when app is ready.
     context.eventSource.on(context.event_types.APP_READY, () => {
