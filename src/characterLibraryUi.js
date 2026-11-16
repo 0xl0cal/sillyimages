@@ -2,10 +2,10 @@ import { getSettings, saveSettings } from './settings.js';
 import {
     addCharacterLibraryAppearanceItem,
     deleteCharacterLibraryEntry,
+    getActivePersonaReferenceKey,
     getCharacterLibraryEntry,
     getCharacterReferenceKeyForCharacter,
     getCurrentCharacterReferenceKey,
-    getCurrentUserReferenceKey,
     getTemporaryCharacterPrimary,
     getUserReferenceKeyForAvatar,
     removeCharacterLibraryAppearanceItem,
@@ -136,7 +136,7 @@ function getCharacterEntities(settings = getSettings()) {
 async function getUserEntities(settings = getSettings()) {
     let avatars = getCachedUserAvatars();
     if (avatars.length === 0) avatars = await fetchUserAvatars();
-    const activeKey = await getCurrentUserReferenceKey(settings);
+    const activeKey = await getActivePersonaReferenceKey();
     const library = settings.characterReferenceLibrary?.users || {};
     const personas = getContext()?.powerUserSettings?.personas || {};
     const labels = avatars.map(file => [file, getPersonaTitle(file, personas)]);
@@ -563,7 +563,7 @@ export async function renderCharacterLibrary(settings = getSettings()) {
     await renderEntityList(settings, entities);
     if (revision !== libraryRenderRevision || kind !== selectedKind) return;
     await renderEditor(settings, entities);
-    const signature = await getContextSignature(settings);
+    const signature = await getContextSignature();
     if (revision !== libraryRenderRevision || kind !== selectedKind) return;
     lastContextSignature = signature;
     libraryRendered = true;
@@ -715,40 +715,38 @@ async function refreshCharacterGenerations(state, button, settings) {
     }
 }
 
-async function getContextSignature(settings = getSettings()) {
+async function getContextSignature() {
     const context = getContext();
     const characters = Array.isArray(context?.characters) ? context.characters : [];
-    const activeUserKey = await getCurrentUserReferenceKey(settings);
+    const activeUserKey = await getActivePersonaReferenceKey();
     return JSON.stringify({
         characterId: context?.characterId ?? null,
         characters: characters.map((character) => [character?.name || '', character?.avatar || '']),
         activeUserKey,
-        userAvatarFile: settings.userAvatarFile || '',
-        useActiveUserPersonaAvatar: Boolean(settings.useActiveUserPersonaAvatar),
     });
 }
 
-export async function refreshIfContextChanged(settings = getSettings(), { force = false } = {}) {
+async function refreshIfContextChanged(settings = getSettings(), { force = false } = {}) {
     const details = document.getElementById('iig_characters_section')?.closest('details');
     if (details && !details.open) {
         lastContextSignature = '';
         libraryRendered = false;
         return;
     }
-    const signature = await getContextSignature(settings);
+    const signature = await getContextSignature();
     if (!force && signature === lastContextSignature) return;
     const active = document.activeElement;
     if (!force && active instanceof HTMLElement && active.closest('#iig_characters_section')) return;
     await renderCharacterLibrary(settings);
 }
 
-async function syncLibrarySelectionToContext(settings, sync) {
+async function syncLibrarySelectionToContext(sync) {
     if (sync.character) {
         const characterKey = getCurrentCharacterReferenceKey();
         selectedKeys.char = characterKey === 'no-character' ? '' : characterKey;
     }
     if (sync.user) {
-        selectedKeys.user = await getCurrentUserReferenceKey(settings);
+        selectedKeys.user = await getActivePersonaReferenceKey();
     }
 }
 
@@ -764,7 +762,7 @@ function scheduleRefresh(settings = getSettings(), sync = {}) {
         pendingContextSync.character = false;
         pendingContextSync.user = false;
         try {
-            await syncLibrarySelectionToContext(settings, requestedSync);
+            await syncLibrarySelectionToContext(requestedSync);
             await refreshIfContextChanged(settings, {
                 force: (requestedSync.character && selectedKind === 'char')
                     || (requestedSync.user && selectedKind === 'user'),

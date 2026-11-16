@@ -28,11 +28,7 @@ export function registerIigDescriptionMacros() {
     );
     context.registerMacro(
         'iig_user_description',
-        () => {
-            const settings = getSettings();
-            const activeAvatar = settings.useActiveUserPersonaAvatar ? String(user_avatar || '').trim() : '';
-            return renderDescription('user', getUserReferenceKeyForAvatar(activeAvatar || settings.userAvatarFile), settings);
-        },
-        'SillyImages: enabled Character library descriptions for the selected persona.',
+        () => renderDescription('user', getUserReferenceKeyForAvatar(user_avatar), getSettings()),
+        'SillyImages: enabled Character library descriptions for the active Tavern persona.',
     );
 }

@@ -9,6 +9,9 @@ const { chromium, webkit } = require('playwright');
 // library edits, editor selection replacing the active character, disabled or
 // empty descriptions leaking, duplicate temporary references, provider-dependent
 // text, avatar downloads, settings writes and interference with existing macros.
+// Persona failures: manual reference avatars replacing the active persona,
+// stale selection after native events while open/closed, editor selection changing
+// the native persona, and losing an explicitly selected generation avatar.
 const root = path.resolve(__dirname, '..');
 const prefix = '/scripts/extensions/third-party/sillyimages/';
 const engine = process.env.IIG_BROWSER_ENGINE || 'chromium';
@@ -16,6 +19,7 @@ const artifacts = path.join(__dirname, 'artifacts', 'description-macros-' + engi
 const host = `<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="${prefix}style.css">
 <style>body{background:#302c35;color:#eee;font:16px sans-serif}textarea{width:95%;min-height:70px}pre{white-space:pre-wrap}</style>
 <label>Prompt template<textarea id="template"></textarea></label><button id="expand">Expand</button><pre id="output"></pre>
+<label>Tavern persona<select id="native_persona"><option value="user.png">User</option><option value="other.png">Other</option><option value="manual.png">Manual</option></select></label>
 <div id="extensions_settings"></div><script type="module">
 window.saves=0;window.requests=[];window.handlers=new Map();window.notes=[];
 window.toastr=Object.fromEntries(['error','warning','info','success'].map(name=>[name,(...args)=>notes.push([name,...args])]));
@@ -24,7 +28,7 @@ window.context={
  extensionSettings:{},characters:[{name:'Alpha',avatar:'alpha.png'},{name:'Beta',avatar:'beta.png'}],characterId:0,chat:[],
  powerUserSettings:{personas:{'user.png':'User','other.png':'Other','manual.png':'Manual'}},
  getRequestHeaders:()=>({'Content-Type':'application/json'}),saveSettingsDebounced(){saves++;},
- event_types:{APP_READY:'ready',CHAT_CHANGED:'chat',CHARACTER_MESSAGE_RENDERED:'character',USER_MESSAGE_RENDERED:'user'},
+ event_types:{APP_READY:'ready',CHAT_CHANGED:'chat',PERSONA_CHANGED:'persona_changed',CHARACTER_MESSAGE_RENDERED:'character',USER_MESSAGE_RENDERED:'user'},
  eventSource:{on(name,fn){if(!listeners.has(name))listeners.set(name,[]);listeners.get(name).push(fn);},makeLast(name,fn){this.on(name,fn);},async emit(name,...args){for(const fn of listeners.get(name)||[])await fn(...args);}},
  registerMacro(name,handler){if(handlers.has(name))throw new Error('Duplicate macro: '+name);handlers.set(name,handler);},
  substituteParams(text){return text.replace(/{{([^{}]+)}}/g,(token,name)=>{
@@ -43,6 +47,7 @@ const realFetch=fetch.bind(window);window.fetch=(url,init)=>{
 const settingsModule=await import('${prefix}src/settings.js');
 const references=await import('${prefix}src/references.js');
 const personas=await import('/scripts/personas.js');
+document.getElementById('native_persona').onchange=event=>personas.setUserAvatar(event.target.value);
 const settings=settingsModule.getSettings();
 Object.assign(settings,{useActiveUserPersonaAvatar:true,userAvatarFile:'manual.png',apiType:'novelai',sendRefDescriptions:false,novelaiCharacterDescriptionsMode:'none',naisteraCharacterDescriptionsMode:'none',sendCharAvatar:false,sendUserAvatar:false,naisteraSendCharAvatar:false,naisteraSendUserAvatar:false});
 const configure=(kind,key,label)=>{
@@ -67,7 +72,7 @@ const server = createServer((req, res) => {
     if (req.url === '/') { body = host; type = 'text/html'; }
     else if (req.url === '/scripts/i18n.js') body = 'export const t=(s,...v)=>String.raw({raw:s},...v);export const translate=s=>s;';
     else if (req.url === '/scripts/popup.js') body = 'export class Popup{static show={confirm:async()=>false,input:async()=>null};}';
-    else if (req.url === '/scripts/personas.js') body = 'export let user_avatar="user.png";export function setAvatar(value){user_avatar=value;}export const getUserAvatar=value=>"/User Avatars/"+encodeURIComponent(value);';
+    else if (req.url === '/scripts/personas.js') body = 'export let user_avatar="user.png";export function setAvatar(value){user_avatar=value;}export async function setUserAvatar(value){if(value===user_avatar)return;user_avatar=value;await context.eventSource.emit(context.event_types.PERSONA_CHANGED,value);}export const getUserAvatar=value=>"/User Avatars/"+encodeURIComponent(value);';
     else if (req.url.startsWith(prefix)) {
         const file = path.resolve(root, decodeURIComponent(req.url.slice(prefix.length)));
         if (!file.startsWith(root + path.sep)) return res.writeHead(403).end();
@@ -122,11 +127,11 @@ const server = createServer((req, res) => {
         await page.evaluate(() => { context.characterId = 1; app.personas.setAvatar('other.png'); });
         await expand('{{iig_char_description}}\n---\n{{iig_user_description}}', description('Beta') + '\n---\n' + description('Other'), 'chat and persona switches apply without refresh or queued events');
         await page.evaluate(() => { app.settings.useActiveUserPersonaAvatar = false; });
-        await expand('{{iig_user_description}}', description('Manual'), 'explicitly selected reference persona');
+        await expand('{{iig_user_description}}', description('Other'), 'manual generation avatar does not replace the active persona macro');
         await page.evaluate(() => { app.settings.userAvatarFile = 'user.png'; });
-        await expand('{{iig_user_description}}', description('User'), 'manual persona changes apply immediately');
+        await expand('{{iig_user_description}}', description('Other'), 'changing the generation avatar leaves the active persona macro intact');
         await page.evaluate(() => { app.settings.useActiveUserPersonaAvatar = true; app.personas.setAvatar(''); });
-        await expand('{{iig_user_description}}', description('User'), 'missing active persona uses selected avatar');
+        await expand('{{iig_user_description}}', '', 'missing active persona does not leak a saved avatar description');
 
         await page.evaluate(() => {
             const entry = app.references.getCharacterLibraryEntry('char', 'avatar:beta.png');
@@ -177,14 +182,95 @@ const server = createServer((req, res) => {
         });
         await expand('before{{iig_char_description}}after', 'beforeafter', 'all descriptions disabled produces no placeholder');
 
+        await page.evaluate(() => {
+            app.settings.useActiveUserPersonaAvatar = false;
+            app.settings.userAvatarFile = 'manual.png';
+            app.references.syncUserAvatarSelection('manual.png');
+        });
+        await page.locator('[data-library-tab="user"]').click();
+        const assertPersona = async (avatar, label, name) => {
+            await page.waitForFunction(key => document.querySelector('.iig-library-editor')?.dataset.libraryKey === key, 'avatar:' + avatar);
+            const state = await page.evaluate(async () => ({
+                selected: document.querySelector('.iig-library-entity.selected')?.dataset.libraryKey,
+                active: [...document.querySelectorAll('.iig-library-entity')].filter(row => row.querySelector('small')?.textContent === 'Active').map(row => row.dataset.libraryKey),
+                native: app.personas.user_avatar,
+                macro: context.substituteParams('{{iig_user_description}}'),
+                generationKey: await app.references.getCurrentUserReferenceKey(app.settings),
+                generationAvatar: await app.references.getSelectedUserAvatarUrl(app.settings),
+            }));
+            report.outputs.push({ name, ...state });
+            assert.deepEqual(state, {
+                selected: 'avatar:' + avatar, active: ['avatar:' + avatar], native: avatar, macro: description(label),
+                generationKey: 'avatar:manual.png', generationAvatar: '/User Avatars/manual.png',
+            }, name);
+            report.checks.push(name);
+        };
+        await assertPersona('user.png', 'User', 'library and macro use the native persona with a manual generation avatar');
+        await page.locator('#native_persona').selectOption('other.png');
+        await assertPersona('other.png', 'Other', 'native persona event updates the open library and macro');
+        await page.locator('button.iig-library-entity[data-library-key="avatar:manual.png"]').click();
+        await page.waitForFunction(() => document.querySelector('.iig-library-editor')?.dataset.libraryKey === 'avatar:manual.png');
+        await expand('{{iig_user_description}}', description('Other'), 'browsing another persona does not replace the active macro');
+        assert.equal(await page.evaluate(() => app.personas.user_avatar), 'other.png');
+
+        await page.evaluate(() => { document.getElementById('iig_characters_section').closest('details').open = false; });
+        await page.locator('#native_persona').selectOption('user.png');
+        await page.waitForTimeout(250);
+        assert.equal(await page.locator('.iig-library-editor').getAttribute('data-library-key'), 'avatar:manual.png', 'closed library stays unrendered');
+        await page.evaluate(() => { document.getElementById('iig_characters_section').closest('details').open = true; });
+        await assertPersona('user.png', 'User', 'reopening the library follows the persona selected while closed');
+
+        await page.evaluate(async () => {
+            context.characterId = 1;
+            await context.eventSource.emit(context.event_types.CHAT_CHANGED);
+            await new Promise(resolve => setTimeout(resolve, 180));
+            await app.personas.setUserAvatar('other.png');
+        });
+        await assertPersona('other.png', 'Other', 'delayed chat-linked persona wins after the chat event');
+        await page.locator('#native_persona').selectOption('manual.png');
+        await page.locator('#native_persona').selectOption('user.png');
+        await assertPersona('user.png', 'User', 'rapid native switches keep the latest persona');
+
+        await page.evaluate(() => {
+            for (const id of ['iig_api_type', 'iig_use_active_persona_avatar']) {
+                let parent = document.getElementById(id).parentElement;
+                while (parent) { if (parent instanceof HTMLDetailsElement) parent.open = true; parent = parent.parentElement; }
+            }
+        });
+        await page.locator('#iig_api_type').selectOption('gemini');
+        await page.locator('#iig_send_user_avatar').check();
+        await page.locator('#iig_use_active_persona_avatar').uncheck();
+        await page.locator('#iig_use_active_persona_avatar').check();
+        const automaticAvatar = await page.evaluate(async () => ({
+            key: await app.references.getCurrentUserReferenceKey(app.settings),
+            avatar: await app.references.getSelectedUserAvatarUrl(app.settings),
+            savedAvatar: app.settings.userAvatarFile,
+        }));
+        assert.deepEqual(automaticAvatar, { key: 'avatar:user.png', avatar: '/User Avatars/user.png', savedAvatar: 'manual.png' });
+        await expand('{{iig_user_description}}', description('User'), 'automatic generation avatar uses the native persona without replacing the saved manual choice');
+        await page.locator('#iig_use_active_persona_avatar').uncheck();
+        await assertPersona('user.png', 'User', 'manual generation avatar mode leaves library selection and macro unchanged');
+        await page.evaluate(() => {
+            document.getElementById('iig_api_type').closest('details').open = false;
+            document.getElementById('iig_references_section').closest('details').open = false;
+        });
+        await page.locator('#iig_library_entities').scrollIntoViewIfNeeded();
+        await page.screenshot({ path: path.join(artifacts, 'active-persona.png'), fullPage: true });
+
         assert.deepEqual(report.errors, []);
         assert.deepEqual(report.failedRequests, []);
         report.passed = true;
     } catch (error) {
         report.error = String(error);
+        report.selection = await page.evaluate(() => ({
+            native: window.app?.personas.user_avatar,
+            editor: document.querySelector('.iig-library-editor')?.dataset.libraryKey,
+            selected: document.querySelector('.iig-library-entity.selected')?.dataset.libraryKey,
+        })).catch(() => null);
+        await page.screenshot({ path: path.join(artifacts, 'failure.png'), fullPage: true }).catch(() => {});
         throw error;
     } finally {
-        report.sources = Object.fromEntries(['index.js', 'src/descriptionMacros.js', 'src/references.js', 'tests/description-macros-e2e.cjs'].map(file => {
+        report.sources = Object.fromEntries(['index.js', 'src/descriptionMacros.js', 'src/characterLibraryUi.js', 'src/references.js', 'src/ui.js', 'tests/description-macros-e2e.cjs'].map(file => {
             try { return [file, createHash('sha256').update(readFileSync(path.join(root, file))).digest('hex')]; }
             catch { return [file, null]; }
         }));

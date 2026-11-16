@@ -165,7 +165,7 @@ Images are **not** included in the export. To let someone reuse your lorebook, f
 Use these macros in character cards, presets or lorebook entries:
 
 - `{{iig_char_description}}` returns the current chat character's descriptions from **Character library**.
-- `{{iig_user_description}}` returns the active persona's descriptions when **Use avatar from active {{user}} persona** is enabled, or the selected user avatar's descriptions otherwise. If no persona is active, it uses the selected avatar.
+- `{{iig_user_description}}` returns the active Tavern persona's descriptions from **Character library**, independently of the avatar selected for image generation. If no persona is active, it returns no text.
 
 Each macro includes the enabled **Main reference** description and enabled **Appearance details**, including descriptions attached to images. Nonempty descriptions appear in library order, separated by newlines. A temporary main reference contributes once. Missing or disabled descriptions produce no text.
 

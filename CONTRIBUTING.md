@@ -54,6 +54,8 @@ The settings drawer's height follows its content even while Tavern animates its 
 
 Character/persona catalogs reuse sorted entities while names, avatars, configured titles and active keys match their metadata signature. Persona catalogs read the name map once after avatar/context reads and use those labels for signatures and row data. Searches read display metadata only. Toggling active-persona mode leaves a collapsed library unloaded.
 
+The Personas tab and `{{iig_user_description}}` use Tavern's active persona. Manual avatar settings apply to generation references; browsing a library card changes only the editor. Native persona events synchronize the library selection, including while the section is collapsed.
+
 Reconcile rows by kind and reference key, retaining matching rows and avatars. Parse new rows in the live document without root-level whitespace nodes. Replace a complete tab and its search note in one HTML assignment; partial searches insert missing rows and remove unmatched ones. Reconcile image ownership once after a complete list/editor render.
 
 List and editor renders capture their kind and revision before asynchronous reads. Reference uploads resolve the current entry and item by key after saving the file; deleted targets stay deleted. Update matching previews and focused editor fields in place.

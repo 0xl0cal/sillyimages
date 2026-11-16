@@ -183,15 +183,20 @@ export function getCurrentCharacterReferenceKey() {
     }
 }
 
+export async function getActivePersonaReferenceKey() {
+    try {
+        const personasModule = await loadPersonasModule();
+        return getUserReferenceKeyForAvatar(personasModule?.user_avatar);
+    } catch (_error) {
+        return 'no-user-avatar';
+    }
+}
+
 export async function getCurrentUserReferenceKey(settings = getSettings()) {
+    // Generation may use a manual image; the library follows Tavern's persona.
     if (settings.useActiveUserPersonaAvatar) {
-        try {
-            const personasModule = await loadPersonasModule();
-            const activeAvatarId = String(personasModule?.user_avatar || '').trim();
-            if (activeAvatarId) return getUserReferenceKeyForAvatar(activeAvatarId);
-        } catch (_error) {
-            // Fall back to selected avatar below.
-        }
+        const key = await getActivePersonaReferenceKey();
+        if (key !== 'no-user-avatar') return key;
     }
     const avatarFile = String(settings.userAvatarFile || '').trim();
     return getUserReferenceKeyForAvatar(avatarFile);

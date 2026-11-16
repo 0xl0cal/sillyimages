@@ -40,7 +40,6 @@ import { renderStyleSettings, bindStylesSectionEvents } from './promptLibraryUi.
 export { renderStyleSettings } from './promptLibraryUi.js';
 import {
     buildCharacterLibraryBodyHtml, bindCharacterLibraryEvents, clearAllGenerationImages,
-    refreshIfContextChanged,
 } from './characterLibraryUi.js';
 // Относительный путь: /scripts/extensions/third-party/sillyimages/src/ui.js → /scripts/popup.js
 import { Popup } from '../../../../popup.js';
@@ -521,7 +520,6 @@ function bindAvatarSectionEvents(settings, updateVisibility, config) {
         syncActivePersonaAvatarMode(settings.useActiveUserPersonaAvatar);
         saveSettings();
         updateVisibility();
-        refreshIfContextChanged(settings).catch(() => {});
     });
 
     document.getElementById(refreshButtonId)?.addEventListener('click', async (e) => {
